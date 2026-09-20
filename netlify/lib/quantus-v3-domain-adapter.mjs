@@ -11,126 +11,105 @@
  *                                                        document / assignment
  *     dailyBriefing.assistantRuns[date]               → run / run_context /
  *                                                        run_status / briefing
- *     chatgptLeads[*].comments                        → note
+ *     chatgptLeads[*].comments, tasks[*].comments     → note
  *     serverseitige Tagesbriefing-Policy              → policy
  *
- * Es gibt KEINEN Ersatzbestand: keine entities.leads, keine entities.runs.
- * Was hier nicht aus dem Kern kommt, kommt aus der serverseitigen Policy
- * (Mandant, Eigentuemer, Policy-Version) — nie aus dem Anfragetext.
+ * Es gibt KEINEN Ersatzbestand. Was nicht aus dem Kern kommt, kommt aus der
+ * serverseitigen Konfiguration (Mandant, Eigentuemer, Policy) — nie aus dem
+ * Anfragetext.
  *
- * Vertrag (C3b, a422670): genau eine benannte Fabrik
+ * Vertrag (C3b, 4379061): genau eine benannte Fabrik
  *
  *     createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, now })
  *       → { resolveTarget, assertActiveBinding, applyVerb, loadObject, listPage }
  *
- * Die Fabrik braucht ausserdem die ECHTE Tagesbriefing-Policy (Paket B),
- * den Eigentuemer des Haushalts und die E1-Laufzeit (Lease/Fencing). Diese
- * Ports kommen entweder ueber `ports` (Integration, Tests) oder ueber
- * Umgebungsvariablen (siehe DOMAIN_PORT_VARS). Fehlt einer, wirft die Fabrik
- * einen Fehler mit Status 503 und benanntem Grund — es wird nichts
- * simuliert, nichts geraten, nichts „vorlaeufig" erlaubt.
+ * Die Fabrik braucht ausserdem die ECHTE Tagesbriefing-Policy (Paket B) und
+ * den Eigentuemer des Haushalts — ueber `ports` (Integration, Tests) oder
+ * Umgebungsvariablen (DOMAIN_PORT_VARS). Fehlt eines, wirft die Fabrik einen
+ * Fehler mit Status 503 und benanntem Grund. Die E1-Laufzeit
+ * (quantus-v3-runtime-state.mjs) ist statisch gebunden: Lease und Fencing
+ * werden hier nur BENUTZT, nie nachgebaut.
  *
  * Grundsaetze:
- *   • Alle Schreibwirkungen laufen ueber B.applyCommand (commandReducer):
- *     Zeit und Kennung ausschliesslich aus dem vorbereiteten Umschlag
- *     (prepared), nie aus dem Anfragetext. Lease-Verben laufen ueber den
- *     E1-Port — der Adapter implementiert keine Lease, keine Kosten, keine
- *     Idempotenz.
- *   • Jede Bindung (Objekt, Lauf, Lease, Auftrag) wird im CAS-Mutator frisch
- *     gegen den aktuellen Bestand geprueft (resolveTarget/assertActiveBinding
- *     werden je Versuch aufgerufen), auch vor einer Wiederholungsquittung.
- *   • Der Lesepfad liefert nur Projektionen, nie den Rohbestand; Seiten sind
- *     stabil sortiert, `hasMore` ist wahrheitsgemaess, eine unbekannte
- *     Fortsetzungsmarke bricht die Seite ab (aborted), statt still bei 0 zu
- *     beginnen. GET schreibt nie — auch keine Migration, keine Bewertung
- *     wird zurueckgeschrieben.
- *   • Kennungen mit Doppelpunkten (B erlaubt sie, C2 nicht) werden NICHT
- *     umcodiert: Objekte behalten ihre Kennung; adressierbar ueber C2 sind
- *     sie nicht. Das ist ein gemeldetes Vertragsproblem, keine stille
- *     Loesung (docs/quantus-v3-domain-adapter.md, Abschnitt „Luecken").
- *   • Verben, fuer die B kein sicheres Kommando hat, sind BENANNT unbound:
- *     resolveTarget/assertActiveBinding laufen normal (Rechte und Bindung
- *     werden geprueft), applyVerb lehnt strukturiert ab
- *     (`verb_not_bound:<verb>:<luecke>`), nichts wird geschrieben.
+ *   • Jede Wirkung ist genau EIN Kern-Kommando (B.commandReducer → applyCommand
+ *     mit allen Kern-Invarianten) oder ein E1-Aufruf. Zeit und Kennung kommen
+ *     ausschliesslich aus dem vorbereiteten Umschlag (prepared).
+ *   • Bindung je CAS-Versuch: resolveTarget/assertActiveBinding werden vom
+ *     Dienst in jedem Versuch neu aufgerufen — auch vor einer Wiederholung.
+ *     Die Leitung muss ihre Lease MITFUEHREN (Umschlagfeld lease{holder,
+ *     fence}); geprueft wird sie durch E1.checkLeadership, nie aus der
+ *     gespeicherten Lease „ersetzt".
+ *   • Ein Spezialist ist an GENAU EINEN Auftrag gebunden (Ausweis-jobId =
+ *     Auftragskennung): aktiv, nicht abgelaufen, sein Executor, Quellversion
+ *     akzeptiert — beim Schreiben UND beim Lesen. Keine Vereinigung aller
+ *     Auftraege seines Executors.
+ *   • Lesen liefert Projektionen, nie den Rohbestand; Seiten sind stabil
+ *     sortiert, hasMore ist wahr, eine unbekannte Fortsetzungsmarke bricht ab.
+ *     GET schreibt nie. Ein kaputter Kern ist eine kontrollierte 503.
+ *   • Kennungen werden nicht umcodiert: das Kennungsalphabet von C2 ist das
+ *     des Kerns (mit Doppelpunkt); nur Punkt und `__` bleiben draussen.
  * ═══════════════════════════════════════════════════════════════════════ */
 
 import * as B from "./assistant-core.mjs";
+import * as E1 from "./quantus-v3-runtime-state.mjs";
 
-/* ── E1 (Lease/Fencing): optional beim Laden, PFLICHT beim Bauen ─────────
- * Die Laufzeit liegt im Integrationsstand (quantus-v3-runtime-state.mjs).
- * Fehlt sie im Checkout, ist E1_MODUL null; die Fabrik verlangt dann den
- * Port `ports.runtimeState` — sonst 503. */
-let E1_MODUL = null;
-try { E1_MODUL = await import("./quantus-v3-runtime-state.mjs"); } catch { E1_MODUL = null; }
-
-export const ADAPTER_VERSION = "quantus-v3-domain-adapter/1.0.0";
+export const ADAPTER_VERSION = "quantus-v3-domain-adapter/2.0.0";
 
 export const DOMAIN_PORT_VARS = Object.freeze({
   policyJson: "QUANTUS_V3_TAGESBRIEFING_POLICY_JSON",   // die B-Policy (tagesbriefing-policy/3) als JSON
   ownerUid: "QUANTUS_V3_OWNER_UID",                    // Firebase-UID des Haushaltseigentuemers
 });
 
-const E1_METHODEN = Object.freeze(["acquireLease", "renewLease", "checkLeadership", "readRuntime"]);
-
-/* C2-Rollen → B-Akteure. Rollen kommen aus dem gepruefeten Ausweis (C1),
- * nie aus dem Text. */
+/* C2-Rollen → B-Akteure. Rollen kommen aus dem gepruefeten Ausweis (C1). */
 export const ROLE_ACTOR_KIND = Object.freeze({
   user: "user", lead_agent: "agent", specialist_claude: "worker", specialist_gemini: "worker",
   scheduler: "system", backend_checker: "system",
 });
 const ROLE_EXECUTOR = Object.freeze({ specialist_claude: "claude", specialist_gemini: "gemini" });
-
-/* C2-Slot-Namen → B-Slots. */
 const SLOT_VON_C2 = Object.freeze({ "04:00": "briefing04", "09:00": "process09", "14:00": "continue14", "23:00": "close23" });
 
-/* ── Die 22 Verben: gebunden oder benannte Luecke ────────────────────────
- * `command`: das B-Kommando, `gap`: warum es keines gibt (Schluessel in
- * docs/quantus-v3-domain-adapter.md). Beides zugleich gibt es nicht. */
+/* Die 23 Verben und ihr Kern-/E1-Kommando. Keine Luecken. */
 export const VERB_BINDINGS = Object.freeze({
-  "intake.create":          Object.freeze({ command: "registerIntake",      gap: null }),
-  "intake.accept":          Object.freeze({ command: "transitionState",     gap: null }),
-  "task.create":            Object.freeze({ command: null, gap: "B_HAS_NO_TASK_CREATE" }),
-  "lead.comment":           Object.freeze({ command: null, gap: "B_HAS_NO_COMMENT_COMMAND" }),
-  "lead.transition":        Object.freeze({ command: "transitionState",     gap: null }),
-  "lead.schedule":          Object.freeze({ command: "setWaiting",          gap: null }),
-  "briefing.answer":        Object.freeze({ command: "recordAnswer",        gap: null }),
-  "briefing.consumeAnswer": Object.freeze({ command: "consumeAnswer",       gap: null }),
-  "question.create":        Object.freeze({ command: "askQuestion",         gap: null }),
-  "question.resolve":       Object.freeze({ command: "recordAnswer",        gap: null }),
-  "document.register":      Object.freeze({ command: null, gap: "ATTACHMENT_KEY_NOT_EXPRESSIBLE_IN_C2_ID" }),
-  "document.processed":     Object.freeze({ command: null, gap: "ATTACHMENT_KEY_NOT_EXPRESSIBLE_IN_C2_ID" }),
-  "worker.assign":          Object.freeze({ command: null, gap: "C2_PAYLOAD_LACKS_SOURCE_AND_PURPOSE" }),
-  "worker.return":          Object.freeze({ command: null, gap: "C2_PAYLOAD_LACKS_RESULT_HASH" }),
-  "worker.review":          Object.freeze({ command: "reviewJobResult",     gap: null }),
-  "run.ensure":             Object.freeze({ command: "ensureRun",           gap: null }),
-  "run.claim":              Object.freeze({ command: "E1.acquireLease",     gap: null }),
-  "run.renew":              Object.freeze({ command: "E1.renewLease",       gap: null }),
-  "run.checkpoint":         Object.freeze({ command: null, gap: "C2_PAYLOAD_LACKS_E1_CHECKPOINT_INPUTS" }),
-  "run.finalize":           Object.freeze({ command: "closeRun",            gap: null }),
-  "note.append":            Object.freeze({ command: null, gap: "B_HAS_NO_FREE_NOTE_COMMAND" }),
-  "run.log":                Object.freeze({ command: null, gap: "B_HAS_NO_RUN_LOG_COMMAND" }),
+  "intake.create":          "registerIntake",
+  "intake.accept":          "transitionState",
+  "task.create":            "createTask",
+  "lead.comment":           "addComment",
+  "lead.transition":        "transitionState",
+  "lead.schedule":          "setWaiting",
+  "briefing.answer":        "recordAnswer",
+  "briefing.consumeAnswer": "consumeAnswer",
+  "question.create":        "askQuestion",
+  "question.resolve":       "recordAnswer",
+  "document.register":      "registerDocument",
+  "document.processed":     "recordDocumentParse",
+  "worker.assign":          "createJob",
+  "worker.return":          "recordJobReturn",
+  "worker.review":          "reviewJobResult",
+  "run.ensure":             "ensureRunSlot",
+  "run.claim":              "E1.acquireLease",
+  "run.renew":              "E1.renewLease",
+  "run.checkpoint":         "recordRunCheckpoint",
+  "run.finalize":           "closeRun | recordRunEvent",
+  "note.append":            "appendRunNote",
+  "run.log":                "recordRunEvent",
+  "run.sourceCheck":        "recordSourceCheck",
 });
 
 /* ── Kleinkram ─────────────────────────────────────────────────────────── */
 const CODE_RE = /^[A-Za-z0-9_:.,\-]{1,160}$/;
-
 function istKarte(v) { return v !== null && typeof v === "object" && !Array.isArray(v); }
-/* Deterministische Ordnung nach Codepunkten — unabhaengig von der Locale des Servers. */
 const nachId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const nachText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
-/* Fehler in der Form, die C2 (fehlerAntwort/STATUS_BY_CODE) versteht:
- * code ist ein C2-Code, reason traegt den fachlichen Grund. */
+/* Fehler in der Form, die C2 (fehlerAntwort/STATUS_BY_CODE) versteht. */
 function fail(code, reason, status) {
   const err = new Error(reason || code);
-  err.code = code;
-  err.reason = reason || code;
-  err.status = status;
+  err.code = code; err.reason = reason || code; err.status = status;
   return err;
 }
 const port503 = (reason) => fail("auth_not_configured", reason, 503);
 
-/* B-Ablehnung (aus commandReducer) → C2-Code. Der B-Code steht in reason;
+/* B-Ablehnung (aus commandReducer) → C2-Code; der B-Code steht in reason,
  * Details nur, wenn sie selbst Codes sind (nie Nutzertext). */
 function uebersetzeB(err) {
   const code = String(err?.code || "");
@@ -140,57 +119,43 @@ function uebersetzeB(err) {
   else if (Array.isArray(detail) && detail.length && detail.every((d) => typeof d === "string" && CODE_RE.test(d))) zusatz = ":" + detail.slice(0, 8).join(",");
   const reason = (code || "domain_rejected") + zusatz;
   if (err?.status === 503 || code.startsWith("CORE_")) return fail("core_invalid", reason, 503);
-  if (err?.status === 409) return fail("stale_entity_version", reason, 409);
+  if (err?.status === 409) return fail("domain_conflict", reason, 409);
   if (err?.status === 500 || code === "invalid_transaction_context") return fail("core_invalid", reason, 503);
   return fail("invalid_request", reason, 400);
 }
-
 /* E1-Ausnahme (RuntimeStateError) → C2-Code. */
 function uebersetzeE1(err) {
   const code = "runtime:" + String(err?.code || "runtime_error");
   const status = Number(err?.status) || 500;
   if (status >= 500) return fail("core_invalid", code, 503);
-  if (status === 409) return fail("stale_entity_version", code, 409);
+  if (status === 409) return fail("domain_conflict", code, 409);
   return fail("invalid_request", code, 400);
 }
+/* Kern-Fehler beim Lesen → kontrollierte 503. */
+function kernLesen(snapshot) {
+  try { return B.requireCore(snapshot); } catch (e) { throw fail("core_invalid", String(e?.code || "CORE_INVALID"), 503); }
+}
 
-/* Kartenversion: Buchhaltungskarten (Intake, Frage, Antwort, Dokument,
- * Auftrag, Kommentar) tragen keinen Zaehler. Ihre Version ist die
- * Projektion ihres Inhalts (32-Bit-Fingerabdruck → 48-Bit-Ganzzahl):
- * jede Aenderung der Karte aendert die Version, dieselbe Karte hat auf
- * jedem Geraet dieselbe Version. Kein Zaehler wird erfunden. */
+/* Kartenversion: Buchhaltungskarten tragen keinen Zaehler; ihre Version ist
+ * die Projektion ihres Inhalts (48-Bit-Ganzzahl aus dem Fingerabdruck). */
 function kartenVersion(karte) {
   return 1 + parseInt(B.stringFingerprint(B.canonicalJson(karte)).slice(0, 12), 16);
 }
-
-/* Abgeleitete Kennung fuer Ressourcen, die C2 ohne Kennung anlegt
- * (intake.create, question.create, briefing.answer, question.resolve):
- * deterministisch aus Mandant, Auftraggeber, Lauf, Verb und Nutzlast —
- * identische Wiederholung trifft dieselbe Karte (B ist dort idempotent). */
+/* Kennung fuer eine neue Karte, wenn der Umschlag keine mitbringt:
+ * deterministisch aus Mandant, Ausweis, Lauf, Verb und Nutzlast. */
 function abgeleiteteId(praefix, { tenant, principal, command }) {
   return praefix + "_" + B.stringFingerprint(B.canonicalJson({ tenant, principal: principal.id, jobId: command.jobId, verb: command.verb, payload: command.payload }));
-}
-
-function kernLesen(snapshot) {
-  try { return B.requireCore(snapshot); } catch (e) { return null; }
 }
 
 function laeufe(data) {
   return Object.values(data.dailyBriefing.assistantRuns).filter(istKarte).sort((a, b) => nachText(String(b.date), String(a.date)));
 }
-function laufNachId(data, id) {
-  return laeufe(data).find((r) => r.id === id) || null;
-}
-function laufNachDatum(data, date) {
-  const r = data.dailyBriefing.assistantRuns[date];
-  return istKarte(r) ? r : null;
-}
-/* Der Lauf, in dem eine Quelle gefuehrt wird (juengster zuerst). */
+function laufNachId(data, id) { return laeufe(data).find((r) => r.id === id) || null; }
+function laufNachDatum(data, date) { const r = data.dailyBriefing.assistantRuns[date]; return istKarte(r) ? r : null; }
 function laufFuerQuelle(data, sourceType, sourceId) {
   const r = laeufe(data).find((x) => Array.isArray(x.itemRefs) && x.itemRefs.some((ref) => ref && ref.sourceType === sourceType && ref.sourceId === sourceId));
   return r ? r.id : null;
 }
-/* Der Lauf eines Auftrags: der Assistententag seiner Erstellung. */
 function laufFuerJob(data, job) {
   const ms = B.msAus(job && job.createdAt);
   if (!Number.isFinite(ms)) return null;
@@ -202,10 +167,24 @@ function letzterSlot(run) {
   for (const k of B.SLOT_KEYS) if (run.slotReceipts && run.slotReceipts[k] && run.slotReceipts[k].receiptId) slot = k;
   return slot;
 }
+/* Aktiver Auftrag eines Executors: existiert, sein Executor, aktiv, nicht
+ * abgelaufen, Quellversion noch akzeptiert. Sonst der Grund. */
+function auftragPruefen(data, jobId, executor, nowMs) {
+  const j = data.automation.jobsById[String(jobId || "")];
+  if (!istKarte(j)) return { ok: false, reason: "assignment_not_found" };
+  if (j.executor !== executor) return { ok: false, reason: "assignment_foreign_executor" };
+  if (!["queued", "running"].includes(j.state)) return { ok: false, reason: "assignment_not_active:" + String(j.state) };
+  const ablauf = B.msAus(j.expiresAt);
+  if (!Number.isFinite(ablauf) || ablauf <= nowMs) return { ok: false, reason: "assignment_expired" };
+  const e = B.quelleFinden(data, j.sourceType, j.sourceId);
+  if (!e) return { ok: false, reason: "assignment_source_missing" };
+  const z = B.effektiverZustand(j.sourceType, e);
+  if (!(j.acceptedVersions || [j.inputVersion]).includes(z.version)) return { ok: false, reason: "assignment_stale_source" };
+  return { ok: true, job: j };
+}
 
 /* ══ Die Fabrik ══════════════════════════════════════════════════════════ */
 export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, now, ports = {} } = {}) {
-  /* ── Ports: serverseitig, vollstaendig oder 503 ────────────────────── */
   const read = typeof ports.read === "function" ? ports.read : (name) => (typeof process !== "undefined" && process.env ? process.env[name] : undefined);
   const pv = String(policyVersion || "").trim();
   if (!pv) throw port503("domain_policy_version_missing");
@@ -223,90 +202,68 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
   }
   const pvCheck = B.validatePolicy(policy);
   if (!pvCheck.ok) throw port503("domain_policy_invalid:" + pvCheck.errors.slice(0, 6).join(","));
-  // Die C2-Policy-Version ist NICHT die Policy: sie muss zur echten B-Policy passen.
   if (policy.version !== pv) throw port503("domain_policy_version_mismatch");
   if (policy.tenant !== tenant) throw port503("domain_policy_tenant_mismatch");
-
   const ownerId = String(ports.ownerId !== undefined ? ports.ownerId : (read(DOMAIN_PORT_VARS.ownerUid) || "")).trim();
   if (!ownerId) throw port503("domain_owner_missing:" + DOMAIN_PORT_VARS.ownerUid);
-
-  const E1 = ports.runtimeState !== undefined ? ports.runtimeState : E1_MODUL;
-  if (!E1 || !E1_METHODEN.every((m) => typeof E1[m] === "function")) throw port503("domain_runtime_state_port_missing");
+  for (const m of ["acquireLease", "renewLease", "checkLeadership", "readRuntime"]) if (typeof E1[m] !== "function") throw port503("domain_runtime_state_port_missing");
 
   const POLICY = Object.freeze(structuredClone(policy));
   const basis = (kind, id, extra) => ({ kind, id, tenant, ownerId, ...extra });
 
-  /* ── Projektionen (Lesen) ──────────────────────────────────────────── */
+  /* ── Projektionen ─────────────────────────────────────────────────── */
   function leaseFuerLauf(data, run) {
-    // Nur zur Anzeige: die Lease-Form prueft E1; eine kaputte Lease ist
-    // hier "keine Anzeige", die Bindung (unten) meldet sie als 503.
     try {
       E1.readRuntime(data);
       const l = data.automation.activeLease;
       if (!istKarte(l) || typeof l.scope !== "string") return null;
       const teile = l.scope.split(":");
       if (teile.length !== 4 || teile[0] !== tenant || teile[1] !== run.date) return null;
-      return { holder: l.holder, expiresAt: Number.isSafeInteger(l.expiresAtMs) ? B.isoAus(l.expiresAtMs) : null, expiresAtMs: l.expiresAtMs, fence: l.fence, scope: l.scope, slot: teile[2] };
+      return { holder: l.holder, expiresAt: Number.isSafeInteger(l.expiresAtMs) ? B.isoAus(l.expiresAtMs) : null, fence: l.fence, scope: l.scope };
     } catch { return null; }
   }
-
-  function laufObjekt(data, run) {
-    const lease = leaseFuerLauf(data, run);
-    return basis("run", run.id, {
-      jobId: run.id, date: run.date, slot: letzterSlot(run), state: run.phase,
-      entityVersion: Number.isInteger(run.revision) ? run.revision : 0,
-      createdAt: run.createdAt || null, updatedAt: run.updatedAt || null,
-      leaseExpiresAt: lease ? lease.expiresAt : null,
-    });
-  }
-  function briefingObjekt(data, run) {
-    return basis("briefing", run.id, { jobId: run.id, date: run.date, state: run.phase, entityVersion: Number.isInteger(run.revision) ? run.revision : 0, updatedAt: run.updatedAt || null });
-  }
-  function laufKontextScope(data, run) {
-    return basis("run_context", run.id, { runId: run.id, jobId: run.id, entityVersion: Number.isInteger(run.revision) ? run.revision : 0 });
-  }
+  const laufObjekt = (data, run) => basis("run", run.id, {
+    jobId: run.id, date: run.date, slot: letzterSlot(run), state: run.phase,
+    entityVersion: Number.isInteger(run.revision) ? run.revision : 0,
+    createdAt: run.createdAt || null, updatedAt: run.updatedAt || null,
+    leaseExpiresAt: (leaseFuerLauf(data, run) || {}).expiresAt || null,
+  });
+  const briefingObjekt = (data, run) => basis("briefing", run.id, { jobId: run.id, date: run.date, state: run.phase, entityVersion: Number.isInteger(run.revision) ? run.revision : 0, updatedAt: run.updatedAt || null });
+  const laufKontextScope = (data, run, jobId) => basis("run_context", run.id, { runId: run.id, jobId, entityVersion: Number.isInteger(run.revision) ? run.revision : 0 });
   function laufStatusObjekt(data, run) {
-    // Der echte gemeinsame B-Status ueber den GANZEN Bestand: die Ampel
-    // (bzw. ihre Zwischenspeicherung, nur bei passender Revision).
     const jetzt = now();
-    let bewertung = null;
+    let bewertung;
     const cache = istKarte(run.finalEvaluation) ? run.finalEvaluation : null;
     if (cache && B.isEvaluationCurrent(cache, { run, data, now: jetzt, policy: POLICY }).current === true) bewertung = { coverage: cache.coverage, operations: cache.operations, cached: true };
-    else {
-      const e = B.dailyAssistantTrafficLight(run, data, jetzt, POLICY);
-      bewertung = { coverage: e.coverage, operations: e.operations, cached: false };
-    }
+    else { const e = B.dailyAssistantTrafficLight(run, data, jetzt, POLICY); bewertung = { coverage: e.coverage, operations: e.operations, cached: false }; }
     const offeneFragen = Object.values(data.automation.questionsById).filter((q) => istKarte(q) && q.status === "open"
       && (q.runDate === run.date || (Array.isArray(run.itemRefs) && run.itemRefs.some((r) => r && r.sourceType === q.sourceType && r.sourceId === q.sourceId)))).length;
     return basis("run_status", "status_" + run.date, {
-      runId: run.id, jobId: run.id, state: run.phase, stage: letzterSlot(run),
+      runId: run.id, jobId: run.id, state: run.phase, stage: run.lastCheckpoint ? run.lastCheckpoint.stage : letzterSlot(run),
       entityVersion: Number.isInteger(run.revision) ? run.revision : 0, updatedAt: run.updatedAt || null,
       openQuestions: offeneFragen,
       blocked: run.phase === "exception_open" || bewertung.coverage !== "green" || bewertung.operations !== "green",
       coverage: bewertung.coverage, operations: bewertung.operations, evaluationCached: bewertung.cached,
     });
   }
-
   function quellObjekt(data, kind, sourceType, id) {
     const e = B.quelleFinden(data, sourceType, id);
     if (!e) return null;
     const z = B.effektiverZustand(sourceType, e);
-    const version = z.unmigrated || z.versionInvalid ? null : z.version;
     const warte = data.automation.waitingById[sourceType + ":" + id] || null;
     const offeneFrage = Object.values(data.automation.questionsById).find((q) => istKarte(q) && q.status === "open" && q.sourceType === sourceType && q.sourceId === id) || null;
     return basis(kind, id, {
       sourceType, jobId: laufFuerQuelle(data, sourceType, id),
       title: sourceType === "chatgptTask" ? String(e.text || "") : String(e.title || ""),
       state: z.unmigrated ? "unmigrated" : z.unmapped ? "unmapped" : z.state,
-      entityVersion: version, updatedAt: e.updatedAt || null,
+      entityVersion: z.unmigrated || z.versionInvalid ? null : z.version, updatedAt: e.updatedAt || null,
       waitUntil: warte ? warte.followUpAt : null, openQuestionId: offeneFrage ? offeneFrage.id : null,
       dueAt: sourceType === "task" && e.dueDate ? String(e.dueDate).slice(0, 10) : null,
-      leadId: sourceType === "chatgptLead" ? id : null,
+      leadId: sourceType === "chatgptLead" ? id : (Array.isArray(e.linkedChatgptLeads) && e.linkedChatgptLeads.length ? String(e.linkedChatgptLeads[0]) : null),
     });
   }
   const leadObjekt = (data, id) => quellObjekt(data, "lead", "chatgptLead", id);
   const taskObjekt = (data, id) => quellObjekt(data, "task", "task", id) || quellObjekt(data, "task", "chatgptTask", id);
-
   function intakeObjekt(data, id) {
     const it = data.automation.intakeById[id];
     if (!istKarte(it)) return null;
@@ -330,46 +287,50 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
     if (!istKarte(d)) return null;
     return basis("document", id, { jobId: istKarte(d.linkedTo) ? laufFuerQuelle(data, d.linkedTo.sourceType, d.linkedTo.sourceId) : null, title: d.name || null, state: d.status, parseOutcome: d.parse ? d.parse.outcome : null, entityVersion: kartenVersion(d), updatedAt: d.handledAt || (d.parse && d.parse.checkedAt) || d.uploadedAt || null });
   }
+  /* Auftrag: jobId = seine EIGENE Kennung — daran haengt der Ausweis des Spezialisten (C1 binding "job"). */
   function auftragObjekt(data, id) {
     const j = data.automation.jobsById[id];
     if (!istKarte(j)) return null;
-    return basis("assignment", id, { jobId: laufFuerJob(data, j), runId: laufFuerJob(data, j), workerKind: j.executor, state: j.state, entityVersion: kartenVersion(j), dueAt: j.expiresAt || null, sourceType: j.sourceType, sourceId: j.sourceId });
+    return basis("assignment", id, { jobId: id, runId: laufFuerJob(data, j), workerKind: j.executor, state: j.state, entityVersion: kartenVersion(j), dueAt: j.expiresAt || null, sourceType: j.sourceType, sourceId: j.sourceId });
   }
+  /* Ergebnis: jobId = Lauf des Auftrags — daran haengt die Leitung (assignedJobIds). */
   function ergebnisObjekt(data, resultRef) {
     const treffer = Object.values(data.automation.jobsById).filter((j) => istKarte(j) && istKarte(j.result) && j.result.ref === resultRef);
     if (treffer.length !== 1) return null;
     const j = treffer[0];
-    return basis("worker_result", resultRef, { jobId: laufFuerJob(data, j), assignmentId: j.id, state: j.review ? "reviewed:" + j.review.verdict : j.state, entityVersion: kartenVersion(j), updatedAt: (j.review && j.review.reviewedAt) || j.returnedAt || null });
+    return basis("worker_result", resultRef, { jobId: laufFuerJob(data, j), assignmentId: j.id, state: j.review ? "reviewed:" + j.review.verdict : j.state, summary: j.result.summary || null, entityVersion: kartenVersion(j), updatedAt: (j.review && j.review.reviewedAt) || j.returnedAt || null });
   }
-  function kommentare(data, leadId) {
-    const l = data.entities.chatgptLeads[leadId];
-    if (!istKarte(l) || !Array.isArray(l.comments)) return [];
-    return l.comments.filter((c) => istKarte(c) && typeof c.id === "string" && c.id).map((c) => basis("note", c.id, {
-      jobId: laufFuerQuelle(data, "chatgptLead", leadId), leadId, runId: laufFuerQuelle(data, "chatgptLead", leadId),
+  function kommentare(data, sourceType, sourceId) {
+    const e = B.quelleFinden(data, sourceType, sourceId);
+    if (!e || !Array.isArray(e.comments)) return [];
+    const runId = laufFuerQuelle(data, sourceType, sourceId);
+    return e.comments.filter((c) => istKarte(c) && typeof c.id === "string" && c.id).map((c) => basis("note", c.id, {
+      jobId: runId, runId, leadId: sourceType === "chatgptLead" ? sourceId : null, sourceType, sourceId,
       text: String(c.text || ""), createdAt: c.createdAt || null, author: typeof c.author === "string" ? c.author : (typeof c.by === "string" ? c.by : null),
       entityVersion: kartenVersion(c),
     })).sort((a, b) => nachText(String(b.createdAt || ""), String(a.createdAt || "")) || nachId(a, b));
   }
   function notizObjekt(data, id) {
-    for (const leadId of Object.keys(data.entities.chatgptLeads)) {
-      const n = kommentare(data, leadId).find((c) => c.id === id);
-      if (n) return n;
+    for (const leadId of Object.keys(data.entities.chatgptLeads)) { const n = kommentare(data, "chatgptLead", leadId).find((c) => c.id === id); if (n) return n; }
+    const note = data.entities.chatgptNotes[id];
+    if (istKarte(note) && istKarte(note.assistantNote)) {
+      const runId = note.assistantNote.runDate ? "run_" + note.assistantNote.runDate : null;
+      return basis("note", id, { jobId: runId, runId, leadId: Array.isArray(note.linkedChatgptLeads) && note.linkedChatgptLeads.length ? String(note.linkedChatgptLeads[0]) : null, text: String(note.instruction || ""), createdAt: note.createdAt || null, author: note.author || null, entityVersion: kartenVersion(note) });
     }
     return null;
   }
-  function policyObjekt() {
-    return basis("policy", "policy_" + POLICY.version, { jobId: null, policyVersion: POLICY.version, mode: modus, entityVersion: 1, updatedAt: null, limits: { maxWaitDays: POLICY.maxWaitDays } });
-  }
-  function laufKontextEintraege(data, run) {
+  const policyObjekt = () => basis("policy", "policy_" + POLICY.version, { jobId: null, policyVersion: POLICY.version, mode: modus, entityVersion: 1, updatedAt: null, limits: { maxWaitDays: POLICY.maxWaitDays } });
+  function laufKontextEintraege(data, run, jobId, filter) {
     const out = [];
     for (const ref of Array.isArray(run.itemRefs) ? run.itemRefs : []) {
       if (!istKarte(ref) || !B.QUELLEN[ref.sourceType]) continue;
+      if (filter && !filter.has(ref.sourceType + ":" + ref.sourceId)) continue;
       const e = B.quelleFinden(data, ref.sourceType, ref.sourceId);
       if (!e) continue;
       const z = B.effektiverZustand(ref.sourceType, e);
       const belege = Object.values(data.automation.evidenceById).filter((ev) => istKarte(ev) && ev.sourceType === ref.sourceType && ev.sourceId === ref.sourceId).map((ev) => ev.id).sort();
       out.push(basis("run_context", "ctx_" + ref.sourceType + "_" + ref.sourceId, {
-        runId: run.id, jobId: run.id, sourceType: ref.sourceType, sourceId: ref.sourceId,
+        runId: run.id, jobId, sourceType: ref.sourceType, sourceId: ref.sourceId,
         title: ref.sourceType === "chatgptTask" ? String(e.text || "") : String(e.title || ""),
         text: ref.sourceType === "chatgptLead" ? String(e.rawInput || "") : "",
         entityVersion: z.unmigrated || z.versionInvalid ? null : z.version, updatedAt: e.updatedAt || null, evidenceRefs: belege,
@@ -377,17 +338,34 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
     }
     return out.sort(nachId);
   }
+  /* Der Kontext eines Spezialisten: Quelle und contextRefs SEINES aktiven Auftrags — sonst nichts. */
+  function spezialistenFilter(data, principal, nowMs) {
+    const pr = auftragPruefen(data, principal.jobId, ROLE_EXECUTOR[principal.role], nowMs);
+    if (!pr.ok) throw fail("forbidden", pr.reason, 403);
+    const erlaubt = new Set([pr.job.sourceType + ":" + pr.job.sourceId]);
+    for (const r of Array.isArray(pr.job.contextRefs) ? pr.job.contextRefs : []) if (istKarte(r)) erlaubt.add(r.sourceType + ":" + r.sourceId);
+    return { filter: erlaubt, job: pr.job };
+  }
 
-  function objektLaden(data, kind, id) {
+  function objektLaden(data, kind, id, { runId = null } = {}) {
     switch (kind) {
       case "run": { const r = laufNachId(data, id); return r ? laufObjekt(data, r) : null; }
       case "briefing": { const r = laufNachId(data, id); return r ? briefingObjekt(data, r) : null; }
-      case "run_context": { const r = laufNachId(data, id); return r ? laufKontextScope(data, r) : null; }
-      case "run_status": {
-        const m = /^status_(\d{4}-\d{2}-\d{2})$/.exec(String(id));
-        const r = m ? laufNachDatum(data, m[1]) : null;
-        return r ? laufStatusObjekt(data, r) : null;
+      case "run_context": {
+        const r = laufNachId(data, id);
+        if (!r) return null;
+        // runId = das Bindungsobjekt des Ausweises: Lauf (Leitung/Nutzer) oder Auftrag (Spezialist).
+        if (runId && runId !== r.id) {
+          const j = data.automation.jobsById[runId];
+          if (!istKarte(j)) return null;
+          const pr = auftragPruefen(data, runId, j.executor, now());
+          if (!pr.ok) throw fail("forbidden", pr.reason, 403);
+          if (laufFuerJob(data, j) !== r.id) throw fail("forbidden", "assignment_run_mismatch", 403);
+          return laufKontextScope(data, r, runId);
+        }
+        return laufKontextScope(data, r, r.id);
       }
+      case "run_status": { const m = /^status_(\d{4}-\d{2}-\d{2})$/.exec(String(id)); const r = m ? laufNachDatum(data, m[1]) : null; return r ? laufStatusObjekt(data, r) : null; }
       case "lead": return leadObjekt(data, id);
       case "task": return taskObjekt(data, id);
       case "intake": return intakeObjekt(data, id);
@@ -403,13 +381,10 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
   }
 
   /* ── Lesen ─────────────────────────────────────────────────────────── */
-  function loadObject(snapshot, { kind, id } = {}) {
+  function loadObject(snapshot, { kind, id, runId = null } = {}) {
     if (typeof id !== "string" || !id) return null;
-    const data = kernLesen(snapshot);
-    if (!data) return null;   // siehe Doku: der Dienst faengt loadObject nicht — ein kaputter Kern ist hier "nicht gefunden"
-    return objektLaden(data, String(kind || ""), id);
+    return objektLaden(kernLesen(snapshot), String(kind || ""), id, { runId: runId ? String(runId) : null });
   }
-
   function seite(alle, { pageSize, afterId }) {
     let start = 0;
     if (afterId != null && afterId !== "") {
@@ -421,33 +396,23 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
     const hasMore = start + pageSize < alle.length;
     return { items, hasMore, nextAfterId: hasMore && items.length ? items[items.length - 1].id : null, total: alle.length };
   }
-
   function listPage(snapshot, { query, scopeId, pageSize, afterId, principal } = {}) {
-    const data = B.requireCore(snapshot);   // wirft CORE_* → der Dienst antwortet 503 domain_adapter_failed
+    const data = kernLesen(snapshot);
     if (!Number.isInteger(pageSize) || pageSize < 1) throw fail("invalid_request", "page_size_invalid", 400);
     const rolle = String(principal?.role || "");
     switch (query) {
       case "run.context": {
         const run = laufNachId(data, scopeId);
         if (!run) return { items: [], hasMore: false, nextAfterId: null, aborted: true, abortReason: "scope_not_found" };
-        let eintraege = laufKontextEintraege(data, run);
         if (ROLE_EXECUTOR[rolle]) {
-          // Spezialisten sehen NUR den Kontext ihrer aktiven Auftraege dieses Laufs.
-          const erlaubt = new Set();
-          for (const j of Object.values(data.automation.jobsById)) {
-            if (!istKarte(j) || j.executor !== ROLE_EXECUTOR[rolle] || !["queued", "running"].includes(j.state) || laufFuerJob(data, j) !== run.id) continue;
-            erlaubt.add(j.sourceType + ":" + j.sourceId);
-            for (const r of Array.isArray(j.contextRefs) ? j.contextRefs : []) if (istKarte(r)) erlaubt.add(r.sourceType + ":" + r.sourceId);
-          }
-          eintraege = eintraege.filter((x) => erlaubt.has(x.sourceType + ":" + x.sourceId));
+          const { filter, job } = spezialistenFilter(data, principal, now());
+          if (laufFuerJob(data, job) !== run.id) throw fail("forbidden", "assignment_run_mismatch", 403);
+          return seite(laufKontextEintraege(data, run, job.id, filter), { pageSize, afterId });
         }
-        return seite(eintraege, { pageSize, afterId });
+        return seite(laufKontextEintraege(data, run, run.id, null), { pageSize, afterId });
       }
-      case "lead.context": {
-        const l = leadObjekt(data, scopeId);
-        return seite(l ? [l] : [], { pageSize, afterId });
-      }
-      case "notes.recent": return seite(kommentare(data, scopeId), { pageSize, afterId });
+      case "lead.context": { const l = leadObjekt(data, scopeId); return seite(l ? [l] : [], { pageSize, afterId }); }
+      case "notes.recent": return seite(kommentare(data, "chatgptLead", scopeId), { pageSize, afterId });
       case "run.queue": return seite(laeufe(data).map((r) => laufObjekt(data, r)), { pageSize, afterId });
       case "run.status": return seite(laeufe(data).map((r) => laufStatusObjekt(data, r)), { pageSize, afterId });
       case "policy.current": return seite([policyObjekt()], { pageSize, afterId });
@@ -458,27 +423,23 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
   /* ── Ziel aufloesen (je CAS-Versuch, frisch) ────────────────────────── */
   function resolveTarget(snapshot, { verb, command, principal, descriptor } = {}) {
     const data = kernLesen(snapshot);
-    if (!data) throw fail("core_invalid", "core_invalid", 503);
     if (!VERB_BINDINGS[verb] || !descriptor) return null;
     const p = command.payload || {};
     const res = descriptor.resource;
-    const ankerArt = descriptor.anchor.self ? res.kind : descriptor.anchor.kind;
-    const ankerId = descriptor.anchor.self ? null : (descriptor.anchor.idField ? String(p[descriptor.anchor.idField] || "") : String(command.jobId || ""));
     const ctxId = { tenant, principal, command };
-
     let ressource = null;
     if (res.idField) {
       ressource = objektLaden(data, res.kind, String(p[res.idField] || ""));
     } else if (res.creates) {
       const neu = (id, extra = {}) => basis(res.kind, id, { jobId: command.jobId, isNew: true, entityVersion: 0, ...extra });
       switch (verb) {
-        case "intake.create": ressource = neu(abgeleiteteId("intake", ctxId)); break;
-        case "task.create": ressource = neu(abgeleiteteId("task", ctxId), { leadId: p.leadId }); break;
-        case "briefing.answer": ressource = neu(abgeleiteteId("answer", ctxId), { briefingId: p.briefingId, questionId: p.questionId }); break;
-        case "question.create": ressource = neu(abgeleiteteId("question", ctxId), { leadId: p.leadId }); break;
+        case "intake.create": ressource = neu(p.intakeId || abgeleiteteId("intake", ctxId)); break;
+        case "task.create": ressource = neu(p.taskId || abgeleiteteId("task", ctxId), { leadId: p.leadId }); break;
+        case "briefing.answer": ressource = neu(p.answerId || abgeleiteteId("answer", ctxId), { briefingId: p.briefingId, questionId: p.questionId }); break;
+        case "question.create": ressource = neu(p.questionId || abgeleiteteId("question", ctxId), { leadId: p.leadId }); break;
         case "document.register": ressource = neu(String(p.documentId || "")); break;
         case "worker.assign": ressource = neu(String(p.assignmentId || "")); break;
-        case "worker.return": ressource = neu(String(p.resultRef || ""), { assignmentId: p.assignmentId }); break;
+        case "worker.return": ressource = neu(String(p.resultRef || ""), { assignmentId: p.assignmentId, jobId: String(p.assignmentId || "") }); break;
         case "note.append": ressource = neu(String(p.noteId || ""), { leadId: p.leadId || null, runId: command.jobId }); break;
         default: ressource = null;
       }
@@ -490,56 +451,53 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
       ressource = r ? laufObjekt(data, r) : null;
     }
     if (!ressource) return null;
-
     let anker = ressource;
     if (!descriptor.anchor.self) {
-      anker = objektLaden(data, ankerArt, ankerId);
+      const ankerId = descriptor.anchor.idField ? String(p[descriptor.anchor.idField] || "") : String(command.jobId || "");
+      anker = objektLaden(data, descriptor.anchor.kind, ankerId);
       if (!anker) return null;
     }
     return { resource: ressource, anchor: anker };
   }
 
-  /* ── Aktive Bindung (E1-Lease bzw. Auftrag), je CAS-Versuch ─────────── */
-  function assertActiveBinding({ snapshot, principal, resource, anchor, jobId, nowMs } = {}) {
+  /* ── Aktive Bindung, je CAS-Versuch ─────────────────────────────────── */
+  function leitungsBindung(data, principal, run, command, nowMs) {
+    const lease = command && istKarte(command.lease) ? command.lease : null;
+    if (!lease) return { ok: false, reason: "lease_not_presented" };
+    if (typeof lease.holder !== "string" || !lease.holder || !Number.isSafeInteger(lease.fence) || lease.fence < 1) return { ok: false, reason: "lease_invalid" };
+    let gespeichert;
+    try { E1.readRuntime(data); gespeichert = data.automation.activeLease; } catch (e) { throw uebersetzeE1(e); }
+    if (!istKarte(gespeichert)) return { ok: false, reason: "lease_absent" };
+    // Halter und Fence kommen vom Claimenden; E1 prueft sie gegen die Lease
+    // (Halter, Fence, Ablauf). Der Scope der Lease gehoert zu diesem Lauf.
+    let urteil;
+    try { urteil = E1.checkLeadership(data, { holder: String(lease.holder), scope: String(gespeichert.scope), fence: lease.fence }, nowMs); } catch (e) { throw uebersetzeE1(e); }
+    if (!urteil.ok) return { ok: false, reason: String(urteil.code || "lease_not_held") };
+    const teile = String(gespeichert.scope).split(":");
+    if (teile.length !== 4 || teile[0] !== tenant || teile[1] !== run.date || teile[3] !== POLICY.version) return { ok: false, reason: "lease_scope_mismatch" };
+    return { ok: true, fence: urteil.fence, scope: gespeichert.scope };
+  }
+  function assertActiveBinding({ snapshot, principal, resource, anchor, command, jobId, nowMs } = {}) {
     const data = kernLesen(snapshot);
-    if (!data) return { ok: false, reason: "core_invalid" };
     if (!Number.isSafeInteger(nowMs) || nowMs <= 0) return { ok: false, reason: "now_missing" };
     if (String(principal?.tenant || "") !== tenant) return { ok: false, reason: "tenant_mismatch" };
     const rolle = String(principal?.role || "");
     switch (rolle) {
-      case "user":
-        return String(principal.id) === ownerId ? { ok: true } : { ok: false, reason: "not_household_owner" };
-      case "scheduler":
-      case "backend_checker":
-        return { ok: true };
+      case "user": return String(principal.id) === ownerId ? { ok: true } : { ok: false, reason: "not_household_owner" };
+      case "scheduler": case "backend_checker": return { ok: true };
       case "lead_agent": {
-        // Leitung nur mit aktiver E1-Lease fuer diesen Lauf — durch E1 geprueft.
         const run = laufNachId(data, String(jobId || ""));
         if (!run) return { ok: false, reason: "run_not_found" };
-        let lease;
-        try { E1.readRuntime(data); lease = data.automation.activeLease; } catch (e) { throw uebersetzeE1(e); }
-        if (!istKarte(lease)) return { ok: false, reason: "lease_absent" };
-        let urteil;
-        try { urteil = E1.checkLeadership(data, { holder: String(principal.id), scope: String(lease.scope), fence: lease.fence }, nowMs); } catch (e) { throw uebersetzeE1(e); }
-        if (!urteil.ok) return { ok: false, reason: String(urteil.code || "lease_not_held") };
-        const teile = String(lease.scope).split(":");
-        if (teile.length !== 4 || teile[0] !== tenant || teile[1] !== run.date || teile[3] !== POLICY.version) return { ok: false, reason: "lease_scope_mismatch" };
-        return { ok: true };
+        const b = leitungsBindung(data, principal, run, command, nowMs);
+        return b.ok ? { ok: true } : b;
       }
-      case "specialist_claude":
-      case "specialist_gemini": {
-        const auftragId = anchor && anchor.kind === "assignment" ? anchor.id : (resource && resource.kind === "assignment" ? resource.id : null);
-        const j = auftragId ? data.automation.jobsById[auftragId] : null;
-        if (!istKarte(j)) return { ok: false, reason: "assignment_not_found" };
-        if (j.executor !== ROLE_EXECUTOR[rolle]) return { ok: false, reason: "assignment_foreign_executor" };
-        if (!["queued", "running"].includes(j.state)) return { ok: false, reason: "assignment_not_active:" + String(j.state) };
-        const ablauf = B.msAus(j.expiresAt);
-        if (!Number.isFinite(ablauf) || ablauf <= nowMs) return { ok: false, reason: "assignment_expired" };
-        if (laufFuerJob(data, j) !== String(jobId || "")) return { ok: false, reason: "assignment_run_mismatch" };
-        return { ok: true };
+      case "specialist_claude": case "specialist_gemini": {
+        const auftragId = String(jobId || "");
+        if (anchor && anchor.kind === "assignment" && String(anchor.id) !== auftragId) return { ok: false, reason: "assignment_mismatch" };
+        const pr = auftragPruefen(data, auftragId, ROLE_EXECUTOR[rolle], nowMs);
+        return pr.ok ? { ok: true } : { ok: false, reason: pr.reason };
       }
-      default:
-        return { ok: false, reason: "unknown_role" };
+      default: return { ok: false, reason: "unknown_role" };
     }
   }
 
@@ -559,44 +517,60 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
     if (treffer.length > 1) throw fail("invalid_request", "evidence_ref_ambiguous", 400);
     return treffer[0];
   }
+  /* Kontextreferenzen eines Auftrags: jede Kennung genau einer Quelle zuordnen. */
+  function kontextRefs(data, ids) {
+    const out = [];
+    for (const raw of ids) {
+      const id = String(raw);
+      const treffer = [];
+      for (const st of ["chatgptLead", "chatgptTask", "task"]) if (B.quelleFinden(data, st, id)) treffer.push({ sourceType: st, sourceId: id });
+      for (const [st, karte] of [["document", data.automation.documentsById], ["evidence", data.automation.evidenceById], ["question", data.automation.questionsById]]) if (istKarte(karte[id])) treffer.push({ sourceType: st, sourceId: id });
+      if (!treffer.length) throw fail("invalid_request", "context_ref_unknown", 400);
+      if (treffer.length > 1) throw fail("invalid_request", "context_ref_ambiguous", 400);
+      out.push(treffer[0]);
+    }
+    return out;
+  }
 
   /* ── Wirkung (im CAS-Mutator, ueber den Idempotenz-Umschlag) ────────── */
   function applyVerb(snapshot, befehl, kontext, ziel = {}) {
     const verb = String(befehl?.verb || "");
-    const bindung = VERB_BINDINGS[verb];
-    if (!bindung) throw fail("invalid_request", "verb_unknown", 400);
-    if (bindung.gap) throw fail("invalid_request", "verb_not_bound:" + verb + ":" + bindung.gap, 400);
+    if (!VERB_BINDINGS[verb]) throw fail("invalid_request", "verb_unknown", 400);
     const { principal, resource, anchor } = ziel;
     const nowMs = Date.parse(String(kontext?.now || ""));
     if (!Number.isSafeInteger(nowMs) || nowMs <= 0 || typeof kontext?.requestId !== "string" || !kontext.requestId) throw fail("core_invalid", "prepared_context_invalid", 503);
-    const data = B.requireCore(snapshot);
+    const data = kernLesen(snapshot);
     const p = befehl.payload || {};
     const rolle = String(principal?.role || "");
     const actor = { kind: ROLE_ACTOR_KIND[rolle], id: String(principal?.id || "") };
     if (!actor.kind || !actor.id) throw fail("forbidden", "principal_role_unknown", 403);
     const reducer = B.commandReducer({ policy: POLICY, actor });
-    const ausfuehren = (type, payload) => {
-      try { return reducer(data, { type, payload }, kontext); } catch (e) { throw uebersetzeB(e); }
-    };
-    const verbiete = (feld, grund) => { if (p[feld] !== undefined && p[feld] !== null) throw fail("invalid_request", grund, 400); };
+    const ausfuehren = (type, payload) => { try { return reducer(data, { type, payload }, kontext); } catch (e) { throw uebersetzeB(e); } };
+    const ctxId = { tenant, principal, command: befehl };
+    const lauf = () => { const r = laufNachId(data, String(befehl.jobId || "")); if (!r) throw fail("invalid_request", "RUN_MISSING", 400); return r; };
 
-    let r;            // { data, result }
-    let ids = [];     // Objekte, deren Versionen zurueckgemeldet werden: [kind, id]
+    let r; let ids = [];
     switch (verb) {
       case "intake.create": {
-        verbiete("evidenceRefs", "field_not_bound:evidenceRefs:registerIntake_has_no_evidence");
-        const text = p.text ? String(p.title) + "\n" + String(p.text) : String(p.title);
-        r = ausfuehren("registerIntake", { intakeId: resource.id, text, channel: String(p.source) });
-        ids = [["intake", resource.id]];
-        break;
+        r = ausfuehren("registerIntake", { intakeId: resource.id, text: p.text ? String(p.title) + "\n" + String(p.text) : String(p.title), channel: String(p.source) });
+        ids = [["intake", resource.id]]; break;
       }
       case "intake.accept": {
         const payload = { sourceType: "intake", sourceId: String(p.intakeId), state: "done" };
-        if (p.leadId) payload.linkTo = { sourceType: "chatgptLead", sourceId: String(p.leadId) };
-        else payload.reason = "intake.accept";
-        r = ausfuehren("transitionState", payload);
-        ids = [["intake", String(p.intakeId)]];
-        break;
+        if (p.leadId) payload.linkTo = { sourceType: "chatgptLead", sourceId: String(p.leadId) }; else payload.reason = "intake.accept";
+        r = ausfuehren("transitionState", payload); ids = [["intake", String(p.intakeId)]]; break;
+      }
+      case "task.create": {
+        const payload = { taskId: resource.id, title: String(p.title), linkedLeadId: String(p.leadId) };
+        if (p.dueAt) payload.dueDate = B.lokalDatum(B.msAus(p.dueAt));
+        if (p.notes) payload.notes = String(p.notes);
+        r = ausfuehren("createTask", payload); ids = [["task", resource.id], ["lead", String(p.leadId)]]; break;
+      }
+      case "lead.comment": {
+        const commentId = p.commentId || abgeleiteteId("comment", ctxId);
+        const payload = { sourceType: "chatgptLead", sourceId: String(p.leadId), commentId, text: String(p.text) };
+        if (p.evidenceRefs) payload.evidenceRefs = p.evidenceRefs.map(String);
+        r = ausfuehren("addComment", payload); ids = [["lead", String(p.leadId)], ["note", commentId]]; break;
       }
       case "lead.transition": {
         if (!B.OPERATIONAL_STATES.includes(p.toState)) throw fail("invalid_request", "to_state_unknown", 400);
@@ -605,108 +579,135 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
         if (p.reason) payload.reason = String(p.reason);
         const beleg = belegAus(data, p.evidenceRefs, { pflicht: false });
         if (beleg) { if (beleg.kind === "question") throw fail("invalid_request", "evidence_ref_kind_not_closing:question", 400); payload.evidence = beleg; }
-        r = ausfuehren("transitionState", payload);
-        ids = [["lead", String(p.leadId)]];
-        break;
+        r = ausfuehren("transitionState", payload); ids = [["lead", String(p.leadId)]]; break;
       }
       case "lead.schedule": {
-        verbiete("reason", "field_not_bound:reason:setWaiting_has_no_reason");
         const beleg = belegAus(data, p.evidenceRefs, { pflicht: true });
         if (beleg.kind === "answer") throw fail("invalid_request", "evidence_ref_kind_not_waiting:answer", 400);
         const state = beleg.kind === "job" ? "delegated" : beleg.kind === "question" ? "waiting_user" : "waiting_external";
-        if (p.followUpAt && p.followUpAt !== p.waitUntil) throw fail("invalid_request", "wait_until_follow_up_conflict", 400);
-        r = ausfuehren("setWaiting", {
-          sourceType: "chatgptLead", sourceId: String(p.leadId), expectedVersion: befehl.expectedEntityVersion, state,
-          counterparty: String(p.counterparty), nextAction: String(p.nextAction), followUpAt: String(p.waitUntil), evidence: beleg,
-        });
-        ids = [["lead", String(p.leadId)]];
-        break;
+        r = ausfuehren("setWaiting", { sourceType: "chatgptLead", sourceId: String(p.leadId), expectedVersion: befehl.expectedEntityVersion, state, counterparty: String(p.counterparty), nextAction: String(p.nextAction), followUpAt: String(p.waitUntil), evidence: beleg });
+        ids = [["lead", String(p.leadId)]]; break;
       }
       case "briefing.answer": {
-        verbiete("decision", "field_not_bound:decision:recordAnswer_has_no_decision");
         const q = data.automation.questionsById[String(p.questionId)];
         if (!istKarte(q)) throw fail("invalid_request", "QUESTION_NOT_FOUND", 400);
         if (q.runDate && "run_" + q.runDate !== String(p.briefingId)) throw fail("invalid_request", "briefing_question_mismatch", 400);
         r = ausfuehren("recordAnswer", { answerId: resource.id, questionId: String(p.questionId), text: String(p.answer) });
-        ids = [["briefing_answer", resource.id], ["question", String(p.questionId)]];
-        break;
+        ids = [["briefing_answer", resource.id], ["question", String(p.questionId)]]; break;
       }
       case "briefing.consumeAnswer": {
         const a = data.automation.answersById[String(p.answerId)];
         const q = istKarte(a) ? data.automation.questionsById[a.questionId] : null;
         if (istKarte(q) && q.runDate && "run_" + q.runDate !== String(p.briefingId)) throw fail("invalid_request", "briefing_answer_mismatch", 400);
-        r = ausfuehren("consumeAnswer", { answerId: String(p.answerId), consumer: actor.id });
-        ids = [["briefing_answer", String(p.answerId)]];
-        break;
+        r = ausfuehren("consumeAnswer", { answerId: String(p.answerId), consumer: actor.id }); ids = [["briefing_answer", String(p.answerId)]]; break;
       }
       case "question.create": {
-        verbiete("options", "field_not_bound:options:askQuestion_has_no_options");
         const run = laufNachId(data, String(befehl.jobId || ""));
-        r = ausfuehren("askQuestion", { questionId: resource.id, sourceType: "chatgptLead", sourceId: String(p.leadId), text: String(p.text), date: run ? run.date : undefined });
-        ids = [["question", resource.id], ["lead", String(p.leadId)]];
-        break;
+        const payload = { questionId: resource.id, sourceType: "chatgptLead", sourceId: String(p.leadId), text: String(p.text), date: run ? run.date : undefined };
+        if (p.options) payload.options = p.options.map(String);
+        r = ausfuehren("askQuestion", payload); ids = [["question", resource.id], ["lead", String(p.leadId)]]; break;
       }
       case "question.resolve": {
-        const answerId = abgeleiteteId("answer", { tenant, principal, command: befehl });
+        const answerId = p.answerId || abgeleiteteId("answer", ctxId);
         r = ausfuehren("recordAnswer", { answerId, questionId: String(p.questionId), text: String(p.answer) });
-        ids = [["question", String(p.questionId)], ["briefing_answer", answerId]];
-        break;
+        ids = [["question", String(p.questionId)], ["briefing_answer", answerId]]; break;
+      }
+      case "document.register": {
+        r = ausfuehren("registerDocument", { documentId: resource.id, attachmentId: String(p.attachmentRef), name: String(p.title), hash: String(p.contentHash), mime: String(p.mime), size: p.size, origin: { channel: String(p.origin), ref: kontext.requestId }, linkedTo: { sourceType: "chatgptLead", sourceId: String(p.leadId) } });
+        ids = [["document", resource.id], ["lead", String(p.leadId)]]; break;
+      }
+      case "document.processed": {
+        r = ausfuehren("recordDocumentParse", { documentId: String(p.documentId), outcome: "parsed", textRef: String(p.extractionRef), extractHash: String(p.contentHash) });
+        ids = [["document", String(p.documentId)]]; break;
+      }
+      case "worker.assign": {
+        r = ausfuehren("createJob", { jobId: resource.id, kind: String(p.jobKind), purpose: String(p.purpose), sourceType: String(p.sourceType), sourceId: String(p.sourceId), inputVersion: p.sourceVersion, executor: String(p.executor), contextRefs: kontextRefs(data, p.allowedContextIds), expiresAt: String(p.dueAt) });
+        ids = [["assignment", resource.id]]; break;
+      }
+      case "worker.return": {
+        const j = data.automation.jobsById[String(p.assignmentId)];
+        if (istKarte(j) && !(j.acceptedVersions || [j.inputVersion]).includes(p.sourceVersion)) throw fail("domain_conflict", "source_version_not_accepted", 409);
+        r = ausfuehren("recordJobReturn", { jobId: String(p.assignmentId), outcome: "returned", resultRef: String(p.resultRef), resultHash: String(p.resultHash), summary: String(p.summary) });
+        ids = [["worker_result", String(p.resultRef)], ["assignment", String(p.assignmentId)]]; break;
       }
       case "worker.review": {
-        if (p.verdict === "revise") throw fail("invalid_request", "verdict_not_bound:revise:reviewJobResult_knows_accepted_rejected", 400);
         const erg = ergebnisObjekt(data, String(p.resultId));
         if (!erg) throw fail("invalid_request", "worker_result_not_found", 400);
         const payload = { jobId: erg.assignmentId, verdict: p.verdict, reviewer: actor.id };
         if (p.notes) payload.note = String(p.notes);
-        r = ausfuehren("reviewJobResult", payload);
-        ids = [["worker_result", String(p.resultId)], ["assignment", erg.assignmentId]];
-        break;
+        r = ausfuehren("reviewJobResult", payload); ids = [["worker_result", String(p.resultId)], ["assignment", erg.assignmentId]]; break;
       }
       case "run.ensure": {
         if (!SLOT_VON_C2[p.slot]) throw fail("invalid_request", "slot_unknown", 400);
         if ("run_" + String(p.date) !== String(befehl.jobId)) throw fail("invalid_request", "run_id_date_mismatch", 400);
-        r = ausfuehren("ensureRun", { date: String(p.date) });
-        ids = [["run", "run_" + String(p.date)]];
-        break;
+        r = ausfuehren("ensureRunSlot", { date: String(p.date), slot: SLOT_VON_C2[p.slot], receiptId: p.receiptId || "rcpt_" + String(p.date) + "_" + SLOT_VON_C2[p.slot] });
+        ids = [["run", "run_" + String(p.date)]]; break;
       }
-      case "run.claim":
-      case "run.renew": {
-        const run = laufNachId(data, String(befehl.jobId || ""));
-        if (!run) throw fail("invalid_request", "RUN_MISSING", 400);
-        const ttlMs = Number(p.leaseSeconds) * 1000;
+      case "run.claim": {
+        const run = lauf();
+        const slot = B.aktuellerSlot(nowMs);
+        if (slot.date !== run.date) throw fail("domain_conflict", "run_not_current_day", 409);
         let e1;
-        try {
-          if (verb === "run.claim") {
-            const slot = B.aktuellerSlot(nowMs);
-            if (slot.date !== run.date) throw fail("stale_entity_version", "run_not_current_day", 409);
-            e1 = E1.acquireLease(data, { holder: actor.id, scope: B.slotKey(tenant, run.date, slot.slot, POLICY.version), ttlMs, now: nowMs });
-          } else {
-            E1.readRuntime(data);
-            const lease = data.automation.activeLease;
-            if (!istKarte(lease)) throw fail("stale_entity_version", "lease:lease_absent", 409);
-            if (String(lease.holder) !== actor.id) throw fail("stale_entity_version", "lease:lease_foreign_holder", 409);
-            // Der Fence wird hier aus dem gespeicherten Lease gelesen — C2 traegt keinen (Luecke FENCE_NOT_PRESENTED_BY_C2).
-            e1 = E1.renewLease(data, { holder: actor.id, fence: lease.fence, scope: String(lease.scope), ttlMs, now: nowMs });
-          }
-        } catch (e) { throw typeof e?.reason === "string" ? e : uebersetzeE1(e); }   // eigene fail()-Fehler durchreichen, E1-Fehler uebersetzen
-        if (!e1 || !e1.result || e1.result.ok !== true) throw fail("stale_entity_version", "lease:" + String(e1?.result?.code || "rejected"), 409);
-        r = { data: e1.data, result: { fence: e1.result.fence ?? null, acquired: e1.result.acquired ?? null, renewed: e1.result.renewed ?? null, expiresAtMs: e1.result.lease ? e1.result.lease.expiresAtMs : null, duplicate: e1.result.duplicate ?? false, noop: e1.unchanged === true } };
-        ids = [["run", run.id]];
-        break;
+        try { e1 = E1.acquireLease(data, { holder: actor.id, scope: B.slotKey(tenant, run.date, slot.slot, POLICY.version), ttlMs: Number(p.leaseSeconds) * 1000, now: nowMs }); } catch (e) { throw uebersetzeE1(e); }
+        if (!e1 || !e1.result || e1.result.ok !== true) throw fail("domain_conflict", "lease:" + String(e1?.result?.code || "rejected"), 409);
+        r = { data: e1.data, result: { fence: e1.result.fence ?? null, scope: e1.result.lease ? e1.result.lease.scope : null, acquired: e1.result.acquired ?? null, duplicate: e1.result.duplicate ?? false, expiresAtMs: e1.result.lease ? e1.result.lease.expiresAtMs : null, noop: e1.unchanged === true } };
+        ids = [["run", run.id]]; break;
+      }
+      case "run.renew": {
+        const run = lauf();
+        const lease = istKarte(befehl.lease) ? befehl.lease : null;
+        if (!lease) throw fail("forbidden", "lease_not_presented", 403);
+        if (String(lease.holder) !== actor.id) throw fail("forbidden", "lease_holder_mismatch", 403);
+        let gespeichert;
+        try { E1.readRuntime(data); gespeichert = data.automation.activeLease; } catch (e) { throw uebersetzeE1(e); }
+        if (!istKarte(gespeichert)) throw fail("domain_conflict", "lease:lease_absent", 409);
+        let e1;
+        try { e1 = E1.renewLease(data, { holder: actor.id, fence: lease.fence, scope: String(gespeichert.scope), ttlMs: Number(p.leaseSeconds) * 1000, now: nowMs }); } catch (e) { throw uebersetzeE1(e); }
+        if (!e1 || !e1.result || e1.result.ok !== true) throw fail("domain_conflict", "lease:" + String(e1?.result?.code || "rejected"), 409);
+        r = { data: e1.data, result: { fence: e1.result.fence ?? null, renewed: e1.result.renewed ?? null, lateRenewal: e1.result.lateRenewal ?? null, expiresAtMs: e1.result.lease ? e1.result.lease.expiresAtMs : null, noop: false } };
+        ids = [["run", run.id]]; break;
+      }
+      case "run.checkpoint": {
+        const run = lauf();
+        const payload = { date: run.date, checkpointId: p.checkpointId || abgeleiteteId("cp", ctxId), stage: String(p.stage) };
+        if (p.note) payload.note = String(p.note);
+        r = ausfuehren("recordRunCheckpoint", payload); ids = [["run", run.id]]; break;
       }
       case "run.finalize": {
-        if (p.outcome !== "complete") throw fail("invalid_request", "outcome_not_bound:" + String(p.outcome) + ":closeRun_only_closes_green_runs", 400);
-        const run = laufNachId(data, String(befehl.jobId || ""));
-        if (!run) throw fail("invalid_request", "RUN_MISSING", 400);
-        r = ausfuehren("closeRun", { date: run.date, finalNoteId: p.summaryRef ? String(p.summaryRef) : "note_final_" + run.date });
-        ids = [["run", run.id]];
-        break;
+        const run = lauf();
+        if (p.outcome === "complete") r = ausfuehren("closeRun", { date: run.date, finalNoteId: p.summaryRef ? String(p.summaryRef) : "note_final_" + run.date });
+        else {
+          // partial/failed: der Kern schliesst nur gruene Laeufe (kein done ohne Nachweis).
+          // Der Befund des Pruefers wird als Laufereignis festgehalten; der Lauf bleibt offen.
+          const payload = { date: run.date, eventId: abgeleiteteId("fin", ctxId), event: "finalize:" + String(p.outcome) };
+          if (p.summaryRef) payload.detail = "summaryRef:" + String(p.summaryRef);
+          r = ausfuehren("recordRunEvent", payload);
+        }
+        ids = [["run", run.id]]; break;
       }
-      default:
-        throw fail("invalid_request", "verb_not_bound:" + verb + ":unexpected", 400);
+      case "note.append": {
+        const run = lauf();
+        if (p.noteScope === "lead" && !p.leadId) throw fail("invalid_request", "lead_id_required_for_lead_scope", 400);
+        const payload = { date: run.date, noteId: resource.id, text: String(p.text) };
+        if (p.leadId) payload.linkedLeadId = String(p.leadId);
+        r = ausfuehren("appendRunNote", payload); ids = [["note", resource.id], ["run", run.id]]; break;
+      }
+      case "run.log": {
+        const run = lauf();
+        const payload = { date: run.date, eventId: p.eventId || abgeleiteteId("ev", ctxId), event: String(p.event) };
+        if (p.detail) payload.detail = String(p.detail);
+        r = ausfuehren("recordRunEvent", payload); ids = [["run", run.id]]; break;
+      }
+      case "run.sourceCheck": {
+        const run = lauf();
+        const payload = { date: run.date, sourceId: String(p.sourceId), cursor: String(p.cursor), outcome: String(p.outcome) };
+        if (p.detail) payload.detail = String(p.detail);
+        r = ausfuehren("recordSourceCheck", payload); ids = [["run", run.id]]; break;
+      }
+      default: throw fail("invalid_request", "verb_unknown", 400);
     }
 
-    // Versionen NACH der Wirkung, aus dem Ergebnisbestand gelesen — nichts geschaetzt.
+    // Versionen NACH der Wirkung, aus dem Ergebnisbestand gelesen.
     const entityVersions = {};
     for (const [kind, id] of ids) {
       const o = objektLaden(r.data, kind, id);
@@ -721,7 +722,7 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
       if (["ok", "replayed", "serverNow", "dataRevision", "requestId", "data"].includes(k)) continue;
       if (v === null || ["string", "number", "boolean"].includes(typeof v)) effect[k] = v;
     }
-    return { data: r.data, result: { entityVersions, verb, command: bindung.command, effect } };
+    return { data: r.data, result: { entityVersions, verb, command: VERB_BINDINGS[verb], effect } };
   }
 
   return Object.freeze({
@@ -735,8 +736,6 @@ export function describeDomainPorts({ read = (n) => process.env[n], ports = {} }
   const fehlend = [];
   if (ports.policy === undefined && !String(read(DOMAIN_PORT_VARS.policyJson) || "").trim()) fehlend.push(DOMAIN_PORT_VARS.policyJson);
   if (ports.ownerId === undefined && !String(read(DOMAIN_PORT_VARS.ownerUid) || "").trim()) fehlend.push(DOMAIN_PORT_VARS.ownerUid);
-  const e1 = ports.runtimeState !== undefined ? ports.runtimeState : E1_MODUL;
-  if (!e1 || !E1_METHODEN.every((m) => typeof e1[m] === "function")) fehlend.push("quantus-v3-runtime-state.mjs");
   return { ok: fehlend.length === 0, missing: fehlend };
 }
 
