@@ -179,12 +179,13 @@ the all-writer gate passed. Do not infer production rules from checked-in rules.
   `npm audit` now reports zero vulnerabilities. Earlier audit flagged
   [ICNS parser DoS](https://github.com/advisories/GHSA-w3rx-r6r6-pgpr) and
   [JXL/HEIF parser DoS](https://github.com/advisories/GHSA-5p2g-fcmc-qvqq).
-- Legacy privileged restore: 51 behavior tests pass, including a real call
+- Legacy privileged restore: 53 behavior tests pass, including a real call
   through the restore orchestration with conditional in-memory storage and
   on-disk audit writes. Concurrent changes or migration during confirmation are
   not overwritten; missing/wildcard preconditions fail closed. Existing restore
   contract: 218 checks pass. Partial states containing only an actual `*ById`
-  map, source cursor, policy marker or runtime ledger also refuse restoration
+  map, source cursor, policy marker, runtime ledger or runtime initialization
+  marker also refuse restoration
   before confirmation, even without a schema/revision marker. No actual target
   database was restored.
 
@@ -239,7 +240,9 @@ initialized runtime after lease release resets the fence and cost ledger.
 All six were reproduced with real pure functions and a passing normal-dispatch
 control. The subsequent E1 correction f6d6a16, checked at307ee47, passes all16
 independent runtime tests and120 authored tests. It adds a separate runtimeInit
-marker; explicit migration/restore handling remains a required integration gate.
+marker. The legacy restore guard now also rejects a partial state containing
+only this marker, both in a backup and in the current core. Explicit runtime
+migration and isolated v3 recovery remain required integration gates.
 
 The E2 cloud component1537336 passes80 authored tests but fails three independent
 HTTP-level counterexamples: simultaneous same-slot delivery enters external work

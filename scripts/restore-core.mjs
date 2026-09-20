@@ -120,7 +120,7 @@ export function pruefeLegacyRestoreGrenze(daten) {
     "jobs", "questions", "answers", "documents", "intake",
     "intakeById", "questionsById", "answersById", "documentsById", "jobsById",
     "outboxById", "evidenceById", "progressById", "waitingById", "sourceCursors",
-    "policyRef", "runtime",
+    "policyRef", "runtime", "runtimeInit",
   ].some((key) => Object.hasOwn(automation, key));
   const ambiguousAutomation = Object.hasOwn(daten, "automation")
     && (!automation || typeof automation !== "object" || Array.isArray(automation));

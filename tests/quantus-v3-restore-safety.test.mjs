@@ -139,7 +139,7 @@ for (const partial of [
 for (const field of [
   "intakeById", "questionsById", "answersById", "documentsById", "jobsById",
   "outboxById", "evidenceById", "progressById", "waitingById", "sourceCursors",
-  "policyRef", "runtime",
+  "policyRef", "runtime", "runtimeInit",
 ]) {
   for (const side of ["backup", "current"]) {
     test(`partial ${field} in ${side} refuses the whole restore before confirmation`, async (t) => {
