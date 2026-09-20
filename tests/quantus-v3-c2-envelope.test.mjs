@@ -31,7 +31,7 @@ test("das Beispiel aus dem Konzept wird wörtlich angenommen", () => {
   assert.equal(res.descriptor.resource.idField, "leadId");
   assert.equal(res.descriptor.anchor.self, true);
   assert.equal(COMMAND_SCHEMA_VERSION, 3);
-  assert.deepEqual([...ENVELOPE_FIELDS], ["schemaVersion", "verb", "jobId", "expectedEntityVersion", "payload"]);
+  assert.deepEqual([...ENVELOPE_FIELDS], ["schemaVersion", "verb", "jobId", "expectedEntityVersion", "payload", "lease"]);
 });
 
 test("der Umschlag ist geschlossen", () => {
@@ -109,9 +109,10 @@ test("jedes Fachverb hat ein Schema, ein Ziel und eine bekannte Objektart", () =
   // Genau die Verben der C1-Matrix, ohne das Leseverb.
   const erwartet = VERBS.filter((v) => v !== "context.read").sort();
   assert.deepEqual([...COMMAND_VERB_NAMES].sort(), erwartet);
-  // 22 Fachverben — die Zahl, auf die sich die Browser-Warteschlange stützt.
-  // Wächst oder schrumpft der Umschlag, fällt es hier auf, nicht dort.
-  assert.equal(COMMAND_VERB_NAMES.length, 22);
+  // 23 Fachverben: die 22 des Konzepts plus run.sourceCheck (Quellenpruefung
+  // des Pruefers, C3a). Die Browser-Warteschlange kennt weiter nur ihre 22
+  // Nutzerverben; waechst oder schrumpft der Umschlag, faellt es hier auf.
+  assert.equal(COMMAND_VERB_NAMES.length, 23);
 
   for (const [verb, beschreibung] of Object.entries(COMMAND_VERBS)) {
     assert.ok(beschreibung.fields && Object.keys(beschreibung.fields).length, `${verb} hat kein Schema`);
@@ -144,14 +145,17 @@ test("jedes Fachverb hat ein Schema, ein Ziel und eine bekannte Objektart", () =
 
 test("Beispiele aus mehreren Verben laufen durch", () => {
   const faelle = [
-    ["run.claim", { leaseSeconds: 300 }],
+    ["run.claim", { leaseSeconds: 120 }],
     ["run.finalize", { outcome: "complete" }],
     ["run.ensure", { slot: "09:00", date: "2026-09-20" }],
-    ["worker.assign", { assignmentId: "a_1", executor: "claude", sourceVersion: 3, allowedContextIds: ["ctx_1"] }],
-    ["worker.return", { assignmentId: "a_1", resultRef: "r_1", summary: "fertig", sourceVersion: 3 }],
+    ["worker.assign", { assignmentId: "a_1", executor: "claude", sourceVersion: 3, allowedContextIds: ["ctx_1"], dueAt: "2026-09-25T09:00:00Z", sourceType: "chatgptLead", sourceId: "lead_1", purpose: "Offerte pruefen", jobKind: "recherche" }],
+    ["worker.return", { assignmentId: "a_1", resultRef: "r_1", summary: "fertig", sourceVersion: 3, resultHash: "d".repeat(64) }],
     ["lead.schedule", { leadId: "lead_1", waitUntil: "2026-09-25T09:00:00Z", counterparty: "Muster AG", nextAction: "Nachfassen", evidenceRefs: ["artifact_1"] }],
-    ["document.register", { documentId: "doc_1", title: "Vertrag", attachmentRef: "att_1", contentHash: "a".repeat(64), origin: "mail" }],
-    ["briefing.answer", { briefingId: "b_1", questionId: "q_1", answer: "ja", decision: "yes" }],
+    ["document.register", { documentId: "doc_1", title: "Vertrag", attachmentRef: "attachment-text__chatgptLead__lead_123__vertrag.pdf", contentHash: "a".repeat(64), origin: "mail", mime: "application/pdf", size: 1234, leadId: "lead_1" }],
+    ["briefing.answer", { briefingId: "b_1", questionId: "q_1", answer: "ja", answerId: "a_1" }],
+    ["run.sourceCheck", { sourceId: "gmail-inbox", cursor: "c1", outcome: "ok" }],
+    ["lead.transition", { leadId: "lead:1", toState: "done" }],
+    ["run.renew", { leaseSeconds: 10 }],
     ["note.append", { noteId: "n_1", text: "Notiz", noteScope: "run" }],
   ];
   for (const [verb, payload] of faelle) {
@@ -160,7 +164,17 @@ test("Beispiele aus mehreren Verben laufen durch", () => {
   }
   // Ungültige Aufzählungswerte und Grenzen.
   assert.equal(parseCommandEnvelope({ schemaVersion: 3, verb: "run.ensure", jobId: "job_1", expectedEntityVersion: 0, payload: { slot: "05:00", date: "2026-09-20" } }).ok, false);
-  assert.equal(parseCommandEnvelope({ schemaVersion: 3, verb: "run.claim", jobId: "job_1", expectedEntityVersion: 0, payload: { leaseSeconds: 901 } }).ok, false);
+  assert.equal(parseCommandEnvelope({ schemaVersion: 3, verb: "run.claim", jobId: "job_1", expectedEntityVersion: 0, payload: { leaseSeconds: 121 } }).ok, false);
+  assert.equal(parseCommandEnvelope({ schemaVersion: 3, verb: "run.claim", jobId: "job_1", expectedEntityVersion: 0, payload: { leaseSeconds: 9 } }).ok, false, "unter dem E1-Minimum");
+  assert.equal(parseCommandEnvelope({ schemaVersion: 3, verb: "document.register", jobId: "job_1", expectedEntityVersion: 0, payload: { documentId: "doc_1", title: "V", attachmentRef: "att_1", contentHash: "a".repeat(64), origin: "mail", mime: "a/b", size: 1, leadId: "l" } }).reason, "field_invalid:attachmentRef", "nur ein Anhangsschluessel");
+  assert.equal(parseCommandEnvelope({ schemaVersion: 3, verb: "lead.transition", jobId: "job_1", expectedEntityVersion: 0, payload: { leadId: "attachment-text__a", toState: "done" } }).ok, false, "__ bleibt verboten");
+  // Der praesentierte Lease-Nachweis: nur Halter und Fence, beide geformt.
+  const mitLease = (lease) => parseCommandEnvelope({ schemaVersion: 3, verb: "run.renew", jobId: "job_1", expectedEntityVersion: 0, payload: { leaseSeconds: 60 }, lease });
+  assert.deepEqual(mitLease({ holder: "cloud-scheduler", fence: 3 }).command.lease, { holder: "cloud-scheduler", fence: 3 });
+  assert.equal(parseCommandEnvelope({ schemaVersion: 3, verb: "run.renew", jobId: "job_1", expectedEntityVersion: 0, payload: { leaseSeconds: 60 } }).command.lease, undefined, "ohne Angabe kein Feld — der kanonische Befehl bleibt unveraendert");
+  for (const kaputt of [null, "x", { holder: "h" }, { fence: 1 }, { holder: "h", fence: 0 }, { holder: "h", fence: 1.5 }, { holder: "h", fence: 1, scope: "s" }, { holder: "attachment-text__x", fence: 1 }]) {
+    assert.equal(mitLease(kaputt).reason, "lease_invalid", JSON.stringify(kaputt));
+  }
   assert.equal(parseCommandEnvelope({ schemaVersion: 3, verb: "run.ensure", jobId: "job_1", expectedEntityVersion: 0, payload: { slot: "09:00", date: "20.09.2026" } }).ok, false);
 });
 
@@ -184,13 +198,16 @@ test("die Kernvertragsfelder sind Pflicht — nichts wird erfunden", () => {
 
   // Ein Dokument ohne Anhang, Abdruck oder Herkunft ist keine Registrierung.
   assert.equal(ohne("document.register", { documentId: "d_1", title: "T" }).reason, "field_missing:attachmentRef");
-  assert.equal(ohne("document.register", { documentId: "d_1", title: "T", attachmentRef: "a_1" }).reason, "field_missing:contentHash");
-  assert.equal(ohne("document.register", { documentId: "d_1", title: "T", attachmentRef: "a_1", contentHash: "kein-hash", origin: "mail" }).reason, "field_invalid:contentHash");
+  assert.equal(ohne("document.register", { documentId: "d_1", title: "T", attachmentRef: "attachment-text__chatgptLead__lead_123__vertrag.pdf" }).reason, "field_missing:contentHash");
+  assert.equal(ohne("document.register", { documentId: "d_1", title: "T", attachmentRef: "attachment-text__chatgptLead__lead_123__vertrag.pdf", contentHash: "kein-hash", origin: "mail" }).reason, "field_invalid:contentHash");
+  assert.equal(ohne("document.register", { documentId: "d_1", title: "T", attachmentRef: "attachment-text__chatgptLead__lead_123__vertrag.pdf", contentHash: "a".repeat(64), origin: "mail" }).reason, "field_missing:mime");
 
   // Ein Worker-Auftrag ohne Quellversion oder erlaubte Kontexte ebenso.
   assert.equal(ohne("worker.assign", { assignmentId: "a_1", executor: "claude" }).reason, "field_missing:sourceVersion");
   assert.equal(ohne("worker.assign", { assignmentId: "a_1", executor: "claude", sourceVersion: 1 }).reason, "field_missing:allowedContextIds");
   assert.equal(ohne("worker.return", { assignmentId: "a_1", resultRef: "r_1", summary: "s" }).reason, "field_missing:sourceVersion");
+  assert.equal(ohne("worker.return", { assignmentId: "a_1", resultRef: "r_1", summary: "s", sourceVersion: 1 }).reason, "field_missing:resultHash");
+  assert.equal(ohne("worker.assign", { assignmentId: "a_1", executor: "claude", sourceVersion: 1, allowedContextIds: [] }).reason, "field_missing:dueAt");
 
   // Und die alten, lockereren Felder gibt es nicht mehr.
   assert.equal(ohne("worker.assign", { assignmentId: "a_1", workerKind: "claude", contextRef: "c_1" }).ok, false);

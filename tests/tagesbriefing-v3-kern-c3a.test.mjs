@@ -164,6 +164,17 @@ test("Dokumente: registerDocument auch durch den Nutzer, recordDocumentParse auc
   assert.equal(run(d, "recordDocumentParse", { documentId: "doc_1", outcome: "parsed", textRef: ATT, extractHash: "b".repeat(64) }, WORKER).error, "ACTOR_REJECTED");
 });
 
+test("askQuestion traegt Antwortoptionen (C3a): kurze Liste, geprueft, die Antwort bleibt Freitext", () => {
+  const d = basis();
+  const r = run(d, "askQuestion", { questionId: "q_opt", sourceType: "chatgptLead", sourceId: "l1", text: "Welche Variante?", options: ["A", " B "] });
+  assert.equal(r.ok, true, JSON.stringify(r)); assert.deepEqual(r.data.automation.questionsById.q_opt.options, ["A", "B"]);
+  assert.deepEqual(run(d, "askQuestion", { questionId: "q_o2", sourceType: "chatgptLead", sourceId: "l1", text: "?" }).data.automation.questionsById.q_o2.options, []);
+  assert.equal(run(d, "askQuestion", { questionId: "q_o3", sourceType: "chatgptLead", sourceId: "l1", text: "?", options: "A" }).error, "QUESTION_OPTIONS_INVALID");
+  assert.equal(run(d, "askQuestion", { questionId: "q_o3", sourceType: "chatgptLead", sourceId: "l1", text: "?", options: Array(9).fill("x") }).error, "QUESTION_OPTIONS_INVALID");
+  const a = run(r.data, "recordAnswer", { answerId: "a_opt", questionId: "q_opt", text: "C, keine der beiden" }, USER);
+  assert.equal(a.ok, true, "die Antwort ist nicht auf die Optionen beschraenkt");
+});
+
 test("Kern-Invarianten: jedes neue Kommando hat Schema und Handler, bewegt die Revision genau um eins und laesst Ledger und Lease unberuehrt", () => {
   for (const k of ["createTask", "addComment", "appendRunNote", "recordRunEvent", "recordRunCheckpoint"]) assert.ok(K.COMMAND_SCHEMAS[k], k);
   let d = basis();

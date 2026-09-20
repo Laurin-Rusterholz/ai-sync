@@ -175,6 +175,7 @@ export const VERBS = Object.freeze([
   "worker.assign", "worker.return", "worker.review",
   "run.ensure", "run.claim", "run.renew", "run.checkpoint", "run.finalize",
   "note.append", "run.log",
+  "run.sourceCheck",        // NUR Backend: Quellenpruefung fuer den Abschluss
 ]);
 
 export const DATA_CATEGORIES = Object.freeze([
@@ -317,6 +318,7 @@ export const ROLE_POLICY = Object.freeze({
       "run.checkpoint":         ["run"],
       "run.finalize":           ["run"],
       "run.log":                ["run"],
+      "run.sourceCheck":        ["run"],
       "note.append":            ["note"],
     }),
   }),

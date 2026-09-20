@@ -268,7 +268,7 @@ test("Spezialist: Job-Token, aktive Zuweisung und Verbgrenzen", async () => {
     token, headers: commandHeaders({ token }),
     body: commandBody({
       verb: "worker.return", expectedEntityVersion: 0,
-      payload: { assignmentId: "assignment_1", resultRef: "ergebnis_1", summary: "fertig", sourceVersion: 2 },
+      payload: { assignmentId: "assignment_1", resultRef: "ergebnis_1", summary: "fertig", sourceVersion: 2, resultHash: "d".repeat(64) },
     }),
   });
   assert.equal(erlaubt.status, 200, JSON.stringify(erlaubt.body));
@@ -281,7 +281,7 @@ test("Spezialist: Job-Token, aktive Zuweisung und Verbgrenzen", async () => {
     token, headers: commandHeaders({ token }),
     body: commandBody({
       verb: "worker.return", expectedEntityVersion: 0,
-      payload: { assignmentId: "assignment_1", resultRef: "ergebnis_1", summary: "fertig", sourceVersion: 2 },
+      payload: { assignmentId: "assignment_1", resultRef: "ergebnis_1", summary: "fertig", sourceVersion: 2, resultHash: "d".repeat(64) },
     }),
   });
   assert.equal(gesperrt.status, 403);

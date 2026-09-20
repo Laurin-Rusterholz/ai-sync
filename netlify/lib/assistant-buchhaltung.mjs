@@ -685,7 +685,7 @@ export function registerIntake(input, { intakeId, text, channel, receivedAt, sou
  * Eine Antwort ist UNVERAENDERLICH (nur der Nutzer schreibt sie, actor
  * "user") und GENAU EINMAL konsumierbar. Eine offene Frage ist nie eine
  * Freigabe. */
-export function askQuestion(input, { questionId, sourceType, sourceId, text, date }, ctx) {
+export function askQuestion(input, { questionId, sourceType, sourceId, text, date, options }, ctx) {
   ctxPruefen(ctx);
   const data = klon(requireCore(input));
   pruefeId(questionId, "questionId");
@@ -697,12 +697,15 @@ export function askQuestion(input, { questionId, sourceType, sourceId, text, dat
   }
   const t = String(text || "").trim();
   if (!t) return fehler("QUESTION_TEXT_MISSING");
+  // Antwortoptionen (C3a): eine kurze Liste von Vorschlaegen, kein Zwang — die Antwort bleibt Freitext.
+  const opts = options === undefined || options === null ? [] : options;
+  if (!Array.isArray(opts) || opts.length > 8 || !opts.every((o) => typeof o === "string" && o.trim() && o.length <= 200)) return fehler("QUESTION_OPTIONS_INVALID");
   const vorhanden = data.automation.questionsById[questionId];
   if (vorhanden) {
     if (vorhanden.text === t && vorhanden.sourceType === sourceType && vorhanden.sourceId === sourceId) return { ok: true, data, question: vorhanden, created: false };
     return fehler("QUESTION_IMMUTABLE", questionId);
   }
-  const q = { id: questionId, sourceType, sourceId, text: t, askedAt: isoAus(ctx.now), askedBy: ctx.actor ? ctx.actor.id : null, status: "open", answerId: null, runDate: date && istLokalDatum(date) ? date : null };
+  const q = { id: questionId, sourceType, sourceId, text: t, options: opts.map((o) => o.trim()), askedAt: isoAus(ctx.now), askedBy: ctx.actor ? ctx.actor.id : null, status: "open", answerId: null, runDate: date && istLokalDatum(date) ? date : null };
   data.automation.questionsById[questionId] = q;
   bump(data, ctx.now);
   return { ok: true, data, question: q, created: true };
@@ -992,7 +995,7 @@ export function createTask(input, { taskId, title, dueDate, notes, linkedLeadId 
 }
 
 /* Ein Kommentar an einer Quelle: Wortlaut, Zeit, Urheber — keine Zustandswirkung. */
-export function addComment(input, { sourceType, sourceId, commentId, text }, ctx) {
+export function addComment(input, { sourceType, sourceId, commentId, text, evidenceRefs }, ctx) {
   ctxPruefen(ctx);
   const data = klon(requireCore(input));
   if (!QUELLEN[sourceType]) return fehler("SOURCE_TYPE_NOT_STATEFUL", sourceType);
@@ -1001,6 +1004,13 @@ export function addComment(input, { sourceType, sourceId, commentId, text }, ctx
   pruefeId(commentId, "commentId");
   const t = String(text || "").trim();
   if (!t) return fehler("COMMENT_TEXT_MISSING");
+  const refs = evidenceRefs === undefined || evidenceRefs === null ? [] : evidenceRefs;
+  if (!Array.isArray(refs) || refs.length > 20) return fehler("COMMENT_EVIDENCE_INVALID");
+  for (const ref of refs) {
+    const a = data.automation;
+    const r = String(ref);
+    if (!istKarte(a.evidenceById[r]) && !istKarte(a.documentsById[r]) && !istKarte(a.jobsById[r]) && !istKarte(a.answersById[r])) return fehler("EVIDENCE_REF_UNKNOWN", r);
+  }
   if (!Array.isArray(e.comments)) e.comments = [];
   const vorhanden = e.comments.find((c) => istKarte(c) && c.id === commentId);
   if (vorhanden) {
@@ -1008,7 +1018,7 @@ export function addComment(input, { sourceType, sourceId, commentId, text }, ctx
     return fehler("COMMENT_IMMUTABLE", commentId);
   }
   const nowIso = isoAus(ctx.now);
-  const c = { id: commentId, text: t.slice(0, 8000), createdAt: nowIso, author: ctx.actor ? ctx.actor.id : null, authorKind: ctx.actor ? ctx.actor.kind : null };
+  const c = { id: commentId, text: t.slice(0, 8000), createdAt: nowIso, author: ctx.actor ? ctx.actor.id : null, authorKind: ctx.actor ? ctx.actor.kind : null, evidenceRefs: refs.map(String) };
   e.comments.push(c);
   e.updatedAt = nowIso;
   bump(data, ctx.now);

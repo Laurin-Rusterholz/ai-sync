@@ -199,7 +199,7 @@ test("Seitengrösse, Scope-Form und fehlende Adapter", async () => {
   assert.equal(zuGross.status, 400);
   assert.equal(zuGross.body.reason, "page_size_out_of_bounds");
 
-  for (const scopeId of ["appStore/app-data_json", "lead..1", "attachment-text__a", ""]) {
+  for (const scopeId of ["appStore/app-data_json", "lead 1", "attachment-text__a", "", "x".repeat(121)]) {
     const res = await handleReadRequest(leseAnfrage({ scopeId }), d, { route: "quantus-context" });
     assert.equal(res.status, 400, `scopeId "${scopeId}" wurde akzeptiert`);
   }

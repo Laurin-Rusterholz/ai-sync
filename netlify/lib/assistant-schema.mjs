@@ -329,7 +329,7 @@ export const COMMAND_SCHEMAS = Object.freeze({
   setWaiting:           Object.freeze({ required: ["sourceType", "sourceId", "expectedVersion", "state", "counterparty", "nextAction", "followUpAt", "evidence"], optional: [], actors: ["agent"] }),
   transitionState:      Object.freeze({ required: ["sourceType", "sourceId", "state"], optional: ["expectedVersion", "reason", "evidence", "linkTo", "results"], actors: ["agent", "user"] }),
   registerIntake:       Object.freeze({ required: ["intakeId", "text", "channel"], optional: ["receivedAt", "sourceType", "sourceId"], actors: ["user", "adapter", "system"] }),
-  askQuestion:          Object.freeze({ required: ["questionId", "sourceType", "sourceId", "text"], optional: ["date"], actors: ["agent"] }),
+  askQuestion:          Object.freeze({ required: ["questionId", "sourceType", "sourceId", "text"], optional: ["date", "options"], actors: ["agent"] }),
   recordAnswer:         Object.freeze({ required: ["answerId", "questionId", "text"], optional: [], actors: ["user"] }),
   consumeAnswer:        Object.freeze({ required: ["answerId", "consumer"], optional: [], actors: ["agent", "system"] }),
   registerEvidence:     Object.freeze({ required: ["evidenceId", "kind", "ref", "sourceType", "sourceId", "origin", "observedAt", "fingerprint"], optional: ["summary"], actors: ["adapter"] }),
@@ -343,7 +343,7 @@ export const COMMAND_SCHEMAS = Object.freeze({
   invalidateClosure:    Object.freeze({ required: ["date", "correctionId", "reason", "contradiction"], optional: [], actors: ["agent", "system", "user"] }),
   // ── Erweiterung C3a: was die C2-Fachverben brauchen und B bisher nicht hatte ──
   createTask:           Object.freeze({ required: ["taskId", "title"], optional: ["dueDate", "notes", "linkedLeadId"], actors: ["user", "agent"] }),
-  addComment:           Object.freeze({ required: ["sourceType", "sourceId", "commentId", "text"], optional: [], actors: ["user", "agent"] }),
+  addComment:           Object.freeze({ required: ["sourceType", "sourceId", "commentId", "text"], optional: ["evidenceRefs"], actors: ["user", "agent"] }),
   appendRunNote:        Object.freeze({ required: ["date", "noteId", "text"], optional: ["linkedLeadId"], actors: ["user", "agent", "system"] }),
   recordRunEvent:       Object.freeze({ required: ["date", "eventId", "event"], optional: ["detail"], actors: ["agent", "system"] }),
   recordRunCheckpoint:  Object.freeze({ required: ["date", "checkpointId", "stage"], optional: ["note"], actors: ["agent", "system"] }),

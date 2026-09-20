@@ -150,8 +150,8 @@ function cursorConfigFail(reason) {
 export function assertScopeId(scopeId) {
   const s = String(scopeId == null ? "" : scopeId);
   if (!s) return authError("invalid_request", "scope_id_missing");
-  if (s.length > 128) return authError("invalid_request", "scope_id_too_long");
-  if (!/^[A-Za-z0-9_-]+$/.test(s)) return authError("invalid_request", "scope_id_invalid");
+  if (s.length > 120) return authError("invalid_request", "scope_id_too_long");
+  if (!/^[A-Za-z0-9_:-]+$/.test(s)) return authError("invalid_request", "scope_id_invalid");
   // `__` ist der Segmenttrenner der Blob-Schlüssel (blob-key-policy.mjs).
   if (s.includes("__")) return authError("invalid_request", "scope_id_invalid");
   return authOk({ scopeId: s });
