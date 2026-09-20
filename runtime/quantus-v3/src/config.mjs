@@ -35,6 +35,12 @@ export const ACTIVATION_GATES = Object.freeze([
   "trial14Days",            // echter 14-Tage-Probebetrieb
 ]);
 
+/* Die vier Werkzeuge aus C1 — hier nur als Namensliste, damit die
+ * Freischaltung keine unbekannte Kennung annimmt. */
+export const QUANTUS_TOOL_NAMES = Object.freeze([
+  "quantus_context", "quantus_read", "quantus_command", "quantus_run_status",
+]);
+
 export const ENDPOINT_KEYS = Object.freeze({
   worker: ["slot.start", "run.continue"],
   monitor: ["monitor.tick", "monitor.preflight"],
@@ -187,6 +193,28 @@ export function resolveRuntimeConfig(envRead) {
     invalid.push("QUANTUS_V3_REQUIRED_SOURCES:empty_in_live");
   }
 
+  /*
+   * Der Ursprung der vier C2-Routen und die Freischaltung der Werkzeuge.
+   * Beides ist OPTIONAL und standardmaessig AUS: ohne Ursprung gibt es
+   * keinen Transport, ohne Freischaltung kein Werkzeug — der Aufruf endet
+   * dann mit 503, nicht mit einem uebersprungenen Schritt. C1 fuehrt alle
+   * vier Werkzeuge auf `false`; dieses Paket schaltet nichts frei, es
+   * liest nur, was der Betreiber ausdruecklich gesetzt hat.
+   */
+  const c2BaseUrl = read("QUANTUS_V3_C2_BASE_URL") ?? null;
+  if (c2BaseUrl !== null && !/^https:\/\/[A-Za-z0-9.-]+(?::\d+)?$/.test(c2BaseUrl)) invalid.push("QUANTUS_V3_C2_BASE_URL");
+
+  const toolsEnabled = {};
+  for (const name of QUANTUS_TOOL_NAMES) toolsEnabled[name] = false;
+  const toolsRaw = read("QUANTUS_V3_TOOLS_ENABLED");
+  if (toolsRaw !== undefined) {
+    const parsed = parseJson(toolsRaw);
+    if (!parsed.ok || !isRecord(parsed.value)) invalid.push("QUANTUS_V3_TOOLS_ENABLED");
+    else if (Object.keys(parsed.value).some((k) => !QUANTUS_TOOL_NAMES.includes(k))) invalid.push("QUANTUS_V3_TOOLS_ENABLED:unexpected_keys");
+    else if (Object.values(parsed.value).some((v) => typeof v !== "boolean")) invalid.push("QUANTUS_V3_TOOLS_ENABLED:not_boolean");
+    else for (const [k, v] of Object.entries(parsed.value)) toolsEnabled[k] = v;
+  }
+
   const maxLatenessRaw = read("QUANTUS_V3_SLOT_MAX_LATENESS_MS");
   let slotMaxLatenessMs = 6 * 60 * 60 * 1000;
   if (maxLatenessRaw !== undefined) {
@@ -213,6 +241,8 @@ export function resolveRuntimeConfig(envRead) {
       sectionReserveMs: Math.min(SECTION_RESERVE_MS, Math.floor(sectionDeadlineMs / 3)),
       slotMaxLatenessMs,
       requiredSources: Object.freeze(requiredSources),
+      c2BaseUrl,
+      toolsEnabled: Object.freeze(toolsEnabled),
       maxRequestBytes: MAX_REQUEST_BYTES,
     }),
   };

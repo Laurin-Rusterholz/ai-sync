@@ -15,10 +15,16 @@
  *                    gibt sie einem Transport. Der Transport braucht
  *                    Zugangsdaten — die Anfrage selbst nicht, und genau
  *                    die ist hier geprueft.
- *   closureEvidence  liest den Abschlussnachweis ueber den Werkzeugport
- *                    `status.run` (Route `quantus-run-status`) und bildet
- *                    ihn streng ab. Das Werkzeug ist in C1 abgeschaltet,
- *                    also endet der Aufruf dort ehrlich mit 503.
+ *   closureEvidence  komponiert ZWEI echte Leseantworten zu einem
+ *                    Nachweis: `status.run` (`state`/`blocked`/
+ *                    `openQuestions` aus Paket B) UND `sourceChecks.run`
+ *                    (die tatsaechlich gespeicherten Quellenpruefungen —
+ *                    `run.sourceChecks`, NICHT die Arbeitsliste
+ *                    `run.context`). Beide laufen ueber dasselbe
+ *                    Dienst-Zugangsdatum (Rolle `scheduler`). Fehlt eine
+ *                    Seite — Werkzeug abgeschaltet, Transport fehlt —,
+ *                    bleibt der jeweilige Teil leer, nie erfunden; siehe
+ *                    die ausfuehrliche Begruendung weiter unten.
  *
  * Kein Port erfindet einen Erfolg. Wo eine Abhaengigkeit fehlt, ist die
  * Antwort `unavailablePort` mit Grund — und die Route antwortet mit 503.
@@ -26,6 +32,7 @@
 import { availablePort, unavailablePort } from "./ports.mjs";
 import { HttpError } from "./errors.mjs";
 import { taskName } from "./task-names.mjs";
+import { runIdForRunKey, statusScopeIdForRunKey } from "./run-ids.mjs";
 
 /* ── Kern: der echte CAS-/Idempotenzumschlag ──────────────────────────── */
 
@@ -179,43 +186,205 @@ export function createCloudTasksPort({ transport, dispatchDeadline = TASK_DISPAT
   });
 }
 
-/* ── Abschlussnachweis ueber das Werkzeug `quantus_run_status` ────────── */
+/* ── Abschlussnachweis: run.status + run.sourceChecks (beide scheduler) ──
+ *
+ * Vier Dinge muessen fuer ein Gruen ZUSAMMEN belegt sein
+ * (`validateClosureEvidence`, `worker-handlers.mjs`): aktueller Fence,
+ * vollstaendiger Quellensatz, belegter B-Abschluss, aktuelle Version.
+ * Dieser Port liefert dafuer die drei Stuecke, die C2 tatsaechlich
+ * bezeugen kann — kein Fence (den kennt nur E1, der Aufrufer setzt ihn):
+ *
+ *   run.status       (Kategorie `run_status`) — `state`, `blocked`,
+ *                    `openQuestions`: B's eigenes, durch `closeRun`/
+ *                    `dailyAssistantTrafficLight` berechnetes Urteil
+ *                    ueber DIESEN Kalendertag.
+ *   run.sourceChecks (Kategorie `source_check`, enge Nachweisprojektion in
+ *                    C2/Domain, siehe `quantus-v3-domain-adapter.mjs`) —
+ *                    die TATSAECHLICH von B gespeicherten Quellenpruefungen
+ *                    (`run.sourceChecks[sourceId]`, gesetzt durch
+ *                    `recordSourceCheck`): Original-Quellen-Id, Ergebnis,
+ *                    echte Pruefzeit. `run.context` (Arbeitsliste: Leads,
+ *                    Aufgaben) ist KEIN Quellenpruefnachweis und wird
+ *                    hierfuer NICHT mehr verwendet — eine fruehere Fassung
+ *                    tat das und erfand damit `status: "ok"` aus der blossen
+ *                    Anwesenheit eines Arbeitselements.
+ *
+ * Beide Seiten laufen ueber `scheduler` (Dienst-Zugangsdatum) — keine der
+ * beiden Kategorien braucht ein Job-Token. Sie muessen VOLLSTAENDIG sein
+ * (`complete: true`) und dieselbe Datenrevision tragen — sonst waeren
+ * Status und Quellenpruefungen aus zwei verschiedenen Kernstaenden
+ * zusammengewuerfelt.
+ * ═════════════════════════════════════════════════════════════════════════ */
 
-/* Bildet die Antwort des Statuswerkzeugs streng auf die Nachweisform ab.
- * Was nicht vollstaendig und eindeutig ist, wird zu `null` — der Worker
- * beendet den Lauf dann ehrlich unvollstaendig statt gruen. */
-export function mapRunStatusToEvidence(antwort, { runKey, tenant, policyVersion }) {
-  if (antwort === null || typeof antwort !== "object") return null;
-  const status = antwort.runStatus && typeof antwort.runStatus === "object" ? antwort.runStatus : antwort;
-  if (status.runKey !== runKey) return null;
-  if (status.closure === null || typeof status.closure !== "object") return null;
-  const closure = status.closure;
-  if (closure.state !== "final") return null;
-  const quellen = Array.isArray(closure.sources) ? closure.sources : null;
-  if (!quellen) return null;
+export const RUN_STATUS_QUERY = "run.status";
+export const SOURCE_CHECKS_QUERY = "run.sourceChecks";
+export const SOURCE_CHECKS_PAGE_SIZE = 10;   // NAMED_QUERIES["run.sourceChecks"].maxPageSize in C2
+
+/* B's einziger echter Abschlusszustand (`assistant-abschluss.mjs`,
+ * `run.phase = "final"`). Die anderen moeglichen Werte ("created",
+ * "active", "exception_open") sind KEIN Abschluss. */
+export const CLOSURE_FINAL_STATE = "final";
+
+function fehlschlag(code, detail = null) {
+  return { ok: false, code, detail, evidence: null };
+}
+
+/*
+ * Strukturpruefung einer Leseseite gegen den echten C2-Umschlag: Echo,
+ * Vollstaendigkeit, Datenrevision. Die INHALTLICHE Abschlusspruefung
+ * (final/blocked/Quellen vollstaendig) liegt bewusst NICHT hier, sondern
+ * an EINER Stelle in `validateClosureEvidence` — zwei Stellen, die
+ * dieselbe Frage beantworten, laufen sonst leicht auseinander.
+ */
+function seitePruefen(antwort, { query, scopeId }) {
+  if (antwort === null || typeof antwort !== "object") return fehlschlag("response_invalid");
+  if (antwort.status !== 200) return fehlschlag("status_not_ok", { status: antwort.status });
+  const body = antwort.body;
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return fehlschlag("body_invalid");
+  if (body.ok !== true) return fehlschlag("body_not_ok");
+  if (body.query !== query) return fehlschlag("query_echo_mismatch");
+  if (body.scopeId !== scopeId) return fehlschlag("scope_echo_mismatch");
+  if (body.complete !== true || body.pageStatus !== "done" || body.hasMore !== false) {
+    return fehlschlag("page_not_complete", { pageStatus: body.pageStatus ?? null, reason: body.pageReason ?? null });
+  }
+  if (!Array.isArray(body.items)) return fehlschlag("items_not_a_list");
+  if (!Number.isSafeInteger(body.dataRevision) || body.dataRevision < 0) return fehlschlag("data_revision_invalid");
+  const serverNowMs = Date.parse(String(body.serverNow || ""));
+  if (!Number.isSafeInteger(serverNowMs)) return fehlschlag("server_now_invalid");
+  return { ok: true, code: null, body, serverNowMs };
+}
+
+/**
+ * Bildet die `run.status`-Seite auf {state, blocked, openQuestions,
+ * entityVersion, dataRevision, verifiedAtMs} ab — noch OHNE Urteil.
+ */
+export function mapRunStatusPage(antwort, { runId, scopeId }) {
+  const seite = seitePruefen(antwort, { query: RUN_STATUS_QUERY, scopeId });
+  if (!seite.ok) return seite;
+  const { body, serverNowMs } = seite;
+
+  const treffer = body.items.filter((e) => e && typeof e === "object" && e.runId === runId);
+  if (treffer.length === 0) return fehlschlag("run_status_not_found", { runId });
+  if (treffer.length > 1) return fehlschlag("run_status_ambiguous", { count: treffer.length });
+  const eintrag = treffer[0];
+  if (typeof eintrag.id !== "string" || !eintrag.id) return fehlschlag("item_id_missing");
+  if (!Number.isSafeInteger(eintrag.entityVersion)) return fehlschlag("entity_version_invalid");
+  const versionen = body.entityVersions;
+  if (versionen === null || typeof versionen !== "object") return fehlschlag("entity_versions_missing");
+  if (versionen[eintrag.id] !== eintrag.entityVersion) return fehlschlag("entity_version_mismatch");
+
   return {
-    runKey,
-    tenant: typeof status.tenant === "string" ? status.tenant : tenant,
-    policyVersion: typeof status.policyVersion === "string" ? status.policyVersion : policyVersion,
-    fence: Number.isSafeInteger(closure.fence) ? closure.fence : null,
-    dataRevision: Number.isSafeInteger(status.dataRevision) ? status.dataRevision : null,
-    evidenceRef: typeof closure.evidenceRef === "string" ? closure.evidenceRef : null,
-    verifiedAtMs: Number.isSafeInteger(closure.verifiedAtMs) ? closure.verifiedAtMs : null,
-    sources: quellen.map((q) => (q && typeof q === "object"
-      ? { id: q.id, status: q.status, checkedAtMs: Number.isSafeInteger(q.checkedAtMs) ? q.checkedAtMs : null }
-      : { id: null, status: null, checkedAtMs: null })),
+    ok: true, code: null,
+    page: {
+      dataRevision: body.dataRevision, verifiedAtMs: serverNowMs,
+      evidenceRef: `runstatus:${eintrag.id}:v${eintrag.entityVersion}`,
+      state: typeof eintrag.state === "string" ? eintrag.state : null,
+      stage: typeof eintrag.stage === "string" ? eintrag.stage : null,
+      blocked: eintrag.blocked === true,
+      openQuestions: Number.isSafeInteger(eintrag.openQuestions) ? eintrag.openQuestions : null,
+    },
   };
 }
 
-export function createRunStatusClosureEvidencePort({ toolClient, tenant, policyVersion } = {}) {
+/**
+ * Bildet die `run.sourceChecks`-Seite auf ein `sources`-Array ab: EIN
+ * Eintrag je tatsaechlich gespeicherter Quellenpruefung. `id` ist die
+ * ORIGINAL-Quellen-Id aus B (z. B. `gmail-inbox`, `quantus-core`) — genau
+ * die Ids, mit denen `QUANTUS_V3_REQUIRED_SOURCES` konfiguriert wird.
+ * `status`/`checkedAtMs` kommen aus dem echten `recordSourceCheck`-Beleg,
+ * nicht aus einer abgeleiteten Vermutung.
+ */
+export function mapRunSourceChecksPage(antwort, { runId, scopeId }) {
+  const seite = seitePruefen(antwort, { query: SOURCE_CHECKS_QUERY, scopeId });
+  if (!seite.ok) return seite;
+  const { body, serverNowMs } = seite;
+
+  const sources = [];
+  for (const eintrag of body.items) {
+    if (!eintrag || typeof eintrag !== "object") return fehlschlag("items_not_a_list");
+    if (typeof eintrag.id !== "string" || !eintrag.id) return fehlschlag("item_id_missing");
+    if (eintrag.runId !== runId) return fehlschlag("item_outside_run", { id: eintrag.id });
+    const checkedAtMs = Date.parse(String(eintrag.checkedAt || ""));
+    if (!Number.isSafeInteger(checkedAtMs)) return fehlschlag("source_checked_at_invalid", { id: eintrag.id });
+    if (typeof eintrag.outcome !== "string" || !eintrag.outcome) return fehlschlag("source_outcome_invalid", { id: eintrag.id });
+    // "ok" ist das EINZIGE Ergebnis, das eine Quelle als geprueft-bestanden
+    // gelten laesst — "partial"/"auth_error"/"budget_exceeded"/
+    // "unreachable" (B.SOURCE_OUTCOMES) sind alle NICHT "ok".
+    sources.push({ id: eintrag.id, status: eintrag.outcome === "ok" ? "ok" : "not_ok", checkedAtMs });
+  }
+  return { ok: true, code: null, page: { dataRevision: body.dataRevision, verifiedAtMs: serverNowMs, sources } };
+}
+
+/**
+ * Der Nachweisport. Ruft `status.run` UND `sourceChecks.run` (beide
+ * Dienst-Zugangsdatum, Rolle `scheduler`) und fuegt beides zu EINEM
+ * Nachweis zusammen. Jeder der beiden Aufrufe kann fuer sich mit 503
+ * scheitern (Werkzeug abgeschaltet, Transport fehlt) — dann bleibt
+ * `sources` leer, und `validateClosureEvidence` weist den Nachweis
+ * zurueck, statt ihn zu erfinden.
+ */
+export function createRunStatusClosureEvidencePort({ toolClient, tenant, policyVersion, sourceChecksPageSize = SOURCE_CHECKS_PAGE_SIZE } = {}) {
   if (!toolClient || typeof toolClient.call !== "function") {
     return unavailablePort("closureEvidence", "run_status_tool_not_wired");
   }
   return availablePort("closureEvidence", {
-    async load({ runKey, now }) {
-      // Wirft, solange das Werkzeug abgeschaltet ist (C1: ueberall false).
-      const antwort = await toolClient.call("status.run", { query: "run.status", scopeId: runKey }, { now });
-      return mapRunStatusToEvidence(antwort, { runKey, tenant, policyVersion });
+    lastFailure: null,
+    async load({ runKey, fence, now, requestId = null }) {
+      let scopeId; let runId;
+      try {
+        scopeId = statusScopeIdForRunKey(runKey);
+        runId = runIdForRunKey(runKey);
+      } catch (err) {
+        this.lastFailure = err?.code || "run_id_unusable";
+        return null;
+      }
+
+      // 1. run.status — Dienst-Zugangsdatum, immer versucht.
+      const statusAntwort = await toolClient.call(
+        "status.run", { query: RUN_STATUS_QUERY, scopeId, jobId: runId, pageSize: 100 }, { now, requestId },
+      );
+      const statusAbbildung = mapRunStatusPage(statusAntwort, { runId, scopeId });
+      if (!statusAbbildung.ok) { this.lastFailure = statusAbbildung.code; return null; }
+
+      // 2. run.sourceChecks — dieselbe Rolle wie run.status. Scheitert
+      //    dieser Aufruf (Werkzeug abgeschaltet, Transport fehlt), bleibt
+      //    `sources` leer statt geraten.
+      let sources = null;
+      try {
+        const checksAntwort = await toolClient.call(
+          "sourceChecks.run", { query: SOURCE_CHECKS_QUERY, scopeId: runId, jobId: runId, pageSize: sourceChecksPageSize },
+          { now, requestId },
+        );
+        const checksAbbildung = mapRunSourceChecksPage(checksAntwort, { runId, scopeId: runId });
+        if (!checksAbbildung.ok) {
+          this.lastFailure = checksAbbildung.code;
+        } else if (checksAbbildung.page.dataRevision !== statusAbbildung.page.dataRevision) {
+          // Zwei getrennte Leseanfragen duerfen keine verschiedenen
+          // Kernstaende zusammenwuerfeln — sonst waere die Version nicht
+          // mehr AKTUELL fuer beide Teile des Nachweises.
+          this.lastFailure = "data_revision_inconsistent";
+        } else {
+          sources = checksAbbildung.page.sources;
+          this.lastFailure = null;
+        }
+      } catch (err) {
+        this.lastFailure = err instanceof HttpError ? err.error : "source_checks_load_failed";
+      }
+
+      return Object.freeze({
+        runKey, runId, tenant, policyVersion,
+        // Der Fence kommt NICHT von C2 — er gehoert E1, der Aufrufer setzt ihn.
+        fence: Number.isSafeInteger(fence) ? fence : null,
+        fenceAttestedByC2: false,
+        dataRevision: statusAbbildung.page.dataRevision,
+        evidenceRef: statusAbbildung.page.evidenceRef,
+        verifiedAtMs: statusAbbildung.page.verifiedAtMs,
+        state: statusAbbildung.page.state,
+        stage: statusAbbildung.page.stage,
+        blocked: statusAbbildung.page.blocked,
+        openQuestions: statusAbbildung.page.openQuestions,
+        sources,
+      });
     },
   });
 }

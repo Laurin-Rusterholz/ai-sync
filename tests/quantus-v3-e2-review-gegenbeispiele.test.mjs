@@ -16,19 +16,19 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as F from "./quantus-v3-e2-fixtures.mjs";
 import * as PLAN from "../netlify/lib/quantus-v3-runtime-plan.mjs";
-import { validateClosureEvidence, CLOSURE_EVIDENCE_MAX_AGE_MS } from "../runtime/quantus-v3/src/worker-handlers.mjs";
+import { validateClosureEvidence, CLOSURE_EVIDENCE_MAX_AGE_MS, CLOSURE_FINAL_STATE } from "../runtime/quantus-v3/src/worker-handlers.mjs";
 
 const T = PLAN.wallTimeToMs("2026-09-19", 9, 0) + 2_000;
 const RUNKEY = PLAN.slotRunKey(F.TENANT, "2026-09-19", "process09", F.POLICY_VERSION);
 const QUELLEN = ["gmail-inbox", "calendar-primary"];
 
-async function dienst({ sectionWork, closureEvidence, live = false, startMs = T } = {}) {
+async function dienst({ sectionWork, closureEvidence, live = false, startMs = T, corePort = null, clockOverride = null } = {}) {
   const key = F.createSigningKey();
-  const clock = F.createClock(startMs);
+  const clock = clockOverride ?? F.createClock(startMs);
   const core = F.createCorePort(F.createCasStore(F.baseCore()));
   const tasks = F.createTasksPort();
   const ports = {
-    clock: clock.port, jwks: F.jwksPort(key), core: core.port, tasks: tasks.port,
+    clock: clock.port, jwks: F.jwksPort(key), core: corePort ?? core.port, tasks: tasks.port,
     sectionWork: sectionWork ?? F.createSectionWorkPort({ count: 1 }).port,
   };
   if (closureEvidence) ports.closureEvidence = closureEvidence;
@@ -121,6 +121,10 @@ function gueltigerNachweis(over = {}, now = T) {
     dataRevision: null,          // wird je Test gesetzt
     evidenceRef: "closure:2026-09-19:process09:abc123",
     verifiedAtMs: now,
+    // Belegter B-Abschluss: Zustand UND Gesamturteil muessen zusammen
+    // vorliegen (siehe validateClosureEvidence, worker-handlers.mjs).
+    state: CLOSURE_FINAL_STATE,
+    blocked: false,
     sources: QUELLEN.map((id) => ({ id, status: "ok", checkedAtMs: now })),
     ...over,
   };
@@ -223,6 +227,222 @@ test("P0-2e die Nachweispruefung selbst ist streng", () => {
   assert.ok(fehlerVon({ sources: [...gueltigerNachweis().sources, { id: "fremd", status: "ok", checkedAtMs: T }] })
     .some((e) => e.startsWith("sources_unexpected")));
   assert.deepEqual(validateClosureEvidence(null, erwartet).errors, ["closure_evidence_missing"]);
+
+  // BEFUND: `expected.now - checkedAtMs` wird bei einer Pruefzeit in der
+  // ZUKUNFT negativ und faellt dann nie unter die Altersgrenze — egal wie
+  // weit in der Zukunft sie liegt. Eine solche Pruefzeit ist falsch, nicht
+  // "besonders frisch", und muss abgewiesen werden.
+  const zukunft = fehlerVon({ sources: QUELLEN.map((id) => ({ id, status: "ok", checkedAtMs: T + 10_000_000 })) });
+  assert.ok(zukunft.some((e) => e.startsWith("source_checked_in_future")), zukunft.join(","));
+  assert.ok(!zukunft.some((e) => e.startsWith("source_stale")), zukunft.join(","));
+});
+
+/*
+ * BEFUND (Review-Auftrag): `loadClosureEvidence` prüfte NACH dem
+ * (potenziell langen) Netzaufruf noch gegen die Zeit von VOR diesem
+ * Aufruf; `finishSection` reichte dieselbe alte Zeit in den CAS. Ein
+ * echtes, spaeter geschriebenes `serverNow` konnte dadurch faelschlich
+ * "verified_in_future" ausloesen, und eine waehrend des Aufrufs
+ * tatsaechlich abgelaufene Lease wurde mit der alten Zeit noch als
+ * gueltig akzeptiert. Die Uhr hier ist eine Testuhr — der Nachweisport
+ * rueckt sie waehrend `load()` vor, um genau diese Verzoegerung
+ * nachzubilden, ohne je den echten Wallclock zu beruehren.
+ */
+test("P0-2f eine Uhr, die waehrend des Nachweis-Lesens um 1s vorrueckt, verhindert kein echtes Gruen", async (t) => {
+  const s = await dienst({
+    sectionWork: F.createSectionWorkPort({ count: 0 }).port,
+    closureEvidence: F.createClosureEvidencePort((input) => {
+      // Die Verzoegerung passiert HIER, waehrend des simulierten
+      // Netzaufrufs — der Nachweis traegt die Zeit NACH der Verzoegerung,
+      // genau wie eine echte, etwas spaetere Serverantwort es taete.
+      s.clock.advance(1_000);
+      return gueltigerNachweis({ dataRevision: revisionVon(s), verifiedAtMs: s.clock.value,
+        sources: QUELLEN.map((id) => ({ id, status: "ok", checkedAtMs: s.clock.value })) });
+    }).port,
+    live: true,
+  });
+  t.after(() => s.service.close());
+  const res = await s.start();
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.json.outcome, "finished", JSON.stringify(res.json));
+  assert.equal(res.json.green, true);
+});
+
+test("P0-2g eine Uhr, die waehrend des Nachweis-Lesens um 121s vorrueckt, darf NIE gruen liefern", async (t) => {
+  const s = await dienst({
+    sectionWork: F.createSectionWorkPort({ count: 0 }).port,
+    closureEvidence: F.createClosureEvidencePort((input) => {
+      // 121s > die 120s-Frist der Versuchs-Sperre UND > die 60s-Frist des
+      // Nachweises — beides muss mit FRISCHER Zeit erkannt werden.
+      s.clock.advance(121_000);
+      return gueltigerNachweis({ dataRevision: revisionVon(s), verifiedAtMs: s.clock.value,
+        sources: QUELLEN.map((id) => ({ id, status: "ok", checkedAtMs: s.clock.value })) });
+    }).port,
+    live: true,
+  });
+  t.after(() => s.service.close());
+  const res = await s.start();
+  // 121s > die 120s-TTL der Versuchs-Sperre: die Sperre ist bei der
+  // FRISCH gelesenen Zeit im CAS tatsaechlich abgelaufen, und
+  // E1.finishRun weist das folgerichtig als 409 `lease_expired` ab — mit
+  // der alten, vor dem Nachweis-I/O gelesenen Zeit waere das UNBEMERKT
+  // als 200 "finished"/gruen durchgegangen. Egal welcher der beiden
+  // Wege (Nachweis veraltet ODER Sperre abgelaufen) zuerst greift: in
+  // KEINEM Fall wird dieser Lauf gruen.
+  assert.notEqual(res.status, 200, JSON.stringify(res.json ?? res.text));
+  assert.equal(res.status, 409);
+  assert.equal(res.json.error, "lease_expired");
+});
+
+/*
+ * BEFUND (Review 5bcdb41): `atMs`/die erneute Nachweispruefung lagen VOR
+ * `core.mutate(...)` — aber `core.mutate` selbst kann die Verzoegerung
+ * SEIN (eigener Lesevorgang, Netz, CAS-Konflikt). Ein Kernport, der die
+ * Uhr direkt vor `impl.mutate(...)` vorstellt, deckt genau das auf: mit
+ * der alten Fassung blieb das Ergebnis 200/gruen, obwohl die Uhr beim
+ * TATSAECHLICHEN Schreiben laengst weiter war. Der Nachweis wird deshalb
+ * jetzt ERST INNERHALB des Mutators — mit den gerade gelesenen CAS-Daten —
+ * ein zweites Mal gegen eine dort frisch gelesene Uhr geprueft.
+ */
+function verzoegerterKernPort(core, clock, { praefix = "finish:", verzoegerungMs, nurVersuch = null } = {}) {
+  const echtesImpl = core.port.impl;
+  // Zaehlt NUR Aufrufe mit dem gesuchten Praefix (z. B. "finish:") — ein
+  // vorheriger, andersartiger CAS-Aufruf (Versuchs-Sperre, Checkpoints)
+  // darf `nurVersuch` nicht verschieben.
+  let passendeAufrufe = 0;
+  return {
+    ...core.port,
+    impl: {
+      ...echtesImpl,
+      async mutate(input) {
+        const passtPraefix = String(input.commandKey || "").startsWith(praefix);
+        if (passtPraefix) {
+          passendeAufrufe += 1;
+          if (nurVersuch === null || passendeAufrufe === nurVersuch) clock.advance(verzoegerungMs);
+        }
+        return echtesImpl.mutate(input);
+      },
+    },
+  };
+}
+
+test("P0-2h Kontrolle: keine Verzoegerung im CAS-Aufruf selbst — echter Abschluss bleibt gruen", async (t) => {
+  const core = F.createCorePort(F.createCasStore(F.baseCore()));
+  const s = await dienst({
+    sectionWork: F.createSectionWorkPort({ count: 0 }).port,
+    closureEvidence: F.createClosureEvidencePort(() => gueltigerNachweis({ dataRevision: core.store.snapshot().automation.dataRevision })).port,
+    live: true,
+    corePort: verzoegerterKernPort(core, F.createClock(T), { verzoegerungMs: 0 }),
+  });
+  t.after(() => s.service.close());
+  const res = await s.start();
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.json.outcome, "finished");
+  assert.equal(res.json.green, true);
+});
+
+test("P0-2i eine Uhr, die ERST INNERHALB von core.mutate (nicht davor) um 121s vorrueckt, darf NIE gruen liefern", async (t) => {
+  const core = F.createCorePort(F.createCasStore(F.baseCore()));
+  const clock = F.createClock(T);
+  const s = await dienst({
+    sectionWork: F.createSectionWorkPort({ count: 0 }).port,
+    // Der Nachweis wird OHNE Verzoegerung geladen — frisch, gueltig,
+    // genau wie im Repro-Fall. Erst der SCHREIBAUFRUF selbst ist langsam.
+    closureEvidence: F.createClosureEvidencePort(() => gueltigerNachweis({ dataRevision: core.store.snapshot().automation.dataRevision, verifiedAtMs: clock.value,
+      sources: QUELLEN.map((id) => ({ id, status: "ok", checkedAtMs: clock.value })) })).port,
+    live: true,
+    clockOverride: clock,
+    corePort: verzoegerterKernPort(core, clock, { verzoegerungMs: 121_000 }),
+  });
+  t.after(() => s.service.close());
+  const res = await s.start();
+  // Egal ob die erneute Nachweispruefung IM CAS oder die Lease/Fence-
+  // Pruefung von E1.finishRun zuerst greift: in KEINEM Fall gruen.
+  // Reproduktion des Befunds: mit der alten Fassung (Uhr VOR core.mutate
+  // gelesen) blieb dies 200/"finished"/gruen.
+  if (res.status === 200) {
+    assert.notEqual(res.json.outcome, "finished", JSON.stringify(res.json));
+    assert.equal(res.json.green, false);
+  } else {
+    assert.equal(res.status, 409);
+    assert.equal(res.json.error, "lease_expired");
+  }
+});
+
+test("P0-2j eine Uhr, die ERST INNERHALB von core.mutate um 61s vorrueckt, lehnt wegen des 60s-Nachweisalters ab — trotz noch gueltiger 120s-Sperre", async (t) => {
+  const core = F.createCorePort(F.createCasStore(F.baseCore()));
+  const clock = F.createClock(T);
+  let ladeNr = 0;
+  const s = await dienst({
+    sectionWork: F.createSectionWorkPort({ count: 0 }).port,
+    // Der Nachweis selbst bleibt bewusst bei der URSPRUENGLICHEN Zeit T —
+    // simuliert eine Quelle, die sich waehrend der Verzoegerung nicht
+    // erholt (z. B. dieselbe langsame Aussenverbindung). Nur `evidenceRef`
+    // variiert, damit ein zweiter Ladevorgang nicht am Beleg-Cache des
+    // ERSTEN CAS-Versuchs vorbeireplayt statt neu geprueft zu werden.
+    closureEvidence: F.createClosureEvidencePort(() => {
+      ladeNr += 1;
+      return gueltigerNachweis({
+        dataRevision: core.store.snapshot().automation.dataRevision,
+        evidenceRef: `closure:2026-09-19:process09:alt-${ladeNr}`,
+        verifiedAtMs: T, sources: QUELLEN.map((id) => ({ id, status: "ok", checkedAtMs: T })),
+      });
+    }).port,
+    live: true,
+    clockOverride: clock,
+    // NUR der erste Schreibversuch ist langsam — die Versuchs-Sperre bleibt
+    // ueber den gesamten Test unter ihrer 120s-Frist (nur EINMAL 61s).
+    corePort: verzoegerterKernPort(core, clock, { verzoegerungMs: 61_000, nurVersuch: 1 }),
+  });
+  t.after(() => s.service.close());
+  const res = await s.start();
+  // Die 120s-Versuchs-Sperre bleibt bei insgesamt 61s Verzoegerung gueltig
+  // (409 lease_expired waere ein anderer Befund) — abgewiesen wird HIER
+  // wegen des Nachweisalters: der erste Versuch scheitert im CAS selbst
+  // (`closure_evidence_stale_in_cas`), der zweite scheitert schon beim
+  // erneuten Laden (derselbe, weiterhin veraltete Nachweis).
+  assert.equal(res.status, 200, res.text);
+  assert.notEqual(res.json.outcome, "finished", JSON.stringify(res.json));
+  assert.equal(res.json.green, false);
+  assert.match(res.json.reason, /evidence_stale|closure_evidence_stale_in_cas/);
+  assert.equal(ladeNr, 2, "der Nachweis wurde fuer beide Versuche geladen, nicht nur einmal");
+});
+
+test("P0-2k Gegenprobe: nach einer Verzoegerung im ERSTEN CAS-Versuch erholt sich der ZWEITE mit frisch geladenem Nachweis", async (t) => {
+  const core = F.createCorePort(F.createCasStore(F.baseCore()));
+  const clock = F.createClock(T);
+  let ladeNr = 0;
+  const s = await dienst({
+    sectionWork: F.createSectionWorkPort({ count: 0 }).port,
+    // Jeder Ladevorgang liefert einen FRISCHEN Nachweis mit der Uhrzeit
+    // VON DEM MOMENT — ein zweiter Versuch nach einer Verzoegerung ist
+    // also ein echter, neuer Blick, keine Wiederholung desselben Standes.
+    closureEvidence: F.createClosureEvidencePort(() => {
+      ladeNr += 1;
+      return gueltigerNachweis({
+        dataRevision: core.store.snapshot().automation.dataRevision,
+        evidenceRef: `closure:2026-09-19:process09:versuch-${ladeNr}`,
+        verifiedAtMs: clock.value,
+        sources: QUELLEN.map((id) => ({ id, status: "ok", checkedAtMs: clock.value })),
+      });
+    }).port,
+    live: true,
+    clockOverride: clock,
+    // Nur der ERSTE finish-Schreibversuch ist langsam — 90s: laenger als
+    // die 60s-Nachweisfrist (der Nachweis MUSS im ersten Versuch veralten),
+    // aber kuerzer als die 120s-Versuchs-Sperre (die Erholung im zweiten
+    // Versuch soll an der Sperre nicht scheitern). Danach holt
+    // `finishSection` den Nachweis erneut — mit einer Uhr, die durch die
+    // erste Verzoegerung bereits vorgerueckt ist, aber diesmal OHNE eine
+    // zweite Verzoegerung im Schreibaufruf selbst.
+    corePort: verzoegerterKernPort(core, clock, { verzoegerungMs: 90_000, nurVersuch: 1 }),
+  });
+  t.after(() => s.service.close());
+  const res = await s.start();
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.json.outcome, "finished", JSON.stringify(res.json));
+  assert.equal(res.json.green, true);
+  assert.equal(ladeNr, 2, "der Nachweis wurde fuer beide Versuche frisch geladen");
 });
 
 /* ── 3: Erneuerungsfrist, harte Grenze, Abbruchsignal ─────────────────── */

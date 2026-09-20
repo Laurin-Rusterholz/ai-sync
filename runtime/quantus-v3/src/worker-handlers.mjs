@@ -357,6 +357,32 @@ const EVIDENCE_REF_RE = /^[A-Za-z0-9_.:-]{8,120}$/;
 /* Streng, und ausdruecklich nicht aus etwas ableitbar, das dieser Prozess
  * selbst kennt. Die frueher hier erzeugte Kennung `run-evidence:<runKey>`
  * wird namentlich abgewiesen. */
+/*
+ * VIER Dinge muessen ZUSAMMEN belegt sein, keines ersetzt ein anderes:
+ *
+ *   1. AKTUELLER FENCE     evidence.fence === expected.fence (E1s eigene,
+ *                          gerade gueltige Fuehrung — C2 bezeugt ihn nicht,
+ *                          das bleibt Sache des Aufrufers).
+ *   2. VOLLSTAENDIGER      jede in `expected.requiredSources` genannte
+ *      QUELLENSATZ         Quelle steht in `evidence.sources` mit
+ *                          `status: "ok"` und einem frischen `checkedAtMs`
+ *                          — UND keine unerwartete Quelle fehlt/ueberzaehlt.
+ *   3. BELEGTER            `evidence.state === "final"` (B's durch
+ *      B-ABSCHLUSS         `closeRun` gesicherter Abschlusszustand) UND
+ *                          `evidence.blocked === false` (B's eigenes
+ *                          Gesamturteil aus `dailyAssistantTrafficLight`).
+ *   4. AKTUELLE VERSION    `dataRevision`/`verifiedAtMs` frisch (unten).
+ *
+ * `sources` kommt aus der Kategorie `run_context` — die darf laut
+ * `ROLE_POLICY` (`quantus-v3-auth.mjs`) NUR `lead_agent` (Job-Token,
+ * `assigned`) und die Spezialisten lesen, kein Dienst-Zugangsdatum. Der
+ * Nachweisport (`integration-ports.mjs`) beschafft dafuer ein eigenes,
+ * laufgebundenes Job-Token (`job-token-issuer.mjs`); fehlt dessen
+ * Konfiguration, bleibt `sources` leer — und DIESE Pruefung faellt dann
+ * durch (`sources_missing`), sie wird nicht uebersprungen oder gelockert.
+ */
+export const CLOSURE_FINAL_STATE = "final";
+
 export function validateClosureEvidence(evidence, expected) {
   const fehler = [];
   const record = evidence !== null && typeof evidence === "object" && !Array.isArray(evidence);
@@ -372,6 +398,11 @@ export function validateClosureEvidence(evidence, expected) {
   else if (evidence.verifiedAtMs > expected.now) fehler.push("verified_in_future");
   else if (expected.now - evidence.verifiedAtMs > CLOSURE_EVIDENCE_MAX_AGE_MS) fehler.push("evidence_stale");
 
+  // 3. Belegter B-Abschluss.
+  if (evidence.state !== CLOSURE_FINAL_STATE) fehler.push("run_not_final");
+  if (evidence.blocked !== false) fehler.push("run_blocked");
+
+  // 2. Vollstaendiger, tatsaechlich geprueft ausgewiesener Quellensatz.
   const verlangt = expected.requiredSources;
   const gesehen = Array.isArray(evidence.sources) ? evidence.sources : null;
   if (!gesehen) fehler.push("sources_missing");
@@ -381,7 +412,12 @@ export function validateClosureEvidence(evidence, expected) {
       if (quelle === null || typeof quelle !== "object") { fehler.push("source_shape"); break; }
       if (typeof quelle.id !== "string" || !quelle.id) { fehler.push("source_shape"); break; }
       if (quelle.status !== "ok") { fehler.push(`source_not_ok:${quelle.id}`); continue; }
-      if (!Number.isSafeInteger(quelle.checkedAtMs) || expected.now - quelle.checkedAtMs > CLOSURE_EVIDENCE_MAX_AGE_MS) {
+      if (!Number.isSafeInteger(quelle.checkedAtMs)) { fehler.push(`source_stale:${quelle.id}`); continue; }
+      // Eine Pruefzeit in der Zukunft ist NICHT "frisch" — sie ist falsch.
+      // `expected.now - quelle.checkedAtMs` waere sonst negativ und faellt
+      // nie unter die Altersgrenze, egal wie weit in der Zukunft sie liegt.
+      if (quelle.checkedAtMs > expected.now) { fehler.push(`source_checked_in_future:${quelle.id}`); continue; }
+      if (expected.now - quelle.checkedAtMs > CLOSURE_EVIDENCE_MAX_AGE_MS) {
         fehler.push(`source_stale:${quelle.id}`); continue;
       }
       ok.add(quelle.id);
@@ -394,6 +430,16 @@ export function validateClosureEvidence(evidence, expected) {
   return { ok: fehler.length === 0, errors: fehler };
 }
 
+/*
+ * BEFUND: der Nachweis wird per HTTP geholt (`port.load`, ein moeglicher
+ * langer Netzaufruf) — geprueft wurde er aber gegen `ctx.now`, die Zeit
+ * von VOR diesem Aufruf. Ein echtes, spaeteres `serverNow` in der Antwort
+ * erschien dadurch faelschlich "in der Zukunft" (`verified_in_future`),
+ * und umgekehrt konnte ein waehrend des Aufrufs tatsaechlich abgelaufener
+ * Nachweis noch als frisch durchgehen. Deshalb: der Aufruf bekommt die
+ * Zeit VOR dem await (fuer den Token-Ausstellzeitpunkt im Port), die
+ * PRUEFUNG laeuft NACH dem await gegen eine FRISCH gelesene Uhr.
+ */
 async function loadClosureEvidence(ctx, { runKey, fence }) {
   let port;
   try {
@@ -409,14 +455,17 @@ async function loadClosureEvidence(ctx, { runKey, fence }) {
   if (typeof port.load !== "function") {
     return { evidence: null, verdict: { ok: false, errors: ["closure_evidence_port_unavailable"] } };
   }
+  const clock = ctx.ports.require("clock");
   let evidence;
   try {
-    evidence = await port.load({ runKey, fence, now: ctx.now, tenant: ctx.config.tenant });
+    evidence = await port.load({ runKey, fence, now: clock.now(), tenant: ctx.config.tenant });
   } catch {
     return { evidence: null, verdict: { ok: false, errors: ["closure_evidence_load_failed"] } };
   }
+  // FRISCH NACH DEM AWAIT — nicht die Zeit von vor dem Netzaufruf.
+  const jetzt = clock.now();
   const verdict = validateClosureEvidence(evidence, {
-    runKey, fence, now: ctx.now,
+    runKey, fence, now: jetzt,
     tenant: ctx.config.tenant,
     policyVersion: ctx.config.policyVersion,
     requiredSources: ctx.config.requiredSources,
@@ -479,13 +528,14 @@ async function openException(ctx, { runKey, sectionId, fence, exceptionId, reaso
 
 async function finishSection(ctx, { runKey, sectionId, fence, steps, cursor }) {
   const scope = verifiedScopeOf(ctx, fence);
-  const atMs = ctx.ports.require("clock").now();
+  const clock = ctx.ports.require("clock");
   const live = ctx.config.mode === "live";
 
   if (!live) {
+    // Kein I/O davor — die Uhr direkt vor dem CAS ist hier ohnehin frisch.
     const out = await mutate(ctx, `finish:${runKey}`, (data) => E1.finishRun(data, {
       runKey, outcome: "dry_run", evidenceRef: null, runnerMode: "dry_run",
-      now: atMs, verifiedScope: scope,
+      now: clock.now(), verifiedScope: scope,
     }));
     if (!out.result.ok) throw conflict("finish_rejected", { code: out.result.code, detail: out.result.detail ?? null });
     return { status: 200, body: { outcome: "finished", runKey, sectionId, mode: ctx.config.mode, steps, green: false } };
@@ -494,6 +544,24 @@ async function finishSection(ctx, { runKey, sectionId, fence, steps, cursor }) {
   // Live: ohne streng geprueften Nachweis gibt es kein Gruen. Die
   // Datenrevision wird IM SELBEN CAS abgeglichen — ein Nachweis fuer einen
   // aelteren Stand zaehlt nicht.
+  //
+  // BEFUND (Review 5bcdb41): `atMs` wurde vor `core.mutate(...)` gelesen,
+  // aber `core.mutate` selbst kann intern lange brauchen (eigener
+  // Lesevorgang, CAS-Konflikte, Netz) — GENAU DAS, was der Aufruf umgeben
+  // sollte, lag also weiterhin AUSSERHALB des Mutators. Ein Test mit einem
+  // umwickelten Kernport, der die Uhr direkt vor `core.port.impl.mutate`
+  // um 121 s vorstellt, lieferte weiterhin 200/gruen: die abgelaufene
+  // Versuchs-Sperre wurde mit der alten Zeit noch als gueltig gepruft, und
+  // ein Nachweis, der laengst aelter als CLOSURE_EVIDENCE_MAX_AGE_MS war,
+  // wurde nie erneut gegen eine frische Uhr gehalten.
+  //
+  // Deshalb jetzt: die Uhr wird ERST INNERHALB des Mutators gelesen — in
+  // GENAU dem Moment, in dem `data` frisch aus dem CAS kommt, bei jedem
+  // Versuch neu (auch bei einer CAS-Wiederholung). Der Nachweis wird DORT
+  // ein zweites Mal gegen diese frische Zeit geprueft (dieselbe Funktion,
+  // `validateClosureEvidence`) — eine Pruefung vor dem Aufruf allein
+  // genuegt nicht, wenn der Aufruf selbst die Verzoegerung sein kann.
+  let letzterGrund = "closure_evidence_stale_revision";
   for (let versuch = 0; versuch < 2; versuch++) {
     const { evidence, verdict } = await loadClosureEvidence(ctx, { runKey, fence });
     if (!verdict.ok) {
@@ -511,13 +579,27 @@ async function finishSection(ctx, { runKey, sectionId, fence, steps, cursor }) {
         },
       };
     }
+    let letzterCasFehler = null;
     const out = await mutate(ctx, `finish:${runKey}:${evidence.evidenceRef}`, (data) => {
       if (data.automation.dataRevision !== evidence.dataRevision) {
         return { data, result: { ok: false, code: "closure_evidence_stale_revision", detail: { expected: evidence.dataRevision, actual: data.automation.dataRevision } }, unchanged: true };
       }
+      // FRISCH — genau HIER, mit den gerade gelesenen CAS-Daten. Nicht die
+      // Zeit von vor `core.mutate(...)`: der Aufruf selbst kann die
+      // Verzoegerung gewesen sein.
+      const jetztImCas = clock.now();
+      const erneutesUrteil = validateClosureEvidence(evidence, {
+        runKey, fence, now: jetztImCas,
+        tenant: ctx.config.tenant, policyVersion: ctx.config.policyVersion,
+        requiredSources: ctx.config.requiredSources,
+      });
+      if (!erneutesUrteil.ok) {
+          letzterCasFehler = erneutesUrteil.errors;
+        return { data, result: { ok: false, code: "closure_evidence_stale_in_cas", detail: { errors: erneutesUrteil.errors.slice(0, 8) } }, unchanged: true };
+      }
       return E1.finishRun(data, {
         runKey, outcome: "completed", evidenceRef: evidence.evidenceRef, runnerMode: "live",
-        now: atMs, verifiedScope: scope,
+        now: jetztImCas, verifiedScope: scope,
       });
     });
     if (out.result.ok) {
@@ -529,20 +611,26 @@ async function finishSection(ctx, { runKey, sectionId, fence, steps, cursor }) {
         },
       };
     }
-    if (out.result.code !== "closure_evidence_stale_revision") {
+    if (out.result.code !== "closure_evidence_stale_revision" && out.result.code !== "closure_evidence_stale_in_cas") {
       throw conflict("finish_rejected", { code: out.result.code, detail: out.result.detail ?? null });
     }
-    // Der Stand hat sich bewegt: Nachweis einmal frisch holen.
+    // Der Stand hat sich bewegt, oder der Nachweis ist im CAS gealtert
+    // (kein Datenkonflikt, den ein zweiter Versuch mit DEMSELBEN Nachweis
+    // loesen koennte) — beide Faelle holen den Nachweis im naechsten
+    // Schleifendurchlauf ohnehin frisch (`loadClosureEvidence` oben).
+    letzterGrund = out.result.code === "closure_evidence_stale_in_cas"
+      ? `closure_evidence_stale_in_cas:${(letzterCasFehler || [])[0] || "unknown"}`
+      : "closure_evidence_stale_revision";
   }
   const aus = await openException(ctx, {
     runKey, sectionId, fence, exceptionId: `closure-revision:${sectionId}`,
-    reason: "closure_evidence_stale_revision", cursor: { steps },
+    reason: letzterGrund, cursor: { steps },
   });
   return {
     status: 200,
     body: {
       outcome: "exception_open", runKey, sectionId, mode: ctx.config.mode, steps, green: false,
-      reason: "closure_evidence_stale_revision",
+      reason: letzterGrund.slice(0, 120),
       continuationId: aus.continuationId, taskId: aus.taskId ?? undefined,
       enqueued: aus.enqueued, duplicateTask: aus.duplicate,
     },

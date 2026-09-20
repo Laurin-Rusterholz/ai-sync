@@ -23,6 +23,88 @@ unchanged. The owner currently requests independent work only, without new
 Claude assignments. This document prepares the next integration and acceptance
 steps; it does not authorize costs, migration, or a trial.
 
+### Integration update, 20 September (cloud transport 2436783 finalized against public main)
+
+`main` ac6484e is now the base (C3a e783240 + C3b f39cad2 + E2 e723035
+integrated, 720 tests). Branch `claude/dreamy-darwin-nimaif` was rebased
+onto this base per the merged-PR restart rule, carrying two follow-up
+commits (5a7ec6f, 2436783) plus this update. Full `npm run test:v3-cloud`
+165/165, `npm run test:v3-runtime` 120/120.
+
+Three real defects, found by checking the E2 closure-evidence path against
+the code that is ACTUALLY on this checkout (not a historical `git show`
+snapshot), were fixed — none of them weakened a check, all four make an
+existing gate function correctly for the first time:
+
+1. **Invented run-id encoding replaced by the real B/C3a convention.**
+   `runtime/quantus-v3/src/run-ids.mjs` previously invented an `r-`/`s-`
+   hex-escaped id scheme. Package B (`quantus-v3-domain-adapter.mjs`,
+   `assistant-abschluss.mjs`) runs exactly one run per calendar day under
+   `run_YYYY-MM-DD` (`dailyBriefing.assistantRuns[date]`) and its status
+   record under `status_YYYY-MM-DD`. Both are simple, already-valid C2 ids;
+   the invented encoding was pure fabrication and never matched what B
+   actually stores. Fixed to derive the calendar date from the E1 slot run
+   key and build the real B id directly.
+2. **`context.run` was bound to the wrong role.** The real role matrix
+   (`ROLE_POLICY`, `quantus-v3-auth.mjs`) allows `context.read` on the
+   `run_context` data category (per-source evidence) ONLY to `lead_agent`
+   (job token, `binding: assigned`) and the specialists (job token,
+   `binding: job`) — never to a service credential (`scheduler` or
+   `backend_checker`). A prior draft of this port used `role: scheduler`
+   and would have failed with 403 on every real call; the port's own
+   self-check only validated verbs, not per-verb data categories, so the
+   mistake was invisible. `context.run` is kept (not removed) and is now
+   correctly bound to `lead_agent`, with a new, real job-token issuer
+   (`job-token-issuer.mjs`) that mints a run-bound token through C1's
+   existing `mintJobToken`/`resolveAuthConfig` — no new signing key, no new
+   credential type. The port self-check now cross-validates every port's
+   `(role, verb, dataCategory)` triple against the real `ROLE_POLICY`
+   instead of a hand-maintained copy.
+3. **Closure evidence now composes two real reads instead of one fabricated
+   shape.** `run.status` (service credential, `state`/`blocked`/
+   `openQuestions`, B's own `dailyAssistantTrafficLight`/`closeRun` verdict)
+   and `run.context` (job token, per-source `entityVersion` → `sources`)
+   are both called; their `dataRevision` must match or the evidence is
+   rejected (`data_revision_inconsistent`). `validateClosureEvidence`
+   (E2, `worker-handlers.mjs`) requires all four criteria jointly, none
+   optional: current fence (E1's own, never attested by C2), a complete
+   required source set (`sources[].status === "ok"`, fresh
+   `checkedAtMs`, no missing/unexpected id), a proven B closure
+   (`state === "final" && blocked === false`), and a current/fresh
+   version (`dataRevision`, `verifiedAtMs`). Any one of these failing
+   fails the whole evidence — none can be skipped by another passing.
+
+New contract test `tests/quantus-v3-e2-c2-contract.test.mjs` drives a real
+B day end to end — `ensureRun` → `recordSourceCheck` → `registerEvidence`
+→ `transitionState` (bound to that evidence) → `closeRun` — entirely
+through `assistant-core.mjs`'s real command reducer and the real
+`createQuantusV3DomainAdapter`, then reads it back through the real
+`quantus-v3-service.mjs` (`handleReadRequest`) using a real service
+credential for `run.status` and a real, freshly minted job token for
+`run.context`. It also proves the negative cases: a service credential on
+`run.context` is a genuine 403 from the real chain; an incomplete required
+source set fails `sources_incomplete`; a stale or fence-mismatched
+evidence fails; a run before `closeRun` never reports final. Nothing in
+this file loads from the git object store; every module comes from this
+checkout's `netlify/lib/` and `runtime/quantus-v3/src/`.
+
+**`sectionWork`/`costPolicy` audited, unchanged.** No real AI-provider
+client (OpenAI/Anthropic/Gemini) and no approved cost/price policy
+document exist anywhere in this checkout — `prompts/quantus-v3/` holds
+prompt text only, not an executable provider binding. Both ports remain
+`unavailablePort` with their existing reasons
+(`section_work_provider_not_wired`, `cost_policy_not_wired`); nothing was
+invented to make them appear available.
+
+**New configuration surface**, all optional and fail-closed:
+`QUANTUS_V3_C2_BASE_URL`, `QUANTUS_V3_TOOLS_ENABLED` (per-tool booleans,
+default all false), `QUANTUS_V3_TOOL_CREDENTIAL_SCHEDULER`. The job-token
+issuer introduces no new secret of its own — it reads C1's existing
+`QUANTUS_V3_WORKER_TOKEN_KEYS` via `resolveAuthConfig`, which means **E2
+and C1 must run in the same environment/secret scope** for `context.run`
+(and therefore for any real closure evidence) to ever succeed; this is a
+deployment-topology decision still open, not a code gap.
+
 ## Completed independent checks
 
 - Full desktop integration `npm test`: exit 0 at local38c8283, corresponding

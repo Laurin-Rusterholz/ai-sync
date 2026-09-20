@@ -18,6 +18,11 @@ import { createApp, createUnconfiguredApp } from "./app.mjs";
 import { createNodeRequestListener } from "./http.mjs";
 import { availablePort, unavailablePort, createPortRegistry } from "./ports.mjs";
 import { createIntegrationCorePort, createCloudTasksPort, createRunStatusClosureEvidencePort } from "./integration-ports.mjs";
+import { createC2HttpTransport } from "./c2-transport.mjs";
+import { createToolClient } from "./tool-ports.mjs";
+import { createGoogleJwksPort, createGoogleAccessTokenSource, createCloudTasksHttpTransport } from "./google-transport.mjs";
+import { createJobTokenIssuer } from "./job-token-issuer.mjs";
+import { externalEffectsAllowed } from "./config.mjs";
 
 function structuredLog(entry) {
   process.stdout.write(`${JSON.stringify({ ...entry, service: "quantus-v3" })}\n`);
@@ -37,11 +42,58 @@ if (!resolved.ok) {
     tenantId: config.tenant,
     principalId: config.leaseHolder || `quantus-v3-${config.role}`,
   });
-  // Cloud Tasks und das Statuswerkzeug brauchen einen Transport mit
-  // Zugangsdaten. Der gehoert nicht in dieses Paket; ohne ihn bleiben die
-  // Ports leer.
-  const tasksPort = createCloudTasksPort({});
-  const closurePort = createRunStatusClosureEvidencePort({});
+  /*
+   * Cloud Tasks: Transport ueber die VORHANDENE Google-Identitaet
+   * (`getIdentityAccessToken` aus firebase-admin, Scope cloud-platform).
+   * Fehlt der Export, fehlen die Zugangsdaten, oder ist die Aussenwirkung
+   * nicht freigegeben, bleibt der Port leer und nennt den Grund.
+   */
+  const tokenQuelle = await createGoogleAccessTokenSource({});
+  const tasksTransport = tokenQuelle.ok
+    ? createCloudTasksHttpTransport({
+      accessTokenSource: tokenQuelle,
+      allowExternalEffects: externalEffectsAllowed(config),
+    })
+    : { ok: false, reason: tokenQuelle.reason, transport: null };
+  const tasksPort = tasksTransport.ok
+    ? createCloudTasksPort({ transport: tasksTransport.transport })
+    : unavailablePort("tasks", tasksTransport.reason);
+
+  /*
+   * Der Statusnachweis laeuft ueber die echte C2-Route (GET, Query-String).
+   * Ohne Ursprung, ohne Dienstzugangsdatum oder mit abgeschaltetem
+   * Werkzeug gibt es keinen Port — und damit kein gruenes Ende.
+   */
+  const toolCredential = process.env.QUANTUS_V3_TOOL_CREDENTIAL_SCHEDULER;
+  let closurePort;
+  if (!config.c2BaseUrl) {
+    closurePort = unavailablePort("closureEvidence", "c2_base_url_not_configured");
+  } else if (typeof toolCredential !== "string" || !toolCredential) {
+    closurePort = unavailablePort("closureEvidence", "tool_credential_not_configured");
+  } else {
+    // Der Abschlussnachweis (`status.run` + `sourceChecks.run`) braucht
+    // KEIN Job-Token mehr — beide laufen ueber das Dienst-Zugangsdatum.
+    // `context.run` (Kategorie `run_context`, nur `lead_agent` erlaubt)
+    // bleibt als eigener Werkzeugport bestehen und braucht dafuer weiterhin
+    // ein laufgebundenes Job-Token; fehlt dessen Konfiguration (C1-eigene
+    // `QUANTUS_V3_WORKER_TOKEN_KEYS` u.a.), scheitert NUR ein Aufruf von
+    // `context.run` selbst — der Abschlussnachweis ist davon unabhaengig.
+    const jobTokenIssuer = await createJobTokenIssuer({});
+    const toolClient = createToolClient({
+      transport: createC2HttpTransport({ baseUrl: config.c2BaseUrl }),
+      // Das Geheimnis wird NUR hier gereicht und nie protokolliert.
+      credential: { async get() { return toolCredential; } },
+      jobTokenIssuer: jobTokenIssuer.available ? jobTokenIssuer : null,
+      tenant: config.tenant,
+      policyVersion: config.policyVersion,
+      toolsEnabled: config.toolsEnabled,
+    });
+    closurePort = createRunStatusClosureEvidencePort({
+      toolClient, tenant: config.tenant, policyVersion: config.policyVersion,
+    });
+  }
+
+  const jwks = createGoogleJwksPort({});
   const registry = createPortRegistry(config.role, {
     clock: availablePort("clock", {
       now: () => Date.now(),
@@ -51,8 +103,7 @@ if (!resolved.ok) {
         return () => clearTimeout(t);
       },
     }),
-    // Diese drei kommen aus der Integration und sind hier nicht verdrahtet.
-    jwks: unavailablePort("jwks", "google_jwks_fetch_not_wired"),
+    jwks: jwks.available ? availablePort("jwks", jwks.impl) : unavailablePort("jwks", jwks.reason),
     core: corePort,
     ...(config.role === "watchdog" ? {} : { tasks: tasksPort }),
     ...(config.role === "worker" ? {

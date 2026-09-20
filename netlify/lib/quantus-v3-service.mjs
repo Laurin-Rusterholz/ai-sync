@@ -59,7 +59,7 @@ export const CORE_KEY = "app-data.json";
 export const ROUTE_QUERIES = Object.freeze({
   "quantus-context": Object.freeze(["run.context", "lead.context", "notes.recent", "policy.current"]),
   "quantus-read": Object.freeze(["lead.context", "notes.recent", "policy.current", "run.queue"]),
-  "quantus-run-status": Object.freeze(["run.status", "run.queue"]),
+  "quantus-run-status": Object.freeze(["run.status", "run.queue", "run.sourceChecks"]),
 });
 
 /* Ratenbegrenzung je Rolle (Anfragen pro Minute). Der Zähler selbst muss

@@ -66,6 +66,11 @@ export const NAMED_QUERIES = Object.freeze({
   "run.status":    Object.freeze({ scopeKind: "tenant", dataCategory: "run_status",  itemCategory: "run_status",  verb: "context.read", maxPageSize: 100 }),
   "notes.recent":  Object.freeze({ scopeKind: "lead",   dataCategory: "lead",        itemCategory: "note",        verb: "context.read", maxPageSize: 50 }),
   "policy.current":Object.freeze({ scopeKind: "tenant", dataCategory: "policy",      itemCategory: "policy",      verb: "context.read", maxPageSize: 10 }),
+  // Enge Nachweisprojektion (E2-Abschlussnachweis): das Scope-Objekt ist
+  // der Lauf selbst (Kategorie "run" — von scheduler UND backend_checker
+  // bereits gelesen); die Eintraege sind die tatsaechlich gespeicherten
+  // Quellenpruefungen dieses Laufs, keine Arbeitsliste.
+  "run.sourceChecks": Object.freeze({ scopeKind: "run", dataCategory: "run", itemCategory: "source_check", verb: "context.read", maxPageSize: 10 }),
 });
 
 /* Welche Objektart der serverseitig geladene Scope-Datensatz haben muss,
@@ -78,6 +83,7 @@ export const SCOPE_OBJECT_KINDS = Object.freeze({
   "run.status": "run_status",
   "notes.recent": "lead",
   "policy.current": "policy",
+  "run.sourceChecks": "run",
 });
 
 /* Die abgeschlossene Feldliste des Nutzinhalts (zusätzlich zu den
