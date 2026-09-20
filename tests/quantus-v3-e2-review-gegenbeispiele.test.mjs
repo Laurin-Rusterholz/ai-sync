@@ -229,6 +229,63 @@ test("P0-2e die Nachweispruefung selbst ist streng", () => {
   assert.deepEqual(validateClosureEvidence(null, erwartet).errors, ["closure_evidence_missing"]);
 });
 
+/*
+ * BEFUND (Review-Auftrag): `loadClosureEvidence` prüfte NACH dem
+ * (potenziell langen) Netzaufruf noch gegen die Zeit von VOR diesem
+ * Aufruf; `finishSection` reichte dieselbe alte Zeit in den CAS. Ein
+ * echtes, spaeter geschriebenes `serverNow` konnte dadurch faelschlich
+ * "verified_in_future" ausloesen, und eine waehrend des Aufrufs
+ * tatsaechlich abgelaufene Lease wurde mit der alten Zeit noch als
+ * gueltig akzeptiert. Die Uhr hier ist eine Testuhr — der Nachweisport
+ * rueckt sie waehrend `load()` vor, um genau diese Verzoegerung
+ * nachzubilden, ohne je den echten Wallclock zu beruehren.
+ */
+test("P0-2f eine Uhr, die waehrend des Nachweis-Lesens um 1s vorrueckt, verhindert kein echtes Gruen", async (t) => {
+  const s = await dienst({
+    sectionWork: F.createSectionWorkPort({ count: 0 }).port,
+    closureEvidence: F.createClosureEvidencePort((input) => {
+      // Die Verzoegerung passiert HIER, waehrend des simulierten
+      // Netzaufrufs — der Nachweis traegt die Zeit NACH der Verzoegerung,
+      // genau wie eine echte, etwas spaetere Serverantwort es taete.
+      s.clock.advance(1_000);
+      return gueltigerNachweis({ dataRevision: revisionVon(s), verifiedAtMs: s.clock.value,
+        sources: QUELLEN.map((id) => ({ id, status: "ok", checkedAtMs: s.clock.value })) });
+    }).port,
+    live: true,
+  });
+  t.after(() => s.service.close());
+  const res = await s.start();
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.json.outcome, "finished", JSON.stringify(res.json));
+  assert.equal(res.json.green, true);
+});
+
+test("P0-2g eine Uhr, die waehrend des Nachweis-Lesens um 121s vorrueckt, darf NIE gruen liefern", async (t) => {
+  const s = await dienst({
+    sectionWork: F.createSectionWorkPort({ count: 0 }).port,
+    closureEvidence: F.createClosureEvidencePort((input) => {
+      // 121s > die 120s-Frist der Versuchs-Sperre UND > die 60s-Frist des
+      // Nachweises — beides muss mit FRISCHER Zeit erkannt werden.
+      s.clock.advance(121_000);
+      return gueltigerNachweis({ dataRevision: revisionVon(s), verifiedAtMs: s.clock.value,
+        sources: QUELLEN.map((id) => ({ id, status: "ok", checkedAtMs: s.clock.value })) });
+    }).port,
+    live: true,
+  });
+  t.after(() => s.service.close());
+  const res = await s.start();
+  // 121s > die 120s-TTL der Versuchs-Sperre: die Sperre ist bei der
+  // FRISCH gelesenen Zeit im CAS tatsaechlich abgelaufen, und
+  // E1.finishRun weist das folgerichtig als 409 `lease_expired` ab — mit
+  // der alten, vor dem Nachweis-I/O gelesenen Zeit waere das UNBEMERKT
+  // als 200 "finished"/gruen durchgegangen. Egal welcher der beiden
+  // Wege (Nachweis veraltet ODER Sperre abgelaufen) zuerst greift: in
+  // KEINEM Fall wird dieser Lauf gruen.
+  assert.notEqual(res.status, 200, JSON.stringify(res.json ?? res.text));
+  assert.equal(res.status, 409);
+  assert.equal(res.json.error, "lease_expired");
+});
+
 /* ── 3: Erneuerungsfrist, harte Grenze, Abbruchsignal ─────────────────── */
 
 test("P0-3 die Lease wird spaetestens nach 60 Sekunden erneuert, nicht erst nach 75", async (t) => {

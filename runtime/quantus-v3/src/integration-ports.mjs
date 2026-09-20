@@ -16,14 +16,15 @@
  *                    Zugangsdaten — die Anfrage selbst nicht, und genau
  *                    die ist hier geprueft.
  *   closureEvidence  komponiert ZWEI echte Leseantworten zu einem
- *                    Nachweis: `status.run` (Dienst-Zugangsdatum,
- *                    `state`/`blocked`/`openQuestions` aus Paket B) UND
- *                    `context.run` (laufgebundenes Job-Token, `sources`
- *                    je gefuehrter Quelle). Fehlt eine Seite — Werkzeug
- *                    abgeschaltet, Token-Aussteller nicht konfiguriert,
- *                    Transport fehlt —, bleibt der jeweilige Teil leer,
- *                    nie erfunden; siehe die ausfuehrliche Begruendung
- *                    weiter unten.
+ *                    Nachweis: `status.run` (`state`/`blocked`/
+ *                    `openQuestions` aus Paket B) UND `sourceChecks.run`
+ *                    (die tatsaechlich gespeicherten Quellenpruefungen —
+ *                    `run.sourceChecks`, NICHT die Arbeitsliste
+ *                    `run.context`). Beide laufen ueber dasselbe
+ *                    Dienst-Zugangsdatum (Rolle `scheduler`). Fehlt eine
+ *                    Seite — Werkzeug abgeschaltet, Transport fehlt —,
+ *                    bleibt der jeweilige Teil leer, nie erfunden; siehe
+ *                    die ausfuehrliche Begruendung weiter unten.
  *
  * Kein Port erfindet einen Erfolg. Wo eine Abhaengigkeit fehlt, ist die
  * Antwort `unavailablePort` mit Grund — und die Route antwortet mit 503.
@@ -185,7 +186,7 @@ export function createCloudTasksPort({ transport, dispatchDeadline = TASK_DISPAT
   });
 }
 
-/* ── Abschlussnachweis: run.status (scheduler) + run.context (lead_agent) ─
+/* ── Abschlussnachweis: run.status + run.sourceChecks (beide scheduler) ──
  *
  * Vier Dinge muessen fuer ein Gruen ZUSAMMEN belegt sein
  * (`validateClosureEvidence`, `worker-handlers.mjs`): aktueller Fence,
@@ -193,28 +194,31 @@ export function createCloudTasksPort({ transport, dispatchDeadline = TASK_DISPAT
  * Dieser Port liefert dafuer die drei Stuecke, die C2 tatsaechlich
  * bezeugen kann — kein Fence (den kennt nur E1, der Aufrufer setzt ihn):
  *
- *   run.status   (Kategorie `run_status`, `scheduler` ODER `backend_checker`
- *                erlaubt) — `state`, `blocked`, `openQuestions`: B's eigenes,
- *                durch `closeRun`/`dailyAssistantTrafficLight` berechnetes
- *                Urteil ueber DIESEN Kalendertag.
- *   run.context  (Kategorie `run_context`, NUR `lead_agent`/Spezialisten
- *                erlaubt) — je Quelle im Lauf ein Eintrag mit
- *                `entityVersion`; daraus wird `sources` gebildet. Dieser
- *                Dienst haelt dafuer KEIN Dauer-Zugangsdatum, sondern
- *                mintet sich per Aufruf ein laufgebundenes Job-Token
- *                (`job-token-issuer.mjs`, echter C1-Signaturweg). Fehlt
- *                dessen Konfiguration, bleibt `sources` leer — der Lauf
- *                wird dann NICHT gruen (`sources_missing`), es wird
- *                nichts erfunden und keine Rolle stillschweigend erweitert.
+ *   run.status       (Kategorie `run_status`) — `state`, `blocked`,
+ *                    `openQuestions`: B's eigenes, durch `closeRun`/
+ *                    `dailyAssistantTrafficLight` berechnetes Urteil
+ *                    ueber DIESEN Kalendertag.
+ *   run.sourceChecks (Kategorie `source_check`, enge Nachweisprojektion in
+ *                    C2/Domain, siehe `quantus-v3-domain-adapter.mjs`) —
+ *                    die TATSAECHLICH von B gespeicherten Quellenpruefungen
+ *                    (`run.sourceChecks[sourceId]`, gesetzt durch
+ *                    `recordSourceCheck`): Original-Quellen-Id, Ergebnis,
+ *                    echte Pruefzeit. `run.context` (Arbeitsliste: Leads,
+ *                    Aufgaben) ist KEIN Quellenpruefnachweis und wird
+ *                    hierfuer NICHT mehr verwendet — eine fruehere Fassung
+ *                    tat das und erfand damit `status: "ok"` aus der blossen
+ *                    Anwesenheit eines Arbeitselements.
  *
- * Beide Seiten muessen VOLLSTAENDIG sein (`complete: true`) und dieselbe
- * Datenrevision tragen — sonst waeren Status und Quellen aus zwei
- * verschiedenen Kernstaenden zusammengewuerfelt.
+ * Beide Seiten laufen ueber `scheduler` (Dienst-Zugangsdatum) — keine der
+ * beiden Kategorien braucht ein Job-Token. Sie muessen VOLLSTAENDIG sein
+ * (`complete: true`) und dieselbe Datenrevision tragen — sonst waeren
+ * Status und Quellenpruefungen aus zwei verschiedenen Kernstaenden
+ * zusammengewuerfelt.
  * ═════════════════════════════════════════════════════════════════════════ */
 
 export const RUN_STATUS_QUERY = "run.status";
-export const RUN_CONTEXT_QUERY = "run.context";
-export const CONTEXT_PAGE_SIZE = 50;   // NAMED_QUERIES["run.context"].maxPageSize in C2
+export const SOURCE_CHECKS_QUERY = "run.sourceChecks";
+export const SOURCE_CHECKS_PAGE_SIZE = 10;   // NAMED_QUERIES["run.sourceChecks"].maxPageSize in C2
 
 /* B's einziger echter Abschlusszustand (`assistant-abschluss.mjs`,
  * `run.phase = "final"`). Die anderen moeglichen Werte ("created",
@@ -283,15 +287,15 @@ export function mapRunStatusPage(antwort, { runId, scopeId }) {
 }
 
 /**
- * Bildet die `run.context`-Seite auf ein `sources`-Array ab: ein Eintrag
- * je Quelle, die B tatsaechlich im Lauf fuehrt. `id` ist der PROJIZIERTE
- * C2-Eintrag (`ctx_<sourceType>_<sourceId>`) — die einzige stabile,
- * unveraenderte Kennung, die diese Rolle zu sehen bekommt; ein Betreiber
- * konfiguriert `QUANTUS_V3_REQUIRED_SOURCES` damit 1:1 gegen das, was C2
- * tatsaechlich zurueckgibt.
+ * Bildet die `run.sourceChecks`-Seite auf ein `sources`-Array ab: EIN
+ * Eintrag je tatsaechlich gespeicherter Quellenpruefung. `id` ist die
+ * ORIGINAL-Quellen-Id aus B (z. B. `gmail-inbox`, `quantus-core`) — genau
+ * die Ids, mit denen `QUANTUS_V3_REQUIRED_SOURCES` konfiguriert wird.
+ * `status`/`checkedAtMs` kommen aus dem echten `recordSourceCheck`-Beleg,
+ * nicht aus einer abgeleiteten Vermutung.
  */
-export function mapRunContextPage(antwort, { runId, scopeId }) {
-  const seite = seitePruefen(antwort, { query: RUN_CONTEXT_QUERY, scopeId });
+export function mapRunSourceChecksPage(antwort, { runId, scopeId }) {
+  const seite = seitePruefen(antwort, { query: SOURCE_CHECKS_QUERY, scopeId });
   if (!seite.ok) return seite;
   const { body, serverNowMs } = seite;
 
@@ -300,24 +304,26 @@ export function mapRunContextPage(antwort, { runId, scopeId }) {
     if (!eintrag || typeof eintrag !== "object") return fehlschlag("items_not_a_list");
     if (typeof eintrag.id !== "string" || !eintrag.id) return fehlschlag("item_id_missing");
     if (eintrag.runId !== runId) return fehlschlag("item_outside_run", { id: eintrag.id });
-    sources.push({
-      id: eintrag.id,
-      status: Number.isSafeInteger(eintrag.entityVersion) ? "ok" : "not_ok",
-      checkedAtMs: serverNowMs,
-    });
+    const checkedAtMs = Date.parse(String(eintrag.checkedAt || ""));
+    if (!Number.isSafeInteger(checkedAtMs)) return fehlschlag("source_checked_at_invalid", { id: eintrag.id });
+    if (typeof eintrag.outcome !== "string" || !eintrag.outcome) return fehlschlag("source_outcome_invalid", { id: eintrag.id });
+    // "ok" ist das EINZIGE Ergebnis, das eine Quelle als geprueft-bestanden
+    // gelten laesst — "partial"/"auth_error"/"budget_exceeded"/
+    // "unreachable" (B.SOURCE_OUTCOMES) sind alle NICHT "ok".
+    sources.push({ id: eintrag.id, status: eintrag.outcome === "ok" ? "ok" : "not_ok", checkedAtMs });
   }
   return { ok: true, code: null, page: { dataRevision: body.dataRevision, verifiedAtMs: serverNowMs, sources } };
 }
 
 /**
- * Der Nachweisport. Ruft `status.run` (Dienst-Zugangsdatum) UND
- * `context.run` (laufgebundenes Job-Token) und fuegt beides zu EINEM
+ * Der Nachweisport. Ruft `status.run` UND `sourceChecks.run` (beide
+ * Dienst-Zugangsdatum, Rolle `scheduler`) und fuegt beides zu EINEM
  * Nachweis zusammen. Jeder der beiden Aufrufe kann fuer sich mit 503
- * scheitern (Werkzeug abgeschaltet, Token-Aussteller nicht konfiguriert,
- * Transport fehlt) — dann bleibt der jeweilige Teil des Nachweises leer,
- * und `validateClosureEvidence` weist ihn zurueck, statt ihn zu erfinden.
+ * scheitern (Werkzeug abgeschaltet, Transport fehlt) — dann bleibt
+ * `sources` leer, und `validateClosureEvidence` weist den Nachweis
+ * zurueck, statt ihn zu erfinden.
  */
-export function createRunStatusClosureEvidencePort({ toolClient, tenant, policyVersion, contextPageSize = CONTEXT_PAGE_SIZE } = {}) {
+export function createRunStatusClosureEvidencePort({ toolClient, tenant, policyVersion, sourceChecksPageSize = SOURCE_CHECKS_PAGE_SIZE } = {}) {
   if (!toolClient || typeof toolClient.call !== "function") {
     return unavailablePort("closureEvidence", "run_status_tool_not_wired");
   }
@@ -340,29 +346,29 @@ export function createRunStatusClosureEvidencePort({ toolClient, tenant, policyV
       const statusAbbildung = mapRunStatusPage(statusAntwort, { runId, scopeId });
       if (!statusAbbildung.ok) { this.lastFailure = statusAbbildung.code; return null; }
 
-      // 2. run.context — laufgebundenes Job-Token. Scheitert dieser
-      //    Aufruf (Werkzeug abgeschaltet, Token-Aussteller fehlt,
-      //    Transport fehlt), bleibt `sources` leer statt geraten.
+      // 2. run.sourceChecks — dieselbe Rolle wie run.status. Scheitert
+      //    dieser Aufruf (Werkzeug abgeschaltet, Transport fehlt), bleibt
+      //    `sources` leer statt geraten.
       let sources = null;
       try {
-        const contextAntwort = await toolClient.call(
-          "context.run", { query: RUN_CONTEXT_QUERY, scopeId: runId, jobId: runId, pageSize: contextPageSize },
+        const checksAntwort = await toolClient.call(
+          "sourceChecks.run", { query: SOURCE_CHECKS_QUERY, scopeId: runId, jobId: runId, pageSize: sourceChecksPageSize },
           { now, requestId },
         );
-        const contextAbbildung = mapRunContextPage(contextAntwort, { runId, scopeId: runId });
-        if (!contextAbbildung.ok) {
-          this.lastFailure = contextAbbildung.code;
-        } else if (contextAbbildung.page.dataRevision !== statusAbbildung.page.dataRevision) {
+        const checksAbbildung = mapRunSourceChecksPage(checksAntwort, { runId, scopeId: runId });
+        if (!checksAbbildung.ok) {
+          this.lastFailure = checksAbbildung.code;
+        } else if (checksAbbildung.page.dataRevision !== statusAbbildung.page.dataRevision) {
           // Zwei getrennte Leseanfragen duerfen keine verschiedenen
           // Kernstaende zusammenwuerfeln — sonst waere die Version nicht
           // mehr AKTUELL fuer beide Teile des Nachweises.
           this.lastFailure = "data_revision_inconsistent";
         } else {
-          sources = contextAbbildung.page.sources;
+          sources = checksAbbildung.page.sources;
           this.lastFailure = null;
         }
       } catch (err) {
-        this.lastFailure = err instanceof HttpError ? err.error : "run_context_load_failed";
+        this.lastFailure = err instanceof HttpError ? err.error : "source_checks_load_failed";
       }
 
       return Object.freeze({

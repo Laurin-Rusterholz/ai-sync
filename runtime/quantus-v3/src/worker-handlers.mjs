@@ -425,6 +425,16 @@ export function validateClosureEvidence(evidence, expected) {
   return { ok: fehler.length === 0, errors: fehler };
 }
 
+/*
+ * BEFUND: der Nachweis wird per HTTP geholt (`port.load`, ein moeglicher
+ * langer Netzaufruf) — geprueft wurde er aber gegen `ctx.now`, die Zeit
+ * von VOR diesem Aufruf. Ein echtes, spaeteres `serverNow` in der Antwort
+ * erschien dadurch faelschlich "in der Zukunft" (`verified_in_future`),
+ * und umgekehrt konnte ein waehrend des Aufrufs tatsaechlich abgelaufener
+ * Nachweis noch als frisch durchgehen. Deshalb: der Aufruf bekommt die
+ * Zeit VOR dem await (fuer den Token-Ausstellzeitpunkt im Port), die
+ * PRUEFUNG laeuft NACH dem await gegen eine FRISCH gelesene Uhr.
+ */
 async function loadClosureEvidence(ctx, { runKey, fence }) {
   let port;
   try {
@@ -440,14 +450,17 @@ async function loadClosureEvidence(ctx, { runKey, fence }) {
   if (typeof port.load !== "function") {
     return { evidence: null, verdict: { ok: false, errors: ["closure_evidence_port_unavailable"] } };
   }
+  const clock = ctx.ports.require("clock");
   let evidence;
   try {
-    evidence = await port.load({ runKey, fence, now: ctx.now, tenant: ctx.config.tenant });
+    evidence = await port.load({ runKey, fence, now: clock.now(), tenant: ctx.config.tenant });
   } catch {
     return { evidence: null, verdict: { ok: false, errors: ["closure_evidence_load_failed"] } };
   }
+  // FRISCH NACH DEM AWAIT — nicht die Zeit von vor dem Netzaufruf.
+  const jetzt = clock.now();
   const verdict = validateClosureEvidence(evidence, {
-    runKey, fence, now: ctx.now,
+    runKey, fence, now: jetzt,
     tenant: ctx.config.tenant,
     policyVersion: ctx.config.policyVersion,
     requiredSources: ctx.config.requiredSources,
@@ -510,13 +523,14 @@ async function openException(ctx, { runKey, sectionId, fence, exceptionId, reaso
 
 async function finishSection(ctx, { runKey, sectionId, fence, steps, cursor }) {
   const scope = verifiedScopeOf(ctx, fence);
-  const atMs = ctx.ports.require("clock").now();
+  const clock = ctx.ports.require("clock");
   const live = ctx.config.mode === "live";
 
   if (!live) {
+    // Kein I/O davor — die Uhr direkt vor dem CAS ist hier ohnehin frisch.
     const out = await mutate(ctx, `finish:${runKey}`, (data) => E1.finishRun(data, {
       runKey, outcome: "dry_run", evidenceRef: null, runnerMode: "dry_run",
-      now: atMs, verifiedScope: scope,
+      now: clock.now(), verifiedScope: scope,
     }));
     if (!out.result.ok) throw conflict("finish_rejected", { code: out.result.code, detail: out.result.detail ?? null });
     return { status: 200, body: { outcome: "finished", runKey, sectionId, mode: ctx.config.mode, steps, green: false } };
@@ -525,6 +539,13 @@ async function finishSection(ctx, { runKey, sectionId, fence, steps, cursor }) {
   // Live: ohne streng geprueften Nachweis gibt es kein Gruen. Die
   // Datenrevision wird IM SELBEN CAS abgeglichen — ein Nachweis fuer einen
   // aelteren Stand zaehlt nicht.
+  //
+  // BEFUND: `atMs` wurde frueher VOR `loadClosureEvidence` (ein moeglicher
+  // langer Netzaufruf) gelesen und dann fuer die Lease-/Fence-Pruefung IM
+  // CAS weiterverwendet. Ein waehrend dieses Aufrufs tatsaechlich
+  // abgelaufener Besitz waere mit der alten, noch-nicht-abgelaufenen Zeit
+  // als gueltig durchgegangen. Die Uhr wird deshalb NACH dem Nachweis-I/O,
+  // unmittelbar vor jedem CAS-Versuch, FRISCH gelesen.
   for (let versuch = 0; versuch < 2; versuch++) {
     const { evidence, verdict } = await loadClosureEvidence(ctx, { runKey, fence });
     if (!verdict.ok) {
@@ -542,6 +563,10 @@ async function finishSection(ctx, { runKey, sectionId, fence, steps, cursor }) {
         },
       };
     }
+    // FRISCH — nach dem Nachweis-I/O, unmittelbar vor dem CAS. E1.finishRun
+    // prueft Lease/Fence gegen GENAU diese Zeit und die gerade gelesenen
+    // CAS-Daten; keine der beiden darf aus der Zeit vor dem Netzaufruf stammen.
+    const atMs = clock.now();
     const out = await mutate(ctx, `finish:${runKey}:${evidence.evidenceRef}`, (data) => {
       if (data.automation.dataRevision !== evidence.dataRevision) {
         return { data, result: { ok: false, code: "closure_evidence_stale_revision", detail: { expected: evidence.dataRevision, actual: data.automation.dataRevision } }, unchanged: true };

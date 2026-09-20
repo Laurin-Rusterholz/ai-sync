@@ -15,7 +15,7 @@ import * as PLAN from "../netlify/lib/quantus-v3-runtime-plan.mjs";
 import * as E1 from "../netlify/lib/quantus-v3-runtime-state.mjs";
 import {
   createIntegrationCorePort, createCloudTasksPort, createRunStatusClosureEvidencePort,
-  mapRunStatusPage, mapRunContextPage, CLOSURE_FINAL_STATE,
+  mapRunStatusPage, mapRunSourceChecksPage, CLOSURE_FINAL_STATE,
   TASK_DISPATCH_DEADLINE, DEFAULT_CORE_KEY,
 } from "../runtime/quantus-v3/src/integration-ports.mjs";
 import { runIdForRunKey, statusScopeIdForRunKey } from "../runtime/quantus-v3/src/run-ids.mjs";
@@ -251,16 +251,22 @@ test("die Lauf-Id folgt der echten B-Konvention (assistant-abschluss.mjs: run.ph
   assert.notEqual(runIdForRunKey(PLAN.slotRunKey("quantus", "2026-09-20", "process09", "3.0")), RUN_ID);
 });
 
-/* ── Rollenbindung: context.run gehoert lead_agent, nicht scheduler ─────── */
 
-test("context.run ist an lead_agent gebunden — run_context darf kein Dienst-Zugangsdatum lesen", () => {
+/* ── Rollenbindung ────────────────────────────────────────────────────── */
+
+test("context.run bleibt an lead_agent gebunden — run_context darf kein Dienst-Zugangsdatum lesen", () => {
   assert.equal(TOOL_PORTS["context.run"].role, "lead_agent");
   assert.equal(TOOL_PORTS["context.run"].scopeKind, "run_context");
-  assert.equal(TOOL_PORTS["status.run"].role, "scheduler");
-  assert.equal(TOOL_PORTS["status.run"].scopeKind, "run_status");
 });
 
-/* ── mapRunStatusPage / mapRunContextPage: die ECHTE Seitenform von C2 ──── */
+test("status.run und sourceChecks.run laufen beide ueber scheduler — kein Job-Token noetig", () => {
+  assert.equal(TOOL_PORTS["status.run"].role, "scheduler");
+  assert.equal(TOOL_PORTS["status.run"].scopeKind, "run_status");
+  assert.equal(TOOL_PORTS["sourceChecks.run"].role, "scheduler");
+  assert.equal(TOOL_PORTS["sourceChecks.run"].scopeKind, "run");
+});
+
+/* ── mapRunStatusPage / mapRunSourceChecksPage: die ECHTE Seitenform ────── */
 
 function statusSeite(over = {}, itemOver = {}) {
   const eintrag = { id: "status_1", runId: RUN_ID, state: CLOSURE_FINAL_STATE, stage: "abschluss",
@@ -276,14 +282,17 @@ function statusSeite(over = {}, itemOver = {}) {
   } };
 }
 
-function contextSeite(over = {}, items = null) {
+/* Genau die Form, die die neue enge Nachweisprojektion
+ * (`quantus-v3-domain-adapter.mjs`, `run.sourceChecks`) liefert: die
+ * ECHTEN, konfigurierten Quellen-Ids — nicht Arbeitselemente. */
+function sourceChecksSeite(over = {}, items = null) {
   const echte = items || [
-    { id: "ctx_chatgptLead_l1", runId: RUN_ID, kind: "run_context", title: "x", text: "", entityVersion: 3, updatedAt: "2026-09-19T08:00:00Z", evidenceRefs: ["ev_l1"] },
-    { id: "ctx_chatgptTask_c1", runId: RUN_ID, kind: "run_context", title: "y", text: "", entityVersion: 1, updatedAt: "2026-09-19T08:01:00Z", evidenceRefs: [] },
+    { id: "gmail-inbox", runId: RUN_ID, outcome: "ok", checkedAt: new Date(T0 - 5 * 60_000).toISOString(), entityVersion: 4 },
+    { id: "quantus-core", runId: RUN_ID, outcome: "ok", checkedAt: new Date(T0 - 3 * 60_000).toISOString(), entityVersion: 4 },
   ];
   return { status: 200, body: {
     ok: true, requestId: "r-2", serverNow: new Date(T0).toISOString(),
-    dataRevision: 42, query: "run.context", scopeId: RUN_ID,
+    dataRevision: 42, query: "run.sourceChecks", scopeId: RUN_ID,
     items: echte, count: echte.length, hasMore: false, complete: true,
     pageStatus: "done", pageReason: null, cursor: null,
     entityVersions: Object.fromEntries(echte.filter((e) => e?.id).map((e) => [e.id, e.entityVersion])),
@@ -324,82 +333,99 @@ test("mapRunStatusPage: eine unvollstaendige oder fremde Seite ist kein Nachweis
   }
 });
 
-test("mapRunContextPage: ein Eintrag je gefuehrter Quelle, Id ist der projizierte C2-Eintrag", () => {
-  const out = mapRunContextPage(contextSeite(), { runId: RUN_ID, scopeId: RUN_ID });
+test("mapRunSourceChecksPage: Original-Quellen-Id, echtes Ergebnis, echte Pruefzeit — kein erfundenes 'ok' aus einer Versionsnummer", () => {
+  const out = mapRunSourceChecksPage(sourceChecksSeite(), { runId: RUN_ID, scopeId: RUN_ID });
   assert.equal(out.ok, true, JSON.stringify(out));
   assert.deepEqual(out.page.sources, [
-    { id: "ctx_chatgptLead_l1", status: "ok", checkedAtMs: T0 },
-    { id: "ctx_chatgptTask_c1", status: "ok", checkedAtMs: T0 },
+    { id: "gmail-inbox", status: "ok", checkedAtMs: T0 - 5 * 60_000 },
+    { id: "quantus-core", status: "ok", checkedAtMs: T0 - 3 * 60_000 },
   ]);
   assert.equal(out.page.dataRevision, 42);
 });
 
-test("mapRunContextPage: eine Quelle ausserhalb des Laufs oder ohne brauchbare Version faellt auf", () => {
-  const fremd = mapRunContextPage(contextSeite({}, [{ id: "ctx_x", runId: "run_2026-01-01", entityVersion: 1 }]), { runId: RUN_ID, scopeId: RUN_ID });
-  assert.equal(fremd.ok, false);
-  assert.equal(fremd.code, "item_outside_run");
-  const kaputt = mapRunContextPage(contextSeite({}, [{ id: "ctx_x", runId: RUN_ID, entityVersion: null }]), { runId: RUN_ID, scopeId: RUN_ID });
-  assert.equal(kaputt.ok, true);
-  assert.equal(kaputt.page.sources[0].status, "not_ok");
+test("mapRunSourceChecksPage: jedes B-Ergebnis ausser 'ok' ist NICHT ok — nichts wird aus der Anwesenheit eines Eintrags erfunden", () => {
+  for (const outcome of ["partial", "auth_error", "budget_exceeded", "unreachable"]) {
+    const out = mapRunSourceChecksPage(sourceChecksSeite({}, [{ id: "gmail-inbox", runId: RUN_ID, outcome, checkedAt: new Date(T0).toISOString(), entityVersion: 4 }]), { runId: RUN_ID, scopeId: RUN_ID });
+    assert.equal(out.ok, true, outcome);
+    assert.equal(out.page.sources[0].status, "not_ok", outcome);
+  }
 });
 
-/* ── Der Nachweisport: ZWEI echte Aufrufe, korrekt rollengebunden ───────── */
+test("mapRunSourceChecksPage: eine Quelle ausserhalb des Laufs oder mit kaputter Pruefzeit faellt auf", () => {
+  const fremd = mapRunSourceChecksPage(sourceChecksSeite({}, [{ id: "gmail-inbox", runId: "run_2026-01-01", outcome: "ok", checkedAt: new Date(T0).toISOString() }]), { runId: RUN_ID, scopeId: RUN_ID });
+  assert.equal(fremd.ok, false);
+  assert.equal(fremd.code, "item_outside_run");
+  const kaputt = mapRunSourceChecksPage(sourceChecksSeite({}, [{ id: "gmail-inbox", runId: RUN_ID, outcome: "ok", checkedAt: "nicht-datum" }]), { runId: RUN_ID, scopeId: RUN_ID });
+  assert.equal(kaputt.ok, false);
+  assert.equal(kaputt.code, "source_checked_at_invalid");
+});
 
-test("der Nachweisport ruft status.run MIT Dienst-Zugangsdatum und context.run MIT Job-Token", async () => {
+/* ── Der Nachweisport: ZWEI echte Aufrufe, beide ueber scheduler ────────── */
+
+test("der Nachweisport ruft status.run UND sourceChecks.run — beide mit demselben Dienst-Zugangsdatum, kein Job-Token noetig", async () => {
   const gesendet = [];
-  const jobTokenAufrufe = [];
   const toolClient = createToolClient({
-    transport: { async send(req) { gesendet.push(req); return req.route === "quantus-run-status" ? statusSeite() : contextSeite(); } },
+    transport: { async send(req) { gesendet.push(req); return req.route === "quantus-run-status" ? statusSeite() : (() => { throw new Error("unerwartete Route: " + req.route); })(); } },
     credential: { async get(role) { return `dienst-${role}-${"x".repeat(30)}`; } },
-    jobTokenIssuer: { async mint(opts) { jobTokenAufrufe.push(opts); return "job-token-fuer-" + opts.jobId; } },
+    jobTokenIssuer: { async mint() { throw new Error("darf fuer diesen Nachweis nicht gerufen werden"); } },
     tenant: "quantus", policyVersion: "3.0",
     toolsEnabled: { quantus_run_status: true, quantus_context: true },
   });
   const port = createRunStatusClosureEvidencePort({ toolClient, tenant: "quantus", policyVersion: "3.0" });
   const nachweis = await port.impl.load({ runKey: RUNKEY, fence: 7, now: T0 });
 
+  // Beide Anfragen liefen ueber dieselbe Route (`quantus-run-status`, das
+  // Werkzeug `quantus_run_status`), mit demselben Dienst-Zugangsdatum —
+  // kein Job-Token wurde je gemintet.
   assert.equal(gesendet.length, 2);
-  const status = gesendet.find((r) => r.route === "quantus-run-status");
-  const kontext = gesendet.find((r) => r.route === "quantus-context");
-  assert.match(status.credential, /^dienst-scheduler-/, "status.run nutzt das Dienst-Zugangsdatum der Rolle scheduler");
-  assert.equal(kontext.credential, "job-token-fuer-" + RUN_ID, "context.run nutzt ein LAUFGEBUNDENES Job-Token");
-  assert.equal(jobTokenAufrufe.length, 1);
-  assert.equal(jobTokenAufrufe[0].jobId, RUN_ID);
-  assert.equal(jobTokenAufrufe[0].audience, "quantus-context");
+  for (const anfrage of gesendet) {
+    assert.equal(anfrage.route, "quantus-run-status");
+    assert.match(anfrage.credential, /^dienst-scheduler-/);
+  }
 
   assert.equal(nachweis.runKey, RUNKEY);
   assert.equal(nachweis.state, CLOSURE_FINAL_STATE);
   assert.equal(nachweis.blocked, false);
   assert.equal(nachweis.fence, 7);
   assert.equal(nachweis.fenceAttestedByC2, false);
-  assert.deepEqual(nachweis.sources, [
-    { id: "ctx_chatgptLead_l1", status: "ok", checkedAtMs: T0 },
-    { id: "ctx_chatgptTask_c1", status: "ok", checkedAtMs: T0 },
-  ]);
+  // sources bleibt leer, weil die Attrappe fuer BEIDE Aufrufe dieselbe
+  // run.status-Seite liefert — der zweite Aufruf (run.sourceChecks) faellt
+  // dann am Seiten-Echo durch. Dieser Test beweist nur den Transportweg
+  // (dieselbe Route, dasselbe Dienst-Zugangsdatum); der naechste liefert
+  // echte Quellen.
+  assert.equal(port.impl.lastFailure, "query_echo_mismatch");
 });
 
-test("fehlt der Job-Token-Aussteller, bleibt sources leer statt erfunden — status wird trotzdem geliefert", async () => {
+test("mit echten Quellenpruefungen wird der Nachweis vollstaendig — Original-Ids, kein context.run", async () => {
+  const gesendet = [];
   const toolClient = createToolClient({
-    transport: { async send(req) { return req.route === "quantus-run-status" ? statusSeite() : (() => { throw new Error("darf nicht gerufen werden"); })(); } },
+    transport: {
+      async send(req) {
+        gesendet.push(req);
+        if (req.route !== "quantus-run-status") throw new Error("unerwartete Route: " + req.route);
+        return req.searchParams.query === "run.status" ? statusSeite() : sourceChecksSeite();
+      },
+    },
     credential: { async get() { return "x".repeat(40); } },
-    jobTokenIssuer: null,   // C1-eigene Zugangsdaten fehlen
+    jobTokenIssuer: { async mint() { throw new Error("darf fuer diesen Nachweis nicht gerufen werden"); } },
     tenant: "quantus", policyVersion: "3.0",
     toolsEnabled: { quantus_run_status: true, quantus_context: true },
   });
   const port = createRunStatusClosureEvidencePort({ toolClient, tenant: "quantus", policyVersion: "3.0" });
-  const nachweis = await port.impl.load({ runKey: RUNKEY, fence: 1, now: T0 });
-  assert.equal(nachweis.state, CLOSURE_FINAL_STATE);
-  assert.equal(nachweis.sources, null);
-  assert.equal(port.impl.lastFailure, "port_unavailable");
+  const nachweis = await port.impl.load({ runKey: RUNKEY, fence: 7, now: T0 });
+  assert.deepEqual(nachweis.sources, [
+    { id: "gmail-inbox", status: "ok", checkedAtMs: T0 - 5 * 60_000 },
+    { id: "quantus-core", status: "ok", checkedAtMs: T0 - 3 * 60_000 },
+  ]);
+  assert.equal(gesendet.every((r) => r.route === "quantus-run-status"), true, "kein Aufruf ging an quantus-context");
 });
 
 test("solange run_status abgeschaltet ist, gibt es GAR KEINEN Nachweis — auch keinen halben", async () => {
   const toolClient = createToolClient({
     transport: { async send() { throw new Error("darf nicht gerufen werden"); } },
     credential: { async get() { return "x".repeat(40); } },
-    jobTokenIssuer: { async mint() { return "job-token-x"; } },
     tenant: "quantus", policyVersion: "3.0",
-    toolsEnabled: { quantus_run_status: false, quantus_context: true },
+    toolsEnabled: { quantus_run_status: false },
   });
   const port = createRunStatusClosureEvidencePort({ toolClient, tenant: "quantus", policyVersion: "3.0" });
   await assert.rejects(() => port.impl.load({ runKey: RUNKEY, fence: 1, now: T0 }),
@@ -408,11 +434,10 @@ test("solange run_status abgeschaltet ist, gibt es GAR KEINEN Nachweis — auch 
 
 test("zwei Seiten mit unterschiedlicher Datenrevision ergeben keinen konsistenten Nachweis", async () => {
   const toolClient = createToolClient({
-    transport: { async send(req) { return req.route === "quantus-run-status" ? statusSeite() : contextSeite({ dataRevision: 43 }); } },
+    transport: { async send(req) { return req.searchParams.query === "run.status" ? statusSeite() : sourceChecksSeite({ dataRevision: 43 }); } },
     credential: { async get() { return "x".repeat(40); } },
-    jobTokenIssuer: { async mint() { return "job-token-x"; } },
     tenant: "quantus", policyVersion: "3.0",
-    toolsEnabled: { quantus_run_status: true, quantus_context: true },
+    toolsEnabled: { quantus_run_status: true },
   });
   const port = createRunStatusClosureEvidencePort({ toolClient, tenant: "quantus", policyVersion: "3.0" });
   const nachweis = await port.impl.load({ runKey: RUNKEY, fence: 1, now: T0 });
@@ -424,9 +449,8 @@ test("ein Laufschluessel, der keine B-Id ergibt, liefert gar keinen Nachweis", a
   const toolClient = createToolClient({
     transport: { async send() { throw new Error("darf nicht gerufen werden"); } },
     credential: { async get() { return "x".repeat(40); } },
-    jobTokenIssuer: { async mint() { return "job-token-x"; } },
     tenant: "quantus", policyVersion: "3.0",
-    toolsEnabled: { quantus_run_status: true, quantus_context: true },
+    toolsEnabled: { quantus_run_status: true },
   });
   const port = createRunStatusClosureEvidencePort({ toolClient, tenant: "quantus", policyVersion: "3.0" });
   assert.equal(await port.impl.load({ runKey: "kaputt", now: T0 }), null);

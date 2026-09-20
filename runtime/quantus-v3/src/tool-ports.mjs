@@ -117,6 +117,25 @@ export const TOOL_PORTS = Object.freeze({
       },
     },
   }),
+  /*
+   * Die enge Nachweisprojektion: tatsaechlich gespeicherte Quellen-
+   * pruefungen (`run.sourceChecks`) — nicht `run.context` (Arbeitsliste,
+   * kein Pruefnachweis). Das Scope-Objekt ist der Lauf selbst (Kategorie
+   * `run`), die schon `scheduler` erlaubt ist — kein Job-Token noetig.
+   */
+  "sourceChecks.run": Object.freeze({
+    tool: "quantus_run_status", verb: "context.read", role: "scheduler", scopeKind: "run", method: "GET",
+    transport: "query",
+    request: {
+      type: "object", required: ["query", "scopeId"],
+      properties: {
+        query: { type: "string", enum: ["run.sourceChecks"] },
+        scopeId: C2_ID, jobId: C2_ID,
+        pageSize: { type: "integer", minimum: 1, maximum: 10 },
+        cursor: CURSOR,
+      },
+    },
+  }),
   "run.ensure": Object.freeze({
     tool: "quantus_command", verb: "run.ensure", role: "scheduler", scopeKind: "run", method: "POST",
     request: { type: "object", required: ["runKey", "slot", "localDate"], properties: { runKey: RUN_KEY, slot: { type: "string", maxLength: 24 }, localDate: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" } } },
@@ -154,7 +173,7 @@ export const TOOL_PORT_NAMES = Object.freeze(Object.keys(TOOL_PORTS).sort());
 export const C2_ROUTE_QUERIES = Object.freeze({
   "quantus-context": Object.freeze(["run.context", "lead.context", "notes.recent", "policy.current"]),
   "quantus-read": Object.freeze(["lead.context", "notes.recent", "policy.current", "run.queue"]),
-  "quantus-run-status": Object.freeze(["run.status", "run.queue"]),
+  "quantus-run-status": Object.freeze(["run.status", "run.queue", "run.sourceChecks"]),
 });
 
 /*

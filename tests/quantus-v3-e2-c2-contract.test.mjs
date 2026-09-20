@@ -47,7 +47,9 @@ const RUNKEY = slotRunKey(TENANT, DATE, "close23", POLICY_VERSION);
 const RUN_ID = runIdForRunKey(RUNKEY);           // "run_2026-09-19"
 const STATUS_SCOPE_ID = statusScopeIdForRunKey(RUNKEY);
 const MIN = 60_000;
+const LESE_VERZUG = 10_000;   // Abstand zwischen closeRun und dem Lesen ueber C2 — innerhalb CLOSURE_EVIDENCE_MAX_AGE_MS
 const CONTEXT_ITEM_ID = "ctx_chatgptLead_l1";
+const SOURCE_CHECK_ID = "quantus-core";   // POLICY.requiredSources[0].id — die ECHTE, konfigurierte Quelle
 
 /* Genau EINE, minimale Kern-Quelle: eine erforderliche interne Quelle
  * ("quantus-core", B verlangt genau eine solche), keine externe. */
@@ -89,7 +91,7 @@ function bestand() {
 /* Der Tag: ensureRun → Quellenpruefung → Beleg → Abschluss des Elements
  * → closeRun. Alles direkt ueber B, nicht ueber C2 — C2 wird erst zum
  * LESEN benutzt (siehe unten), das ist der Teil, den dieses Paket bezeugt. */
-function gruenerTag() {
+function gruenerTag({ leseVerzug = LESE_VERZUG } = {}) {
   let d = K.migrateCore(bestand(), { now: Date.parse("2026-09-18T06:00:00Z") }).data;
   d = bCmd(d, "ensureRun", { date: DATE }, K.slotBeginnMs(DATE, "briefing04") + MIN);
   d = bCmd(d, "ensureStartNote", { date: DATE, noteId: "note_start_" + DATE }, K.slotBeginnMs(DATE, "briefing04") + 2 * MIN);
@@ -98,7 +100,9 @@ function gruenerTag() {
     d = bCmd(d, "recordSlotReceipt", { date: DATE, slot, receiptId: "rcpt_" + slot }, K.slotBeginnMs(DATE, slot) + MIN);
   }
   const abend = K.wandzeitZuMs(DATE, 23, 5);
-  d = bCmd(d, "recordSourceCheck", { date: DATE, sourceId: "quantus-core", cursor: "c-1", outcome: "ok" }, abend - 8 * MIN, { kind: "system", id: "quantus-scheduler" });
+  // Nah an "jetzt" (siehe LESE_VERZUG unten) — sonst waere die Quellen-
+  // pruefung beim Lesen bereits laenger als CLOSURE_EVIDENCE_MAX_AGE_MS her.
+  d = bCmd(d, "recordSourceCheck", { date: DATE, sourceId: "quantus-core", cursor: "c-1", outcome: "ok" }, abend - 10_000, { kind: "system", id: "quantus-scheduler" });
   d = bCmd(d, "registerEvidence", {
     evidenceId: "ev_l1", kind: "message", ref: "msg_l1", sourceType: "chatgptLead", sourceId: "l1",
     origin: { adapter: "gmail", ref: "t_l1" }, observedAt: new Date(abend - 7 * MIN).toISOString(), fingerprint: "fp_l1_0123456789abcdef",
@@ -112,19 +116,19 @@ function gruenerTag() {
   assert.equal(lauf.phase, "final", JSON.stringify(lauf.finalEvaluation));
   assert.equal(lauf.finalEvaluation.coverage, "green");
   assert.equal(lauf.finalEvaluation.operations, "green");
-  return { data: d, abendMs: abend };
+  return { data: d, abendMs: abend, leseVerzug };
 }
 
 /* ── Verdrahtung: echte Domaene, echter Dienst, echte Ausweise ──────────── */
 
 const PORTS = Object.freeze({ policy: POLICY, ownerId: OWNER, read: () => undefined });
-function aufbau() {
-  const { data, abendMs } = gruenerTag();
+function aufbau({ leseVerzug } = {}) {
+  const { data, abendMs, leseVerzug: verzug } = gruenerTag(leseVerzug === undefined ? {} : { leseVerzug });
   const env = FA.makeEnv({ tenant: TENANT, mode: "enforce", overrides: { QUANTUS_V3_API_WRITES: "enabled" } });
   const store = FC.makeStore({ snapshot: data });
-  const domain = createQuantusV3DomainAdapter({ policyVersion: POLICY_VERSION, tenantId: TENANT, mode: "enforce", now: () => abendMs + MIN, ports: PORTS });
+  const domain = createQuantusV3DomainAdapter({ policyVersion: POLICY_VERSION, tenantId: TENANT, mode: "enforce", now: () => abendMs + verzug, ports: PORTS });
   let n = 0;
-  const deps = { now: () => abendMs + MIN, newRequestId: () => `req-${++n}`, env: env.read,
+  const deps = { now: () => abendMs + verzug, newRequestId: () => `req-${++n}`, env: env.read,
     keySource: { async get() { return null; } }, userLookup: async () => null,
     rateLimiter: FC.makeRateLimiter(), store, domain };
 
@@ -168,7 +172,7 @@ test("die gepruefte Kette ist auf diesem Checkout ladbar (kein Git-Objektspeiche
 
 test("run.status erreicht die echte C2/B-Kette mit dem Dienst-Zugangsdatum (Rolle scheduler)", async () => {
   const { toolClient, gesendet, abendMs } = aufbau();
-  const antwort = await toolClient.call("status.run", { query: "run.status", scopeId: STATUS_SCOPE_ID, jobId: RUN_ID, pageSize: 100 }, { now: abendMs + MIN });
+  const antwort = await toolClient.call("status.run", { query: "run.status", scopeId: STATUS_SCOPE_ID, jobId: RUN_ID, pageSize: 100 }, { now: abendMs + LESE_VERZUG });
   assert.equal(antwort.status, 200, JSON.stringify(antwort.body));
   assert.equal(antwort.body.items[0].runId, RUN_ID);
   assert.equal(antwort.body.items[0].state, "final");
@@ -201,11 +205,14 @@ test("run.context erreicht die echte C2/B-Kette NUR mit einem laufgebundenen Job
 test("der zusammengesetzte Nachweisport liefert einen echten, gruenen Abschlussnachweis aus B/C2", async () => {
   const { toolClient, abendMs } = aufbau();
   const port = createRunStatusClosureEvidencePort({ toolClient, tenant: TENANT, policyVersion: POLICY_VERSION });
-  const nachweis = await port.impl.load({ runKey: RUNKEY, fence: 3, now: abendMs + MIN });
+  const nachweis = await port.impl.load({ runKey: RUNKEY, fence: 3, now: abendMs + LESE_VERZUG });
   assert.notEqual(nachweis, null, `kein Nachweis: ${port.impl.lastFailure}`);
   assert.equal(nachweis.state, CLOSURE_FINAL_STATE);
   assert.equal(nachweis.blocked, false);
-  assert.deepEqual(nachweis.sources, [{ id: CONTEXT_ITEM_ID, status: "ok", checkedAtMs: nachweis.verifiedAtMs }]);
+  // checkedAtMs ist die ECHTE Pruefzeit aus B (recordSourceCheck), nicht
+  // die Serverzeit der Leseantwort — sonst waere jede Anwesenheit eines
+  // Eintrags "gerade eben geprueft" gewesen, egal wie alt er ist.
+  assert.deepEqual(nachweis.sources, [{ id: SOURCE_CHECK_ID, status: "ok", checkedAtMs: abendMs - 10_000 }]);
   assert.equal(nachweis.fence, 3);
   assert.equal(nachweis.fenceAttestedByC2, false);
 
@@ -214,7 +221,7 @@ test("der zusammengesetzte Nachweisport liefert einen echten, gruenen Abschlussn
   // von B's closeRun ueber die echte C2-Kette gelesen.
   const urteil = validateClosureEvidence(nachweis, {
     runKey: RUNKEY, tenant: TENANT, policyVersion: POLICY_VERSION, fence: 3,
-    now: nachweis.verifiedAtMs, requiredSources: [CONTEXT_ITEM_ID],
+    now: nachweis.verifiedAtMs, requiredSources: [SOURCE_CHECK_ID],
   });
   assert.deepEqual(urteil, { ok: true, errors: [] });
 });
@@ -222,10 +229,10 @@ test("der zusammengesetzte Nachweisport liefert einen echten, gruenen Abschlussn
 test("ein Quellensatz, der eine bei B tatsaechlich nicht gefuehrte Quelle verlangt, faellt durch — nichts wird ergaenzt", async () => {
   const { toolClient, abendMs } = aufbau();
   const port = createRunStatusClosureEvidencePort({ toolClient, tenant: TENANT, policyVersion: POLICY_VERSION });
-  const nachweis = await port.impl.load({ runKey: RUNKEY, fence: 3, now: abendMs + MIN });
+  const nachweis = await port.impl.load({ runKey: RUNKEY, fence: 3, now: abendMs + LESE_VERZUG });
   const urteil = validateClosureEvidence(nachweis, {
     runKey: RUNKEY, tenant: TENANT, policyVersion: POLICY_VERSION, fence: 3,
-    now: nachweis.verifiedAtMs, requiredSources: [CONTEXT_ITEM_ID, "ctx_chatgptTask_c1"],
+    now: nachweis.verifiedAtMs, requiredSources: [SOURCE_CHECK_ID, "gmail-inbox"],
   });
   assert.equal(urteil.ok, false);
   assert.ok(urteil.errors.some((e) => e.startsWith("sources_incomplete")), urteil.errors.join(","));
@@ -234,10 +241,32 @@ test("ein Quellensatz, der eine bei B tatsaechlich nicht gefuehrte Quelle verlan
 test("ein falscher Fence oder ein veralteter Nachweis fallen durch — der echte Inhalt allein genuegt nicht", async () => {
   const { toolClient, abendMs } = aufbau();
   const port = createRunStatusClosureEvidencePort({ toolClient, tenant: TENANT, policyVersion: POLICY_VERSION });
-  const nachweis = await port.impl.load({ runKey: RUNKEY, fence: 3, now: abendMs + MIN });
-  const basis = { runKey: RUNKEY, tenant: TENANT, policyVersion: POLICY_VERSION, requiredSources: [CONTEXT_ITEM_ID] };
+  const nachweis = await port.impl.load({ runKey: RUNKEY, fence: 3, now: abendMs + LESE_VERZUG });
+  const basis = { runKey: RUNKEY, tenant: TENANT, policyVersion: POLICY_VERSION, requiredSources: [SOURCE_CHECK_ID] };
   assert.equal(validateClosureEvidence(nachweis, { ...basis, fence: 99, now: nachweis.verifiedAtMs }).errors.includes("fence_mismatch"), true);
   assert.equal(validateClosureEvidence(nachweis, { ...basis, fence: 3, now: nachweis.verifiedAtMs + CLOSURE_EVIDENCE_MAX_AGE_MS + 1 }).errors.includes("evidence_stale"), true);
+});
+
+test("eine bei B echt bestandene, aber inzwischen veraltete Quellenpruefung bleibt ungueltig — trotz aktuellem, finalem Status", async () => {
+  // Derselbe echte, gruene Tag — nur wird ueber C2 sehr viel spaeter
+  // gelesen (10 Minuten statt 10 Sekunden nach Abschluss). Der Status
+  // (`state`, `blocked`, `entityVersion`) ist immer noch AKTUELL — B hat
+  // sich seither nicht veraendert. Die Quellenpruefung selbst ist echt
+  // und war bei closeRun gueltig. Trotzdem darf das Ergebnis NICHT gruen
+  // sein: `checkedAt` liegt laenger als CLOSURE_EVIDENCE_MAX_AGE_MS
+  // zurueck. Ein aktueller Status ersetzt keine aktuelle Quellenpruefung.
+  const { toolClient, abendMs } = aufbau({ leseVerzug: 10 * MIN });
+  const port = createRunStatusClosureEvidencePort({ toolClient, tenant: TENANT, policyVersion: POLICY_VERSION });
+  const nachweis = await port.impl.load({ runKey: RUNKEY, fence: 3, now: abendMs + 10 * MIN });
+  assert.notEqual(nachweis, null, `kein Nachweis: ${port.impl.lastFailure}`);
+  assert.equal(nachweis.state, CLOSURE_FINAL_STATE);
+  assert.equal(nachweis.blocked, false);
+  const urteil = validateClosureEvidence(nachweis, {
+    runKey: RUNKEY, tenant: TENANT, policyVersion: POLICY_VERSION, fence: 3,
+    now: nachweis.verifiedAtMs, requiredSources: [SOURCE_CHECK_ID],
+  });
+  assert.equal(urteil.ok, false);
+  assert.ok(urteil.errors.some((e) => e.startsWith("source_stale")), urteil.errors.join(","));
 });
 
 test("VOR dem Abschluss (Lauf noch nicht final) liefert die echte Kette einen ehrlich unfertigen Status — kein falsches Gruen", async () => {

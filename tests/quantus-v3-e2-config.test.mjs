@@ -166,10 +166,10 @@ test("jeder Dienst kennt nur seine eigenen Routen", () => {
 
 /* ── Werkzeugports ─────────────────────────────────────────────────────── */
 
-test("es gibt genau acht Werkzeugports — keinen Vollzugriffsport", () => {
+test("es gibt genau neun Werkzeugports — keinen Vollzugriffsport", () => {
   assert.deepEqual(TOOL_PORT_NAMES, [
     "context.run", "run.checkpoint", "run.claim", "run.ensure",
-    "run.finalize", "run.log", "run.renew", "status.run",
+    "run.finalize", "run.log", "run.renew", "sourceChecks.run", "status.run",
   ]);
   // Verben, die C1 dem Backend zwar erlaubt, die dieses Paket aber nicht
   // braucht, gibt es hier nicht.
