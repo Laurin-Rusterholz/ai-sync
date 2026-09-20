@@ -33,6 +33,12 @@ runtime dependency, global `window` export or top-level database/network effect.
 
 ## Outcomes
 
+A server dry-run or `503 api_writes_disabled` pauses dispatch without consuming
+attempts or acknowledging the intent. The original pending operation survives
+reload and resumes with the same key when writes are enabled. Explicit
+`applied: false` or `dryRun: true` can never be stored as a commit receipt, even
+if a custom transport incorrectly labels it successful.
+
 | State | Meaning |
 | --- | --- |
 | `pending` | Saved locally, not server-confirmed |
@@ -56,6 +62,9 @@ the server's atomic idempotency ledger, not a device lock, ensures one effect.
 `npm run test:assistant-client` exercises real IndexedDB transactions through
 `fake-indexeddb` 6.2.5, including independent connections, concurrent inserts,
 account switching, interrupted replies, conflict retention and retry limits.
+The suite has 36 tests, including dry-run/disabled-server persistence and
+recovery. A separate composition with the proposed C2 HTTP service reproduced
+the dry-run false-acknowledgement and verifies this client correction.
 The lost-response test composes the queue with the actual
 `applyIdempotentCommand` server helper; the domain mutation happens once.
 The suite is included in `npm test` and the CI path filter covers the module.

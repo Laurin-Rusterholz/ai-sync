@@ -110,6 +110,44 @@ test("logout/account switch cannot dispatch another user's pending operation", a
   assert.deepEqual(await h.queue.list("other-user"), []);
 });
 
+for (const [name, body, status] of [
+  ["dry-run receipt", receipt({ applied: false, dryRun: true }), 200],
+  ["explicit not-applied receipt", receipt({ applied: false }), 200],
+  ["server write gate", { ok: false, error: "api_writes_disabled" }, 503],
+]) {
+  test(`${name} retains durable pending intent until a real commit`, async (t) => {
+    let enabled = false;
+    const sentIds = [];
+    const h = await setup(t, { fetchImpl: async (_, options) => {
+      sentIds.push(options.headers["Idempotency-Key"]);
+      return enabled ? response(receipt({ applied: true, dryRun: false })) : response(body, status);
+    } });
+    await h.queue.enqueue(input());
+    const result = await h.queue.drain(accountKey, { transport: h.transport });
+    assert.equal(result.paused, true);
+    const pending = (await h.queue.list(accountKey))[0];
+    assert.equal(pending.status, "pending");
+    assert.equal(pending.attempts, 0);
+    assert.equal(pending.receipt, undefined);
+    h.queue.close();
+    const reopened = await openCommandQueue({ indexedDB: h.indexedDB, databaseName: "queue", now: h.now });
+    t.after(() => reopened.close());
+    assert.deepEqual((await reopened.list(accountKey))[0], pending);
+    enabled = true;
+    await reopened.drain(accountKey, { transport: h.transport });
+    assert.equal((await reopened.list(accountKey, { includeAcknowledged: true }))[0].status, "acknowledged");
+    assert.deepEqual(sentIds, [input().operationId, input().operationId]);
+  });
+}
+
+test("a custom transport cannot save a dry-run as a receipt, and malformed flags are rejected", async (t) => {
+  const h = await setup(t, { fetchImpl: async () => response(receipt({ applied: "true", dryRun: "false" })) });
+  assert.equal((await h.transport.send(input())).code, "receipt_invalid");
+  await h.queue.enqueue(input());
+  await h.queue.drain(accountKey, { transport: { send: async () => ({ ok: true, receipt: receipt({ applied: false, dryRun: true }) }) } });
+  assert.equal((await h.queue.list(accountKey))[0].status, "needs_review");
+});
+
 for (const [status, expected] of [[400, "needs_review"], [401, "needs_sign_in"], [403, "needs_review"], [409, "conflict"], [426, "upgrade_required"]]) {
   test(`HTTP ${status} retains original action as ${expected}, never rebases`, async (t) => {
     let calls = 0;

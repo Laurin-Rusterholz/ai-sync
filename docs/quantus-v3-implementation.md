@@ -35,10 +35,10 @@ checkouts. No production data was read or modified for the initial code work.
 | Package | Scope | Current evidence |
 | --- | --- | --- |
 | A | Writer, automation, schema and regression inventory | Initial source inventory below; deployed service inventory still open |
-| B | Canonical states, migration, server traffic lights, closure | Second review of 6e829d5: nine failures; correction c4f8ac4 under independent review, not accepted |
-| C | Auth, four strict APIs, idempotency, entity versions, CAS | CAS/idempotency tested; C1 9ff3423: five new independent failures, fixes delegated; C2 39728bc not yet reviewed |
+| B | Canonical states, migration, server traffic lights, closure | c4f8ac4 passes 22 authored and 10 prior independent tests; six new migration/proof/review regressions delegated, not accepted |
+| C | Auth, four strict APIs, idempotency, entity versions, CAS | C1 33a4b3d: 88 authored and five independent tests pass; C2 independent chain review found 11 failures, fixes delegated |
 | D | Desktop/tablet/mobile command writers, offline queue, old-client gate | Disabled transport/IndexedDB component tested, including real Chrome recovery; no app wired yet |
-| E | Cloud runtime, slots, leases, fencing, retry, checkpoints, cost ledger | E1 022e844: nine independent failures, fixes delegated; E2 source package underway, no deployment |
+| E | Cloud runtime, slots, leases, fencing, retry, checkpoints, cost ledger | E1 022e844: nine independent failures; 8031323 correction awaiting review; E2 source package underway, no deployment |
 | F | Authorized source adapters, mail ledger, document extraction, live UI | Open |
 | G | Job-scoped Claude/Gemini providers, review and untrusted-input isolation | Open |
 | H | T01-T40, production gates, cutover, 14-day trial and final acceptance | Open |
@@ -142,13 +142,27 @@ implied. A test of the transaction helper does not prove all HTTP entry points.
 
 The browser-native command transport and IndexedDB journal are implemented, but
 not imported by production app handlers yet. Writes default disabled. The
-32 behavioral tests cover account isolation, stable IDs, retained conflicts,
+36 behavioral tests cover account isolation, stable IDs, retained conflicts,
 bounded retry, malformed receipts, legacy intent preservation and a real
 composition with the server idempotency helper. A Chrome test independently
 verified reload persistence and recovery after the server committed but its
 HTTP reply was lost: two requests, one effect, original receipt replayed.
 See `docs/quantus-v3-command-client.md`. This is partial T05/T10 evidence only;
 T08/T09/T11/T36/T37 and the all-writer gate remain open.
+
+Cross-component review also caught a proposed server dry-run resembling a
+successful commit. The client now pauses on explicit dry-run/not-applied results
+or a disabled-server error, retaining the operation without consuming attempts.
+Server correction is delegated; a component fix is not an enabled deployment.
+
+The independent C2 review used genuine synthetic Firebase signatures and the
+actual integrated idempotency module: its positive commit/replay control passed.
+Eleven further cases failed: foreign returned objects, missing pagination state,
+overfull pages, fabricated dry-run revision, false dry-run acknowledgement,
+absent rate-counter CAS conditions, negative counters, lease expiry during the
+CAS wait, and three ordinary user verbs denied by conflicting role/target kinds.
+The client-side false acknowledgement is repaired here; the server issues remain
+delegated and the API package is not integrated. This is not a live data test.
 
 Package B correction `6e829d5` still fails nine independent second-review
 counterexamples: corrupt map/revision green results, stale cache validation,

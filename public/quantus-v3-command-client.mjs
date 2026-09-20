@@ -56,6 +56,8 @@ export function serializeCommand(command) {
 
 function validReceipt(receipt) {
   return record(receipt) && receipt.ok === true && typeof receipt.replayed === "boolean"
+    && (!Object.hasOwn(receipt, "applied") || receipt.applied === true)
+    && (!Object.hasOwn(receipt, "dryRun") || receipt.dryRun === false)
     && typeof receipt.serverNow === "string" && Number.isFinite(Date.parse(receipt.serverNow))
     && new Date(receipt.serverNow).toISOString() === receipt.serverNow
     && Number.isSafeInteger(receipt.dataRevision) && receipt.dataRevision >= 0
@@ -91,12 +93,16 @@ export function createCommandTransport({ origin, getAuth, fetchImpl = globalThis
       let result;
       try { result = JSON.parse(await response.text()); } catch { result = null; }
       if (response.ok) {
+        if (result?.applied === false || result?.dryRun === true) {
+          return { ok: false, status: 0, code: "writes_disabled", paused: true };
+        }
         if (!validReceipt(result)) return { ok: false, status: 0, code: "receipt_invalid", retryable: true, uncertain: true };
         return { ok: true, receipt: result };
       }
       const status = response.status;
       const suppliedCode = result?.error || result?.code;
       const code = typeof suppliedCode === "string" && /^[a-zA-Z0-9_:-]{1,80}$/.test(suppliedCode) ? suppliedCode : `http_${status}`;
+      if (status === 503 && code === "api_writes_disabled") return { ok: false, status, code: "writes_disabled", paused: true };
       const retry = response.headers?.get?.("Retry-After");
       const retryDate = retry ? Date.parse(retry) : NaN;
       const seconds = retry && /^\d+$/.test(retry) ? Number(retry)
