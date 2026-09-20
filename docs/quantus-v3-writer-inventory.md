@@ -143,6 +143,22 @@ every retry made an identical retry collide with itself as
 `operation_id_conflict`; the queue's own `createdAt` already answers "first
 seen").
 
+**Round 3 correction (independently reviewed, 042deae rejected):** round 2's
+divergence retention was fire-and-forget and, for RTDB, ran only *after* the
+replacing commit — a real retention failure (quota, missing module) meant the
+only copy of the differing local data was gone at the exact moment the
+overwrite succeeded. `guardV3ProtectedWrite()` now `await`s
+`retainV3LocalDivergenceSecurely()` and blocks the write
+(`v3_divergence_retention_failed`) unless it actually confirms a commit; a
+throw during retention is caught and treated the same way (fail-closed,
+never an unhandled exception). `rtdbJsonPut()`'s CAS callback stays pure: a
+newly detected, not-yet-secured divergence aborts the transaction; only
+*after* it settles does the code secure it outside the callback, and only
+then does one bounded retry (`RTDB_DIVERGENCE_MAX_ATTEMPTS = 2`) with the
+unchanged original run — never commit-then-secure. A divergence that grows
+or changes during that retry is not chased further; it fails visibly without
+ever writing.
+
 ## Confirmed core writers
 
 | Surface | Source | Observed route | Required v3 boundary |

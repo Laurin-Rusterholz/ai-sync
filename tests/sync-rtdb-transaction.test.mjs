@@ -83,6 +83,7 @@ function build(refBundle, { blobKey = "app-data.json", device = "dev_desktop_1" 
   const APP = { state: { settings: { storage: { blobKey } }, storage: {} } };
   const fails = [];
   const factory = new Function(...DEPS,
+    cut("const RTDB_DIVERGENCE_MAX_ATTEMPTS = 2;") + "\n" +
     cut("async function rtdbJsonPut(key, data, options = {}) {") + "\nreturn rtdbJsonPut;");
   const fn = factory(
     APP, { log() {}, warn() {} }, () => true,
@@ -237,6 +238,7 @@ const wrapOf = (payload, savedBy) => ({
 {
   const local = { entities: {}, meta: { updatedAt: "2026-08-23T14:00:00.000Z" } };
   const factory = new Function(...DEPS,
+    cut("const RTDB_DIVERGENCE_MAX_ATTEMPTS = 2;") + "\n" +
     cut("async function rtdbJsonPut(key, data, options = {}) {") + "\nreturn rtdbJsonPut;");
   let restCalls = 0;
   const APP = { state: { settings: { storage: { blobKey: "app-data.json" } }, storage: {} } };

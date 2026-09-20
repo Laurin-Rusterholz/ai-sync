@@ -89,7 +89,15 @@ function schneide(name) {
 const ECHTE = ["canonicalWrite", "remoteGetByKey", "remotePutByKey", "rtdbJsonPut",
   "netlifyBlobPut", "getCloudProviderOrder", "shouldTryCloudProvider",
   "coreWriteGuard", "rememberCloudFailure"];
-const quelle = ECHTE.map(schneide).join("\n");
+// rtdbJsonPut() nutzt seit F-27 Runde 3 diese Konstante fuer die begrenzte
+// Wiederholung nach gesicherter Abweichung — schneide() kennt nur function-
+// Deklarationen, die const-Zeile wird separat vorangestellt.
+const rtdbDivMaxConst = (() => {
+  const a = index.indexOf("const RTDB_DIVERGENCE_MAX_ATTEMPTS = ");
+  ok(a > 0, "RTDB_DIVERGENCE_MAX_ATTEMPTS wurde nicht gefunden");
+  return index.slice(a, index.indexOf(";", a) + 1);
+})();
+const quelle = rtdbDivMaxConst + "\n" + ECHTE.map(schneide).join("\n");
 ok(ECHTE.every((n) => quelle.includes(n + "(")), "nicht alle echten Funktionen konnten geladen werden");
 
 // Gegenprobe zum Loader: die Riegel-Zeile MUSS im geladenen Quelltext stehen.
@@ -198,7 +206,7 @@ function umgebung({ rtdbLesenOk = true, transaktion = "ambiguous",
     "coreKeyAuthGate", "hasAnyCloudProviderAvailable", "firebaseJsonPut", "firebaseJsonGet",
     "rtdbJsonGet", "netlifyBlobGet", "rtdbDbRef", "fetchWithTimeout", "buildStorageAuthHeaders",
     "guardV3ProtectedWrite",
-    "detectV3ProtectedGap", "detectV3LocalDivergence", "retainV3ProtectedGapLocally", "retainV3LocalDivergenceQuietly",
+    "detectV3ProtectedGap", "detectV3LocalDivergence", "retainV3ProtectedGapLocally", "retainV3LocalDivergenceSecurely",
     "console", "_lastShadowWriteAt", "JSON", "Date", "Promise", "Error", "Object", "Array", "Math", "String",
     quelle + "\nreturn { canonicalWrite, remotePutByKey, netlifyBlobPut };")(
     APP, _cloudHealth, _remoteEtags, ["rtdb", "netlify"], 2,

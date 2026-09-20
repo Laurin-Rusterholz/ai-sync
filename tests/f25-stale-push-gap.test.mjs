@@ -105,9 +105,11 @@ const stand = (notizen, meta) => ({
     "APP", "shouldTryCloudProvider", "coreAuthReady", "rememberCoreAuthRequired", "rememberCloudFailure",
     "rememberCloudSuccess", "getOrCreateDeviceId", "getDataTimestamp", "rtdbDbRef", "rtdbNodeKey",
     "RTDB_NODE", "RTDB_DB_URL", "fetchWithTimeout", "coreWriteGuard", "canonicalWrite",
-    "detectV3ProtectedGap", "detectV3LocalDivergence", "retainV3ProtectedGapLocally", "retainV3LocalDivergenceQuietly",
+    "detectV3ProtectedGap", "detectV3LocalDivergence", "retainV3ProtectedGapLocally", "retainV3LocalDivergenceSecurely",
     "console", "JSON", "Date", "Promise", "Error",
-    funktionAsync("rtdbJsonPut") + "\nreturn rtdbJsonPut;")(
+    "const RTDB_DIVERGENCE_MAX_ATTEMPTS = " +
+      (index.match(/const RTDB_DIVERGENCE_MAX_ATTEMPTS = (\d+)/) || [, "2"])[1] + ";\n" +
+      funktionAsync("rtdbJsonPut") + "\nreturn rtdbJsonPut;")(
     { state: { settings: { storage: { blobKey: "app-data.json" } }, storage: {} } },
     () => true, async () => ({ user: { uid: "u" } }), () => {}, () => {}, () => {},
     () => "dev-A", (d) => Date.parse(d?.meta?.updatedAt) || 0, db.ref, (k) => k.replace(/\./g, "_"),
