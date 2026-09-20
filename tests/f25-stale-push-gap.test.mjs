@@ -105,14 +105,20 @@ const stand = (notizen, meta) => ({
     "APP", "shouldTryCloudProvider", "coreAuthReady", "rememberCoreAuthRequired", "rememberCloudFailure",
     "rememberCloudSuccess", "getOrCreateDeviceId", "getDataTimestamp", "rtdbDbRef", "rtdbNodeKey",
     "RTDB_NODE", "RTDB_DB_URL", "fetchWithTimeout", "coreWriteGuard", "canonicalWrite",
+    "detectV3ProtectedGap", "detectV3LocalDivergence", "retainV3ProtectedGapLocally", "retainV3LocalDivergenceSecurely",
     "console", "JSON", "Date", "Promise", "Error",
-    funktionAsync("rtdbJsonPut") + "\nreturn rtdbJsonPut;")(
+    "const RTDB_DIVERGENCE_MAX_ATTEMPTS = " +
+      (index.match(/const RTDB_DIVERGENCE_MAX_ATTEMPTS = (\d+)/) || [, "2"])[1] + ";\n" +
+      funktionAsync("rtdbJsonPut") + "\nreturn rtdbJsonPut;")(
     { state: { settings: { storage: { blobKey: "app-data.json" } }, storage: {} } },
     () => true, async () => ({ user: { uid: "u" } }), () => {}, () => {}, () => {},
     () => "dev-A", (d) => Date.parse(d?.meta?.updatedAt) || 0, db.ref, (k) => k.replace(/\./g, "_"),
     "appStore", "https://x", async () => ({ ok: false, status: 500 }),
     () => null,   // Waechter: hier wird der Trichter-Weg selbst geprueft
     async () => { throw new Error("canonicalWrite darf hier nicht greifen"); },
+    // F-27: diese Fixtures kennen keinen v3-Namensraum — reine Erkennung
+    // liefert null, die (hier ungenutzte) Aufbewahrung wird nie erreicht.
+    () => null, () => null, async () => true, async () => {},
     { log() {}, warn() {}, error() {} }, JSON, Date, Promise, Error);
 
   const res = await put("app-data.json", vonB, { mergeFn: mergeData, _viaCanonicalWrite: true });
@@ -152,7 +158,7 @@ const stand = (notizen, meta) => ({
   const put = new Function(
     "APP", "shouldTryCloudProvider", "buildStorageAuthHeaders", "rememberCloudFailure",
     "rememberCloudSuccess", "getDataTimestamp", "_remoteEtags", "fetchWithTimeout",
-    "coreWriteGuard", "canonicalWrite", "isCoreDataKey", "console", "JSON", "Date", "encodeURIComponent",
+    "coreWriteGuard", "canonicalWrite", "isCoreDataKey", "guardV3ProtectedWrite", "console", "JSON", "Date", "encodeURIComponent",
     src + "\nreturn netlifyBlobPut;")(
     APP, () => true, () => ({}), () => {}, () => {},
     (d) => Date.parse(d?.meta?.updatedAt) || 0, {},
@@ -172,6 +178,7 @@ const stand = (notizen, meta) => ({
     () => null,
     async () => { throw new Error("canonicalWrite darf hier nicht greifen"); },
     (k) => k === "app-data.json",
+    () => null,   // F-27: diese Fixtures kennen keinen v3-Namensraum, keine Luecke
     { log() {}, warn() {}, error() {} }, JSON, Date, encodeURIComponent);
 
   const res = await put("app-data.json", unser, { mergeFn: mergeData, _viaCanonicalWrite: true });

@@ -126,12 +126,13 @@ function client({ getEtag = "etag-1", getStatus = 200, putEtag = "etag-2", start
   let ergebnis = null;
   const mach = (beweis) => new Function(
     "APP", "remoteGetByKey", "remotePutByKey", "normalizeData", "mergeData",
-    "primaryCloudProvider", "getOrCreateDeviceId", "console", "Date",
+    "primaryCloudProvider", "getOrCreateDeviceId", "guardV3ProtectedWrite", "console", "Date",
     "const CANONICAL_WRITE_MAX_ATTEMPTS = 2;\n" + funktionAsync("canonicalWrite") + "\nreturn canonicalWrite;")(
     { state: { settings: { storage: { blobKey: "app-data.json" } }, storage: {} } },
     async () => ({ ok: true, data: { entities: {}, meta: {} } }),
     async (k, d, o) => { log.puts.push(o); return { ok: true, provider: "netlify", data: d, casProof: beweis }; },
     (d) => d, (a, b) => ({ ...b, ...a }), () => "netlify", () => "dev",
+    () => null,   // F-27: diese Attrappe kennt keinen v3-Namensraum, keine Luecke
     { log() {}, warn() {}, error() {}, info() {} }, Date);
 
   for (const [beweis, was] of [

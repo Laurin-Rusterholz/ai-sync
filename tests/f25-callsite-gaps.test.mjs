@@ -45,7 +45,7 @@ function trichter({ fern = null, leseFehler = false, putErgebnisse = [{ ok: true
   let i = 0;
   const fn = new Function(
     "APP", "remoteGetByKey", "remotePutByKey", "normalizeData", "mergeData",
-    "primaryCloudProvider", "getOrCreateDeviceId", "console", "Date",
+    "primaryCloudProvider", "getOrCreateDeviceId", "guardV3ProtectedWrite", "console", "Date",
     "const CANONICAL_WRITE_MAX_ATTEMPTS = " +
       (index.match(/const CANONICAL_WRITE_MAX_ATTEMPTS = (\d+)/) || [, "2"])[1] + ";\n" +
       funktionAsync("canonicalWrite") + "\nreturn canonicalWrite;")(
@@ -57,6 +57,7 @@ function trichter({ fern = null, leseFehler = false, putErgebnisse = [{ ok: true
     // Merge die Grabsteine vereint, steht in delete-tombstone und stale-push-gap.
     (lokal, fernStand) => ({ ...fernStand, ...lokal, gemergt: true }),
     () => "rtdb", () => "dev-A",
+    () => null,   // F-27: diese Attrappe kennt keinen v3-Namensraum, keine Luecke
     { log() {}, warn() {}, error() {}, info() {} }, Date);
   return { fn, log, APP };
 }

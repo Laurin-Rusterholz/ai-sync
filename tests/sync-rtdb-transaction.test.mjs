@@ -42,6 +42,11 @@ const DEPS = [
   // Hier wird der Weg INNERHALB des Trichters geprueft, also gibt der Waechter
   // null zurueck; canonicalWrite darf gar nicht erst gerufen werden.
   "coreWriteGuard", "canonicalWrite",
+  // F-27: geschuetzte v3-Namensraeume kommen in diesen Fixtures nicht vor,
+  // Stubs ohne Luecke/Abweichung lassen den bestehenden Merge-Weitergabe-Test
+  // unberuehrt. Reine Erkennung + entkoppelte Aufbewahrung, wie im echten
+  // rtdbJsonPut() seit der F-27-Korrektur Runde 2.
+  "detectV3ProtectedGap", "detectV3LocalDivergence", "retainV3ProtectedGapLocally", "retainV3LocalDivergenceQuietly",
 ];
 const OHNE_TRICHTER = [() => null, async () => { throw new Error("canonicalWrite darf hier nicht greifen"); }];
 // Die echte Fehlereinstufung mitlaufen lassen: ein permission_denied aus der
@@ -78,6 +83,7 @@ function build(refBundle, { blobKey = "app-data.json", device = "dev_desktop_1" 
   const APP = { state: { settings: { storage: { blobKey } }, storage: {} } };
   const fails = [];
   const factory = new Function(...DEPS,
+    cut("const RTDB_DIVERGENCE_MAX_ATTEMPTS = 2;") + "\n" +
     cut("async function rtdbJsonPut(key, data, options = {}) {") + "\nreturn rtdbJsonPut;");
   const fn = factory(
     APP, { log() {}, warn() {} }, () => true,
@@ -91,6 +97,7 @@ function build(refBundle, { blobKey = "app-data.json", device = "dev_desktop_1" 
     async () => ({ ok: false, provider: "rtdb" }),
     () => { APP.state.storage.status = "auth_required"; }, isAuthDeniedError,
     ...OHNE_TRICHTER,
+    () => null, () => null, async () => true, async () => {},   // F-27: keine v3-Fixtures hier, keine Luecke
   );
   return { fn, APP, fails };
 }
@@ -231,6 +238,7 @@ const wrapOf = (payload, savedBy) => ({
 {
   const local = { entities: {}, meta: { updatedAt: "2026-08-23T14:00:00.000Z" } };
   const factory = new Function(...DEPS,
+    cut("const RTDB_DIVERGENCE_MAX_ATTEMPTS = 2;") + "\n" +
     cut("async function rtdbJsonPut(key, data, options = {}) {") + "\nreturn rtdbJsonPut;");
   let restCalls = 0;
   const APP = { state: { settings: { storage: { blobKey: "app-data.json" } }, storage: {} } };
