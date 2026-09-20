@@ -11,6 +11,12 @@
  *
  * Modellkennungen und Preise hier sind Testattrappen aus der gestellten
  * Backend-Policy — der Router selbst kennt keine.
+ *
+ * G1-Abnahme (Vertrag 3.1), fuenf unabhaengige Gegenbeispiele, die vorher
+ * fehlschlugen: fremde Kosteneinheit wurde still gleichgesetzt; fehlende
+ * Selbstmessung fuehrte zur Delegation; Messwerte aus der Zukunft galten
+ * als guenstig; Risikomarke ohne Befugnis wurde bei bounded_text delegiert;
+ * requiredTools als String warf einen ungefangenen TypeError.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -31,12 +37,15 @@ function policy(extra = {}) {
     },
     tools: { openai: ["quantus_read", "quantus_command"], claude: ["file_create", "code_run"], gemini: ["file_read"] },
     secondOpinion: { maxUnits: 5 },
+    freshness: { attestationMaxAgeMs: 3600000, measurementMaxAgeMs: 86400000 },
     sandbox: { isolatedAvailable: true },
     featureFlags: { providers: "dry_run" },
     ...extra,
   };
 }
 
+/* Messnachweis-Bindung: Einheit, Zeitpunkt vor der Attestierung, Modell, Policy-Version, Quellversion. */
+const nachweis = (modelKey, at = NOW - 60000) => ({ unit: "units", measuredAt: ISO(at), modelKey, policyVersion: "1.0", sourceVersion: 3 });
 function facts(overrides = {}) {
   const base = {
     schema: R.ROUTER_FACTS_SCHEMA,
@@ -52,10 +61,10 @@ function facts(overrides = {}) {
     capabilities: { leadershipCanDo: true },
     budget: { availableUnits: 20, unit: "units" },
     measurements: {
-      self: { units: 10, measuredAt: ISO(NOW - 60000) },
+      self: { units: 10, ...nachweis("openai-lead") },
       delegation: {
-        claude: { executionUnits: 3, handoverUnits: 1, reviewUnits: 1, measuredAt: ISO(NOW - 60000) },
-        gemini: { executionUnits: 2, handoverUnits: 1, reviewUnits: 1, measuredAt: ISO(NOW - 60000) },
+        claude: { executionUnits: 3, handoverUnits: 1, reviewUnits: 1, ...nachweis("claude-work") },
+        gemini: { executionUnits: 2, handoverUnits: 1, reviewUnits: 1, ...nachweis("gemini-media") },
       },
     },
     risk: { flagged: false, authorityConfirmed: true },
@@ -95,7 +104,7 @@ test("jede Klasse hat einen bestaetigten Positivfall; der Plan ist keine Freigab
     const g = mussPlan(facts({ task: { taskClass: k } }));
     assert.equal(g.route.kind, "delegate", k); assert.equal(g.route.executor, "gemini", k); assert.equal(g.route.modelKey, "gemini-media", k);
   }
-  const r = mussPlan(facts({ task: { taskClass: "risky_unclear" }, risk: { flagged: true, authorityConfirmed: true }, measurements: { delegation: { claude: { executionUnits: 2, handoverUnits: 1, reviewUnits: 1, measuredAt: ISO(NOW) } } } }));
+  const r = mussPlan(facts({ task: { taskClass: "risky_unclear" }, risk: { flagged: true, authorityConfirmed: true }, measurements: { delegation: { claude: { executionUnits: 2, handoverUnits: 1, reviewUnits: 1, measuredAt: ISO(NOW - 2000) } } } }));
   assert.equal(r.route.kind, "second_opinion"); assert.equal(r.route.executor, "claude"); assert.equal(r.route.cost.total, 4);
   for (const p of [d, s, t, c, f, r]) {
     assert.equal(p.isExecutionAuthorization, false); assert.equal(p.spendClaim, false); assert.equal(p.sendsNothing, true); assert.equal(p.mutatesNothing, true);
@@ -141,7 +150,7 @@ test("Fakten muessen serverbestaetigt sein: fehlende Attestierung, verfaelschter
   assert.ok(plan(facts({ task: { sourceVersion: 0 } })).errors.includes("FACTS_SOURCE_VERSION"));
   assert.ok(plan(facts({ task: { taskClass: "irgendwas" } })).errors.includes("FACTS_TASK_CLASS"));
   assert.ok(plan(facts({ task: { taskClass: "deterministic" } })).errors.includes("FACTS_DETERMINISTIC_KIND"));
-  assert.ok(plan(facts({ measurements: { self: { units: -1, measuredAt: ISO(NOW) } } })).errors.includes("FACTS_MEASUREMENT_SELF"));
+  assert.ok(plan(facts({ measurements: { self: { units: -1, measuredAt: ISO(NOW - 2000) } } })).errors.includes("FACTS_MEASUREMENT_SELF"));
   assert.ok(plan(facts({ deterministicChecks: { deadline: "maybe" } })).errors.includes("FACTS_DETERMINISTIC_CHECKS"));
 });
 
@@ -192,9 +201,9 @@ test("nicht getestete, widerrufene oder nicht freigegebene Modelle werden nicht 
 });
 
 test("Wirtschaftlichkeit nur gemessen: Uebergabe+Pruefung zu teuer → selbst; ohne Messdaten keine Delegation; Budget 0 → nichts modellbasiertes", () => {
-  let r = mussPlan(facts({ measurements: { delegation: { claude: { executionUnits: 3, handoverUnits: 4, reviewUnits: 4, measuredAt: ISO(NOW) } } } }));
+  let r = mussPlan(facts({ measurements: { delegation: { claude: { executionUnits: 3, handoverUnits: 4, reviewUnits: 4, measuredAt: ISO(NOW - 2000) } } } }));
   assert.equal(r.route.kind, "self"); assert.equal(r.reasons[0].code, "SELF_MEASURED_NOT_MORE_EXPENSIVE"); assert.equal(r.reasons[0].detail.delegate.total, 11);
-  r = mussPlan(facts({ measurements: { delegation: { claude: { executionUnits: 3, handoverUnits: 3, reviewUnits: 4, measuredAt: ISO(NOW) } } } }));
+  r = mussPlan(facts({ measurements: { delegation: { claude: { executionUnits: 3, handoverUnits: 3, reviewUnits: 4, measuredAt: ISO(NOW - 2000) } } } }));
   assert.equal(r.route.kind, "self", "gleich teuer ist keine Ersparnis");
   // Delegationsmessung fehlt: Selbstausfuehrung (gemessen), keine Delegation nach Bauchgefuehl.
   r = mussPlan(mutiere(facts(), (k) => { k.measurements.delegation = {}; }));
@@ -216,7 +225,7 @@ test("Wirtschaftlichkeit nur gemessen: Uebergabe+Pruefung zu teuer → selbst; o
   assert.equal(r.route.kind, "delegate"); assert.equal(r.reasons[0].code, "DELEGATION_SELF_UNAVAILABLE");
   assert.ok(r.candidates.find((k) => k.modelKey === "openai-lead").rejections.includes("BUDGET_INSUFFICIENT"));
   // Zweitpruefung ueber der Obergrenze.
-  r = mussPlan(facts({ task: { taskClass: "risky_unclear" }, risk: { flagged: true, authorityConfirmed: true }, measurements: { delegation: { claude: { executionUnits: 5, handoverUnits: 1, reviewUnits: 1, measuredAt: ISO(NOW) }, gemini: { executionUnits: 5, handoverUnits: 1, reviewUnits: 1, measuredAt: ISO(NOW) } } } }));
+  r = mussPlan(facts({ task: { taskClass: "risky_unclear" }, risk: { flagged: true, authorityConfirmed: true }, measurements: { delegation: { claude: { executionUnits: 5, handoverUnits: 1, reviewUnits: 1, measuredAt: ISO(NOW - 2000) }, gemini: { executionUnits: 5, handoverUnits: 1, reviewUnits: 1, measuredAt: ISO(NOW - 2000) } } } }));
   assert.equal(r.route.kind, "blocked"); assert.ok(r.route.blockers.every((b) => b.endsWith("SECOND_OPINION_CAP_EXCEEDED")));
 });
 
@@ -253,11 +262,177 @@ test("deterministische Wiederholung: gleiche Eingaben → byteidentischer Plan; 
   const a = mussPlan(f, p), b = mussPlan(f, p);
   assert.equal(JSON.stringify(a), JSON.stringify(b));
   assert.equal(JSON.stringify(f), vorF); assert.equal(JSON.stringify(p), vorP);
-  const c = mussPlan(f, p, NOW + 3600000);
-  assert.deepEqual(c.route, a.route); assert.equal(c.decidedAt, ISO(NOW + 3600000)); assert.notEqual(c.fingerprint, a.fingerprint);
+  const c = mussPlan(f, p, NOW + 1800000);
+  assert.deepEqual(c.route, a.route); assert.equal(c.decidedAt, ISO(NOW + 1800000)); assert.notEqual(c.fingerprint, a.fingerprint);
+  // Eine Stunde spaeter ist die Attestierung (Frist 1 h) abgelaufen: kein Plan, statt still weiterzurechnen.
+  assert.deepEqual(plan(f, p, NOW + 3600000 + 1), { ok: false, error: "FACTS_NOT_BOUND", errors: ["ATTESTATION_STALE"] });
   assert.equal(c.routing.fingerprint, c.fingerprint);
   // Kein node:-Import, keine Uhr, kein Zufall, kein HTTP im Planer.
   const src = fs.readFileSync(new URL("../netlify/lib/quantus-v3-job-router.mjs", import.meta.url), "utf8");
   for (const verboten of ['from "node:', "Date.now(", "Math.random(", "fetch(", "require(", "process.env"]) assert.ok(!src.includes(verboten), verboten + " im Router");
   assert.ok(!/gpt-|claude-\d|gemini-\d|sonnet|opus|\$[0-9]|per[_ ]?token/i.test(src), "Modellkennungen oder Preise im Router hartkodiert");
+});
+
+/* ══ G1-Abnahme: fuenf Gegenbeispiele (Vertrag 3.1) ══════════════════════
+ * Repro-Rahmen der Abnahme: attestierte Standardfakten, bounded_text,
+ * leadershipCanDo:true, Selbst 10 vs Claude 3+1+1, Budget 100, beide
+ * Modelle getestet und freigegeben. Vorher: alle fuenf FAIL. */
+const abnahme = (o = {}) => facts(tief({ budget: { availableUnits: 100 } }, o));
+
+test("G1-01 fremde Kosteneinheit wird nie still gleichgesetzt: budget.unit JPY gegen policy.costUnit microUSD ist kein Plan, keine Delegation", () => {
+  const p = policy({ costUnit: "microUSD" });
+  // Budget in JPY, Messungen in microUSD: gebunden abgelehnt, bevor gerechnet wird.
+  const f = mutiere(abnahme(), (k) => { k.budget.unit = "JPY"; for (const m of [k.measurements.self, ...Object.values(k.measurements.delegation)]) m.unit = "microUSD"; });
+  const r = plan(f, p);
+  assert.equal(r.ok, false); assert.equal(r.error, "FACTS_NOT_BOUND"); assert.deepEqual(r.errors, ["BUDGET_UNIT_MISMATCH:JPY/microUSD"]);
+  assert.equal(r.route, undefined, "kein Route-Objekt, kein Manifest");
+  // Budget passt, aber die Messungen tragen eine andere Einheit: jede Messung ist wirtschaftlich ungueltig → blocked, nicht delegate.
+  const g = mutiere(abnahme(), (k) => { k.budget.unit = "microUSD"; k.measurements.self.unit = "JPY"; k.measurements.delegation.claude.unit = "JPY"; k.measurements.delegation.gemini.unit = "microUSD"; });
+  const q = mussPlan(g, p);
+  assert.equal(q.route.kind, "blocked"); assert.equal(q.reasons[0].code, "NO_ELIGIBLE_EXECUTOR");
+  assert.ok(q.route.blockers.includes("openai-lead:MEASUREMENT_UNIT_MISMATCH:self")); assert.ok(q.route.blockers.includes("claude-work:MEASUREMENT_UNIT_MISMATCH:claude"));
+  assert.equal(q.manifest.budget.total, 0); assert.equal(q.manifest.measurementEvidence, null);
+  // Nur die Delegationsmessung in fremder Einheit: Selbstausfuehrung (gemessen) — keine Ersparnisbehauptung aus JPY-Zahlen.
+  const h = mutiere(abnahme(), (k) => { k.budget.unit = "microUSD"; k.measurements.self.unit = "microUSD"; k.measurements.delegation.claude.unit = "JPY"; k.measurements.delegation.gemini.unit = "microUSD"; });
+  const w = mussPlan(h, p);
+  assert.equal(w.route.kind, "self"); assert.equal(w.reasons[0].code, "SELF_DELEGATION_UNAVAILABLE");
+  // Einheit ist Vertragsform: leere oder unsinnige Einheiten sind FACTS_INVALID bzw. POLICY_INVALID.
+  assert.ok(plan(mutiere(abnahme(), (k) => { k.budget.unit = ""; })).errors.includes("FACTS_BUDGET"));
+  assert.ok(plan(mutiere(abnahme(), (k) => { k.measurements.self.unit = 7; })).errors.includes("FACTS_MEASUREMENT_SELF"));
+  assert.equal(plan(abnahme(), policy({ costUnit: "micro USD" })).error, "POLICY_INVALID");
+});
+
+test("G1-02 keine Selbstmessung ist keine Faehigkeitsluecke: ohne Vergleich und ohne leadershipCanDo:false wird nicht delegiert", () => {
+  const r = mussPlan(mutiere(abnahme(), (k) => { k.measurements.self = null; }));
+  assert.equal(r.route.kind, "blocked"); assert.equal(r.route.executor, null); assert.equal(r.routing, null);
+  assert.equal(r.reasons[0].code, "DELEGATION_REQUIRES_COMPARISON"); assert.deepEqual(r.reasons[0].detail.self, ["MEASUREMENT_MISSING:self"]);
+  assert.ok(r.route.blockers.includes("openai-lead:MEASUREMENT_MISSING:self") && r.route.blockers.includes("self:NO_COST_COMPARISON"));
+  assert.ok(r.candidates.find((k) => k.modelKey === "claude-work").eligible, "die Delegation waere fuer sich genommen zulaessig — sie ist nur nicht bewiesen guenstiger");
+  assert.equal(r.manifest.executor, null); assert.equal(r.manifest.budget.total, 0);
+  // Auch eine veraltete, fremd gebundene oder falsch datierte Selbstmessung ist keine Luecke.
+  for (const [name, fn] of [
+    ["veraltet", (k) => { k.measurements.self.measuredAt = ISO(NOW - 86400000 - 1); }],
+    ["andere Policy-Version", (k) => { k.measurements.self.policyVersion = "0.9"; }],
+    ["andere Quellversion", (k) => { k.measurements.self.sourceVersion = 2; }],
+    ["anderes Modell", (k) => { k.measurements.self.modelKey = "claude-work"; }],
+    ["Kontext ungemessen", (k) => { k.context.tokensMeasured = null; }],
+  ]) {
+    const q = mussPlan(mutiere(abnahme(), fn));
+    assert.notEqual(q.route.kind, "delegate", name); assert.equal(q.route.executor, null, name);
+  }
+  // Echte, nachgewiesene Luecke: leadershipCanDo:false → Delegation mit dem richtigen Grund.
+  const d = mussPlan(mutiere(abnahme(), (k) => { k.measurements.self = null; k.capabilities.leadershipCanDo = false; }));
+  assert.equal(d.route.kind, "delegate"); assert.equal(d.reasons[0].code, "DELEGATION_LEADERSHIP_LACKS_CAPABILITY");
+  // Nachgewiesener Vergleich: Selbst gemessen, aber ausserhalb des Budgets, Delegation gemessen darunter → Delegation.
+  const b = mussPlan(abnahme({ budget: { availableUnits: 6 } }));
+  assert.equal(b.route.kind, "delegate"); assert.equal(b.reasons[0].code, "DELEGATION_SELF_UNAVAILABLE");
+  // Kontextgrenze gemessen ueberschritten ist ebenfalls ein Nachweis.
+  assert.equal(mussPlan(abnahme({ context: { tokensMeasured: 120000 } })).route.kind, "delegate");
+  // Leitung ohne Datenfreigabe ist kein Faehigkeitsnachweis: kein Fallback auf Claude.
+  const z = mussPlan(abnahme({ context: { grants: { openai: { dataIds: ["lead:l1"], revokedDataIds: [], tools: ["quantus_read", "quantus_command"] } } } }));
+  assert.equal(z.route.kind, "blocked"); assert.equal(z.reasons[0].code, "DELEGATION_REQUIRES_COMPARISON");
+});
+
+test("G1-03 Frische und Bindung: Messwerte aus der Zukunft, nach der Attestierung oder veraltet sind wirtschaftlich ungueltig; Attestierung selbst muss aktuell sein", () => {
+  // Alle measuredAt auf now+24h — vorher als guenstige Messung verwendet.
+  const zukunft = mutiere(abnahme(), (k) => { for (const m of [k.measurements.self, ...Object.values(k.measurements.delegation)]) m.measuredAt = ISO(NOW + 86400000); });
+  const r = mussPlan(zukunft);
+  assert.equal(r.route.kind, "blocked"); assert.equal(r.reasons[0].code, "NO_ELIGIBLE_EXECUTOR");
+  for (const key of ["openai-lead:MEASUREMENT_IN_FUTURE:self", "openai-lead:MEASUREMENT_AFTER_ATTESTATION:self", "claude-work:MEASUREMENT_IN_FUTURE:claude"]) assert.ok(r.route.blockers.includes(key), key);
+  assert.ok(r.candidates.every((k) => k.cost === null && k.evidence === null), "keine Kosten aus ungueltigen Messungen");
+  // Nur die Delegationsmessung in der Zukunft: Selbst (gemessen), keine Delegation.
+  const q = mussPlan(mutiere(abnahme(), (k) => { k.measurements.delegation.claude.measuredAt = ISO(NOW + 1); }));
+  assert.equal(q.route.kind, "self"); assert.ok(q.candidates.find((k) => k.modelKey === "claude-work").rejections.includes("MEASUREMENT_IN_FUTURE:claude"));
+  // Messung nach der Attestierung (aber vor now): Widerspruch im attestierten Inhalt.
+  const n = mussPlan(mutiere(abnahme(), (k) => { k.measurements.delegation.claude.measuredAt = ISO(NOW - 500); }));
+  assert.ok(n.candidates.find((k) => k.modelKey === "claude-work").rejections.includes("MEASUREMENT_AFTER_ATTESTATION:claude"));
+  assert.ok(!n.candidates.find((k) => k.modelKey === "claude-work").rejections.includes("MEASUREMENT_IN_FUTURE:claude"));
+  // Veraltete Messung (Frist 24 h aus der Policy, nicht aus dem Router).
+  const alt = mussPlan(mutiere(abnahme(), (k) => { k.measurements.delegation.claude.measuredAt = ISO(NOW - 86400000 - 1); }));
+  assert.equal(alt.route.kind, "self"); assert.ok(alt.candidates.find((k) => k.modelKey === "claude-work").rejections.includes("MEASUREMENT_STALE:claude"));
+  const kurz = mussPlan(abnahme(), policy({ freshness: { attestationMaxAgeMs: 3600000, measurementMaxAgeMs: 30000 } }));
+  assert.equal(kurz.route.kind, "blocked", "60 s alte Messungen sind bei 30 s Frist ungueltig");
+  // Attestierung aus der Zukunft oder aelter als der Frischevertrag: kein Plan.
+  const fa = abnahme(); fa.attestation.at = ISO(NOW + 1);
+  assert.deepEqual(plan(fa), { ok: false, error: "FACTS_NOT_BOUND", errors: ["ATTESTATION_IN_FUTURE"] });
+  const fs2 = abnahme(); fs2.attestation.at = ISO(NOW - 3600000 - 1);
+  assert.deepEqual(plan(fs2), { ok: false, error: "FACTS_NOT_BOUND", errors: ["ATTESTATION_STALE"] });
+  assert.equal(plan(abnahme(), policy(), NOW - 1001).errors[0], "ATTESTATION_IN_FUTURE", "die Uhr kommt von aussen — auch sie kann nicht hinter die Attestierung");
+  // Bindung an Modell, Preispolicy und Quellversion: eine Messung fuer ein anderes Modell, eine andere Policy-Version oder eine andere Quellversion zaehlt nicht.
+  for (const [code, fn] of [
+    ["MEASUREMENT_MODEL_MISMATCH:claude", (k) => { k.measurements.delegation.claude.modelKey = "claude-old"; }],
+    ["MEASUREMENT_POLICY_MISMATCH:claude", (k) => { k.measurements.delegation.claude.policyVersion = "0.9"; }],
+    ["MEASUREMENT_SOURCE_MISMATCH:claude", (k) => { k.measurements.delegation.claude.sourceVersion = 4; }],
+  ]) {
+    const x = mussPlan(mutiere(abnahme(), fn));
+    assert.equal(x.route.kind, "self", code); assert.ok(x.candidates.find((k) => k.modelKey === "claude-work").rejections.includes(code), code);
+  }
+  // Der Frischevertrag ist Teil der Policy und begrenzt: fehlend, 0 oder ueber der Obergrenze ist POLICY_INVALID.
+  for (const fr of [undefined, {}, { attestationMaxAgeMs: 0, measurementMaxAgeMs: 1 }, { attestationMaxAgeMs: 1, measurementMaxAgeMs: R.FRESHNESS_LIMITS.measurementMaxAgeMs + 1 }, { attestationMaxAgeMs: 1.5, measurementMaxAgeMs: 1 }]) {
+    const p = policy(); if (fr === undefined) delete p.freshness; else p.freshness = fr;
+    const e = plan(abnahme(), p); assert.equal(e.error, "POLICY_INVALID"); assert.ok(e.errors.includes("POLICY_FRESHNESS"));
+  }
+  // Gueltiger Nachweis wird im Plan und im Manifest mitgefuehrt — nicht erfunden, sondern aus den Fakten.
+  const ok = mussPlan(abnahme());
+  assert.deepEqual(ok.route.evidence, { modelKey: "claude-work", measuredAt: ISO(NOW - 60000), unit: "units", policyVersion: "1.0", sourceVersion: 3 });
+  assert.deepEqual(ok.manifest.measurementEvidence, ok.route.evidence);
+});
+
+test("G1-04 Risikoschranke gilt unabhaengig von der Klassifikation: flagged ohne Befugnis ist Entwurf, flagged mit Nicht-Risikoklasse ist Widerspruch", () => {
+  for (const klasse of ["bounded_text", "bounded_code", "bounded_file", "short_context", "ocr", "audio", "structured_extraction"]) {
+    const r = mussPlan(abnahme({ task: { taskClass: klasse }, risk: { flagged: true, authorityConfirmed: false, confidence: 0.99, votes: { approve: 7, reject: 0 } } }));
+    assert.equal(r.route.kind, "draft", klasse); assert.equal(r.route.executor, null, klasse); assert.equal(r.routing, null, klasse);
+    assert.equal(r.reasons[0].code, "AUTHORITY_UNCONFIRMED_DRAFT", klasse); assert.deepEqual(r.route.blockers, ["AUTHORITY_UNCONFIRMED"], klasse);
+    assert.deepEqual(r.candidates, [], klasse + ": kein Modell wird bewertet"); assert.equal(r.manifest.executor, null, klasse); assert.equal(r.manifest.budget.total, 0, klasse);
+  }
+  // Widerspruechliche Fakten (Risikomarke, aber bestaetigte Befugnis und Nicht-Risikoklasse): keine Route vorbereiten.
+  const w = mussPlan(abnahme({ risk: { flagged: true, authorityConfirmed: true } }));
+  assert.equal(w.route.kind, "blocked"); assert.equal(w.reasons[0].code, "RISK_CLASS_CONTRADICTION"); assert.deepEqual(w.route.blockers, ["RISK_FLAGGED_CLASS_MISMATCH:bounded_text"]);
+  assert.deepEqual(w.candidates, []); assert.equal(w.routing, null);
+  // Die Schranke steht hinter den deterministischen Vorpruefungen (die gehen vor) und vor jedem Modellweg.
+  const v = mussPlan(abnahme({ risk: { flagged: true, authorityConfirmed: false }, deterministicChecks: { permission: "failed" } }));
+  assert.deepEqual(v.route.blockers, ["CHECK_FAILED:permission"]);
+  // Deterministische Klassen bleiben Code: Fristpruefung braucht keine Befugnis.
+  assert.equal(mussPlan(abnahme({ task: { taskClass: "deterministic", deterministicKind: "deadline_check" }, risk: { flagged: true, authorityConfirmed: false } })).route.kind, "deterministic");
+  // Unveraendert: nicht markiert, bestaetigt → normaler Weg.
+  assert.equal(mussPlan(abnahme()).route.kind, "delegate");
+});
+
+test("G1-05 Form vollstaendig vorher pruefen: kein ungefangener TypeError, jede Verletzung ist eine strukturierte Ablehnung", () => {
+  const rf = (fn) => { let r; assert.doesNotThrow(() => { r = plan(mutiere(abnahme(), fn)); }); assert.equal(r.ok, false); assert.equal(r.error, "FACTS_INVALID"); return r.errors; };
+  assert.ok(rf((k) => { k.task.requiredTools = "quantus_command"; }).includes("FACTS_TASK_REQUIRED_TOOLS"));
+  assert.ok(rf((k) => { k.task.requiredTools = ["a", "a"]; }).includes("FACTS_TASK_REQUIRED_TOOLS"));
+  assert.ok(rf((k) => { delete k.task.requiredTools; }).includes("FACTS_TASK_REQUIRED_TOOLS"));
+  assert.ok(rf((k) => { k.task.expectedReturn = "markdown"; }).includes("FACTS_RETURN_FORMAT"));
+  assert.ok(rf((k) => { k.task.expectedReturn = { format: "   " }; }).includes("FACTS_RETURN_FORMAT"));
+  assert.ok(rf((k) => { k.task.acceptanceCriteria = "Preis genannt"; }).includes("FACTS_ACCEPTANCE_CRITERIA"));
+  assert.ok(rf((k) => { k.task.acceptanceCriteria = [1]; }).includes("FACTS_ACCEPTANCE_CRITERIA"));
+  assert.ok(rf((k) => { k.task.acceptanceCriteria = Array(51).fill("x"); }).includes("FACTS_ACCEPTANCE_CRITERIA"));
+  assert.ok(rf((k) => { k.task.goal = "x".repeat(4001); }).includes("FACTS_GOAL"));
+  // Endliche Zahlen gleichartig: NaN/Infinity/Brueche/Strings in Budget, Messungen, Tokens, Quellversion, Konfidenz, Stimmen.
+  assert.ok(rf((k) => { k.budget.availableUnits = Infinity; }).includes("FACTS_BUDGET"));
+  assert.ok(rf((k) => { k.budget.availableUnits = "100"; }).includes("FACTS_BUDGET"));
+  assert.ok(rf((k) => { k.measurements.self.units = NaN; }).includes("FACTS_MEASUREMENT_SELF"));
+  assert.ok(rf((k) => { k.measurements.delegation.claude.handoverUnits = -Infinity; }).includes("FACTS_MEASUREMENT_DELEGATION:claude"));
+  assert.ok(rf((k) => { k.measurements.delegation.claude.sourceVersion = 3.5; }).includes("FACTS_MEASUREMENT_DELEGATION:claude"));
+  assert.ok(rf((k) => { k.context.tokensMeasured = 1.5; }).includes("FACTS_TOKENS_MEASURED"));
+  assert.ok(rf((k) => { k.task.sourceVersion = Number.MAX_SAFE_INTEGER + 2; }).includes("FACTS_SOURCE_VERSION"));
+  assert.ok(rf((k) => { k.risk.confidence = 2; }).includes("FACTS_RISK_CONFIDENCE"));
+  assert.ok(rf((k) => { k.risk.confidence = "0.99"; }).includes("FACTS_RISK_CONFIDENCE"));
+  assert.ok(rf((k) => { k.risk.votes = { approve: 1.5 }; }).includes("FACTS_RISK_VOTES"));
+  assert.ok(rf((k) => { k.risk.votes = [5, 0]; }).includes("FACTS_RISK_VOTES"));
+  // Policy ebenso: unendliche Obergrenzen, NaN-Kontextgrenzen.
+  assert.ok(plan(abnahme(), policy({ secondOpinion: { maxUnits: Infinity } })).errors.includes("POLICY_SECOND_OPINION"));
+  assert.ok(plan(abnahme(), policy({ models: { ...policy().models, "openai-lead": { ...policy().models["openai-lead"], contextTokensMax: NaN } } })).errors.includes("POLICY_MODEL_CONTEXT:openai-lead"));
+  // Grob verformte Eingaben werfen nie: Strings, Arrays, null an jeder Stelle.
+  for (const kaputt of [null, "x", [], 42, { schema: R.ROUTER_FACTS_SCHEMA }, { schema: R.ROUTER_FACTS_SCHEMA, task: [], context: "c", capabilities: null, budget: 1, measurements: [], risk: "r", deterministicChecks: 0, attestation: {} }]) {
+    let r; assert.doesNotThrow(() => { r = R.planJobRoute({ policy: policy(), facts: kaputt, now: NOW }); }); assert.equal(r.ok, false);
+  }
+  for (const kaputt of [null, "x", [], { schema: R.ROUTER_POLICY_SCHEMA, models: [], tools: null, freshness: "1h" }]) {
+    let r; assert.doesNotThrow(() => { r = R.planJobRoute({ policy: kaputt, facts: abnahme(), now: NOW }); }); assert.equal(r.error, "POLICY_INVALID");
+  }
+  // Gueltige Werkzeugliste laeuft weiter durch: quantus_command ist fuer OpenAI erlaubt, fuer Claude nicht → Selbst.
+  const ok = mussPlan(abnahme({ task: { requiredTools: ["quantus_command"] } }));
+  assert.equal(ok.route.kind, "self"); assert.ok(ok.candidates.find((k) => k.modelKey === "claude-work").rejections.includes("TOOL_NOT_ALLOWED:quantus_command"));
+  assert.deepEqual(ok.manifest.allowedTools, ["quantus_command"]);
 });
