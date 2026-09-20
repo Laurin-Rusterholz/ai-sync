@@ -23,6 +23,7 @@ import { createToolClient } from "./tool-ports.mjs";
 import { createGoogleJwksPort, createGoogleAccessTokenSource, createCloudTasksHttpTransport } from "./google-transport.mjs";
 import { createJobTokenIssuer } from "./job-token-issuer.mjs";
 import { externalEffectsAllowed } from "./config.mjs";
+import { createFSourcePorts } from "./f-composition.mjs";
 
 function structuredLog(entry) {
   process.stdout.write(`${JSON.stringify({ ...entry, service: "quantus-v3" })}\n`);
@@ -94,21 +95,29 @@ if (!resolved.ok) {
   }
 
   const jwks = createGoogleJwksPort({});
+  const clockPort = availablePort("clock", {
+    now: () => Date.now(),
+    setTimer: (delayMs, cb) => {
+      const t = setTimeout(cb, Math.max(0, delayMs));
+      if (typeof t.unref === "function") t.unref();
+      return () => clearTimeout(t);
+    },
+  });
+  // Baustein F/G: die frueher immer leeren Ports. Fehlt eine Angabe
+  // (Anthropic-Schluessel/-Modell/-Preise, Tagesbriefing-Policy, Gmail-
+  // Zugangsdatum, Kostenrichtlinie), bleibt der jeweilige Port leer mit
+  // benanntem Grund — kein Ersatzbetrieb.
+  const fPorts = config.role === "worker"
+    ? await createFSourcePorts({ config, corePort, clockPort: clockPort.impl })
+    : { sectionWork: null, costPolicy: null };
   const registry = createPortRegistry(config.role, {
-    clock: availablePort("clock", {
-      now: () => Date.now(),
-      setTimer: (delayMs, cb) => {
-        const t = setTimeout(cb, Math.max(0, delayMs));
-        if (typeof t.unref === "function") t.unref();
-        return () => clearTimeout(t);
-      },
-    }),
+    clock: clockPort,
     jwks: jwks.available ? availablePort("jwks", jwks.impl) : unavailablePort("jwks", jwks.reason),
     core: corePort,
     ...(config.role === "watchdog" ? {} : { tasks: tasksPort }),
     ...(config.role === "worker" ? {
-      sectionWork: unavailablePort("sectionWork", "section_work_provider_not_wired"),
-      costPolicy: unavailablePort("costPolicy", "cost_policy_not_wired"),
+      sectionWork: fPorts.sectionWork,
+      costPolicy: fPorts.costPolicy,
       closureEvidence: closurePort,
     } : {}),
     ...(config.role === "watchdog" ? { alert: unavailablePort("alert", "alert_channel_not_wired") } : {}),
