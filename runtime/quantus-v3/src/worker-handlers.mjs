@@ -412,7 +412,12 @@ export function validateClosureEvidence(evidence, expected) {
       if (quelle === null || typeof quelle !== "object") { fehler.push("source_shape"); break; }
       if (typeof quelle.id !== "string" || !quelle.id) { fehler.push("source_shape"); break; }
       if (quelle.status !== "ok") { fehler.push(`source_not_ok:${quelle.id}`); continue; }
-      if (!Number.isSafeInteger(quelle.checkedAtMs) || expected.now - quelle.checkedAtMs > CLOSURE_EVIDENCE_MAX_AGE_MS) {
+      if (!Number.isSafeInteger(quelle.checkedAtMs)) { fehler.push(`source_stale:${quelle.id}`); continue; }
+      // Eine Pruefzeit in der Zukunft ist NICHT "frisch" — sie ist falsch.
+      // `expected.now - quelle.checkedAtMs` waere sonst negativ und faellt
+      // nie unter die Altersgrenze, egal wie weit in der Zukunft sie liegt.
+      if (quelle.checkedAtMs > expected.now) { fehler.push(`source_checked_in_future:${quelle.id}`); continue; }
+      if (expected.now - quelle.checkedAtMs > CLOSURE_EVIDENCE_MAX_AGE_MS) {
         fehler.push(`source_stale:${quelle.id}`); continue;
       }
       ok.add(quelle.id);
@@ -540,12 +545,23 @@ async function finishSection(ctx, { runKey, sectionId, fence, steps, cursor }) {
   // Datenrevision wird IM SELBEN CAS abgeglichen — ein Nachweis fuer einen
   // aelteren Stand zaehlt nicht.
   //
-  // BEFUND: `atMs` wurde frueher VOR `loadClosureEvidence` (ein moeglicher
-  // langer Netzaufruf) gelesen und dann fuer die Lease-/Fence-Pruefung IM
-  // CAS weiterverwendet. Ein waehrend dieses Aufrufs tatsaechlich
-  // abgelaufener Besitz waere mit der alten, noch-nicht-abgelaufenen Zeit
-  // als gueltig durchgegangen. Die Uhr wird deshalb NACH dem Nachweis-I/O,
-  // unmittelbar vor jedem CAS-Versuch, FRISCH gelesen.
+  // BEFUND (Review 5bcdb41): `atMs` wurde vor `core.mutate(...)` gelesen,
+  // aber `core.mutate` selbst kann intern lange brauchen (eigener
+  // Lesevorgang, CAS-Konflikte, Netz) — GENAU DAS, was der Aufruf umgeben
+  // sollte, lag also weiterhin AUSSERHALB des Mutators. Ein Test mit einem
+  // umwickelten Kernport, der die Uhr direkt vor `core.port.impl.mutate`
+  // um 121 s vorstellt, lieferte weiterhin 200/gruen: die abgelaufene
+  // Versuchs-Sperre wurde mit der alten Zeit noch als gueltig gepruft, und
+  // ein Nachweis, der laengst aelter als CLOSURE_EVIDENCE_MAX_AGE_MS war,
+  // wurde nie erneut gegen eine frische Uhr gehalten.
+  //
+  // Deshalb jetzt: die Uhr wird ERST INNERHALB des Mutators gelesen — in
+  // GENAU dem Moment, in dem `data` frisch aus dem CAS kommt, bei jedem
+  // Versuch neu (auch bei einer CAS-Wiederholung). Der Nachweis wird DORT
+  // ein zweites Mal gegen diese frische Zeit geprueft (dieselbe Funktion,
+  // `validateClosureEvidence`) — eine Pruefung vor dem Aufruf allein
+  // genuegt nicht, wenn der Aufruf selbst die Verzoegerung sein kann.
+  let letzterGrund = "closure_evidence_stale_revision";
   for (let versuch = 0; versuch < 2; versuch++) {
     const { evidence, verdict } = await loadClosureEvidence(ctx, { runKey, fence });
     if (!verdict.ok) {
@@ -563,17 +579,27 @@ async function finishSection(ctx, { runKey, sectionId, fence, steps, cursor }) {
         },
       };
     }
-    // FRISCH — nach dem Nachweis-I/O, unmittelbar vor dem CAS. E1.finishRun
-    // prueft Lease/Fence gegen GENAU diese Zeit und die gerade gelesenen
-    // CAS-Daten; keine der beiden darf aus der Zeit vor dem Netzaufruf stammen.
-    const atMs = clock.now();
+    let letzterCasFehler = null;
     const out = await mutate(ctx, `finish:${runKey}:${evidence.evidenceRef}`, (data) => {
       if (data.automation.dataRevision !== evidence.dataRevision) {
         return { data, result: { ok: false, code: "closure_evidence_stale_revision", detail: { expected: evidence.dataRevision, actual: data.automation.dataRevision } }, unchanged: true };
       }
+      // FRISCH — genau HIER, mit den gerade gelesenen CAS-Daten. Nicht die
+      // Zeit von vor `core.mutate(...)`: der Aufruf selbst kann die
+      // Verzoegerung gewesen sein.
+      const jetztImCas = clock.now();
+      const erneutesUrteil = validateClosureEvidence(evidence, {
+        runKey, fence, now: jetztImCas,
+        tenant: ctx.config.tenant, policyVersion: ctx.config.policyVersion,
+        requiredSources: ctx.config.requiredSources,
+      });
+      if (!erneutesUrteil.ok) {
+          letzterCasFehler = erneutesUrteil.errors;
+        return { data, result: { ok: false, code: "closure_evidence_stale_in_cas", detail: { errors: erneutesUrteil.errors.slice(0, 8) } }, unchanged: true };
+      }
       return E1.finishRun(data, {
         runKey, outcome: "completed", evidenceRef: evidence.evidenceRef, runnerMode: "live",
-        now: atMs, verifiedScope: scope,
+        now: jetztImCas, verifiedScope: scope,
       });
     });
     if (out.result.ok) {
@@ -585,20 +611,26 @@ async function finishSection(ctx, { runKey, sectionId, fence, steps, cursor }) {
         },
       };
     }
-    if (out.result.code !== "closure_evidence_stale_revision") {
+    if (out.result.code !== "closure_evidence_stale_revision" && out.result.code !== "closure_evidence_stale_in_cas") {
       throw conflict("finish_rejected", { code: out.result.code, detail: out.result.detail ?? null });
     }
-    // Der Stand hat sich bewegt: Nachweis einmal frisch holen.
+    // Der Stand hat sich bewegt, oder der Nachweis ist im CAS gealtert
+    // (kein Datenkonflikt, den ein zweiter Versuch mit DEMSELBEN Nachweis
+    // loesen koennte) — beide Faelle holen den Nachweis im naechsten
+    // Schleifendurchlauf ohnehin frisch (`loadClosureEvidence` oben).
+    letzterGrund = out.result.code === "closure_evidence_stale_in_cas"
+      ? `closure_evidence_stale_in_cas:${(letzterCasFehler || [])[0] || "unknown"}`
+      : "closure_evidence_stale_revision";
   }
   const aus = await openException(ctx, {
     runKey, sectionId, fence, exceptionId: `closure-revision:${sectionId}`,
-    reason: "closure_evidence_stale_revision", cursor: { steps },
+    reason: letzterGrund, cursor: { steps },
   });
   return {
     status: 200,
     body: {
       outcome: "exception_open", runKey, sectionId, mode: ctx.config.mode, steps, green: false,
-      reason: "closure_evidence_stale_revision",
+      reason: letzterGrund.slice(0, 120),
       continuationId: aus.continuationId, taskId: aus.taskId ?? undefined,
       enqueued: aus.enqueued, duplicateTask: aus.duplicate,
     },
