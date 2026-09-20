@@ -316,12 +316,12 @@ test("(8) der Cursor wird gegen die erwartete Bindung geprüft — und neu autor
 
   const c = (await signCursor({
     config: cursorConfig, principal: nutzerPrincipal, query: "lead.context", scopeId: "lead-1",
-    dataRevision: "rev-1", policyVersion: POLICY_VERSION, now,
+    dataRevision: 1, policyVersion: POLICY_VERSION, now,
   })).cursor;
 
   const basis = {
     config: cursorConfig, authConfig: config, principal: nutzerPrincipal,
-    policyVersion: POLICY_VERSION, dataRevision: "rev-1", now,
+    policyVersion: POLICY_VERSION, dataRevision: 1, now,
   };
 
   // Der gemeldete Fall: anderer Scope im Aufruf.
@@ -365,12 +365,12 @@ test("(8) der Cursor wird gegen die erwartete Bindung geprüft — und neu autor
   const claude = { kind: "worker", issuedBy: ISSUERS.jobToken, id: "claude-spezialist", role: "specialist_claude", tenant: TENANT, jobId: "run-1" };
   const runCursor = (await signCursor({
     config: cursorConfig, principal: claude, query: "run.context", scopeId: "run-1",
-    dataRevision: "rev-1", policyVersion: POLICY_VERSION, now,
+    dataRevision: 1, policyVersion: POLICY_VERSION, now,
   })).cursor;
   const andererAuftrag = await verifyCursor(runCursor, {
     config: cursorConfig, authConfig: config, principal: { ...claude, jobId: "run-9" },
     expectedQuery: "run.context", expectedScopeKind: "run", expectedScopeId: "run-1",
-    policyVersion: POLICY_VERSION, dataRevision: "rev-1",
+    policyVersion: POLICY_VERSION, dataRevision: 1,
     scopeObject: { kind: "run_context", id: "run-1", tenant: TENANT, jobId: "run-1" }, now,
   });
   assert.equal(andererAuftrag.ok, false);
@@ -451,7 +451,7 @@ test("(11) Job-Token und Cursor sind JWT mit fester Algorithmenliste", async () 
   // Der Cursor benutzt einen EIGENEN Schlüsselsatz: ein Job-Token-Schlüssel
   // signiert keinen gültigen Cursor (in der Cursor-Testdatei ausführlich).
   const c = (await signCursor({ config: cursorConfig, principal: nutzer, query: "run.queue", scopeId: "alle",
-    dataRevision: "rev-1", policyVersion: POLICY_VERSION, now })).cursor;
+    dataRevision: 1, policyVersion: POLICY_VERSION, now })).cursor;
   assert.equal(c.split(".").length, 3);
   assert.ok(!c.startsWith("qv3c1."), "das alte Cursorformat lebt weiter");
   void secret;

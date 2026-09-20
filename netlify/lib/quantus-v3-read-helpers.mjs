@@ -98,8 +98,11 @@ export function projectPage(query, items) {
     if (!beschnitten || !beschnitten.id) return authOk({ items: [{ error: "item_unusable" }], usable: false });
     out.push(beschnitten);
   }
-  // Letzte Kontrolle: nichts Geheimnisartiges verlässt den Server.
-  const geheim = assertNoProviderSecrets(out, { depth: 4 });
+  // Letzte Kontrolle: nichts Geheimnisartiges verlässt den Server. Die
+  // Standardtiefe, nicht eine knappe: seit der zweiten Review ist eine
+  // abgebrochene Suche eine ABSAGE — ein zu kleines Budget würde also
+  // gültige Seiten sperren statt Geheimnisse zu finden.
+  const geheim = assertNoProviderSecrets(out);
   if (!geheim.ok) return authError("forbidden", "secret_in_read_result");
   return authOk({ items: out, usable: true });
 }

@@ -108,6 +108,9 @@ test("jedes Fachverb hat ein Schema, ein Ziel und eine bekannte Objektart", () =
   // Genau die Verben der C1-Matrix, ohne das Leseverb.
   const erwartet = VERBS.filter((v) => v !== "context.read").sort();
   assert.deepEqual([...COMMAND_VERB_NAMES].sort(), erwartet);
+  // 22 Fachverben — die Zahl, auf die sich die Browser-Warteschlange stützt.
+  // Wächst oder schrumpft der Umschlag, fällt es hier auf, nicht dort.
+  assert.equal(COMMAND_VERB_NAMES.length, 22);
 
   for (const [verb, beschreibung] of Object.entries(COMMAND_VERBS)) {
     assert.ok(beschreibung.fields && Object.keys(beschreibung.fields).length, `${verb} hat kein Schema`);

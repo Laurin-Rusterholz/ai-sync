@@ -31,7 +31,7 @@ const now = () => JETZT;
 const claude = { kind: "worker", issuedBy: ISSUERS.jobToken, id: "claude-spezialist", role: "specialist_claude", tenant: TENANT, jobId: "run-1" };
 const nutzer = { kind: "user", issuedBy: ISSUERS.firebase, id: "uid-laurin", role: "user", tenant: TENANT };
 
-const REVISION = "rev-2026-09-19T09:58:00Z";
+const REVISION = 41;   // eine Revision ist eine Zahl, nicht eine Zeichenkette
 
 /* Der serverseitig geladene Scope-Datensatz, den jede Seite neu autorisiert. */
 const runKontext = (over = {}) => ({ kind: "run_context", id: "run-1", tenant: TENANT, jobId: "run-1", ...over });
@@ -96,7 +96,7 @@ test("manipulierter Cursor ⇒ 403 (echte Signaturprüfung)", async () => {
     { ...koerper, query: "lead.context" },
     { ...koerper, pageSize: 10_000 },
     { ...koerper, exp: koerper.exp + 86_400 },
-    { ...koerper, dataRevision: "rev-egal" },
+    { ...koerper, dataRevision: 999 },
   ]) {
     const neu = Buffer.from(JSON.stringify(verbogen), "utf8").toString("base64url");
     const res = await pruefe(`${kopf}.${neu}.${sig}`);
@@ -136,12 +136,12 @@ test("Versionswechsel: neue Policy oder neue Datenrevision entwerten den Cursor"
   assert.equal(policy.status, 403);
   assert.equal(policy.reason, "cursor_policy_changed");
 
-  const revision = await pruefe(c, { dataRevision: "rev-2026-09-19T10:05:00Z" });
+  const revision = await pruefe(c, { dataRevision: 42 });
   assert.equal(revision.status, 403);
   assert.equal(revision.reason, "cursor_revision_changed");
 
   // Ohne Angabe wird nicht wohlwollend geprüft, sondern gesperrt.
-  assert.equal((await pruefe(c, { dataRevision: "" })).reason, "data_revision_missing");
+  assert.equal((await pruefe(c, { dataRevision: "" })).reason, "data_revision_invalid");
   assert.equal((await pruefe(c, { policyVersion: undefined })).reason, "policy_version_missing");
 });
 

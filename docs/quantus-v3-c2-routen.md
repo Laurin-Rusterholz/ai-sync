@@ -129,7 +129,9 @@ einen Wert aus der Anfrage, nie einen Bibliothekstext.
   belegt, dass er nicht hinausgeht. Vor dem Ausliefern läuft zusätzlich die
   Geheimnissuche aus C1.
 * Antwort: `items`, `count`, `hasMore`, `complete`, `pageStatus`, `cursor`,
-  `entityVersions`, `dataRevision`, `serverNow`, `requestId`.
+  `entityVersions`, `dataRevision`, `serverNow`, `requestId`. Die
+  `dataRevision` ist eine Zahl (0 eingeschlossen) und wird unverändert aus dem
+  Kern übernommen; ein Bestand ohne brauchbare Revision ist 503, nicht 0.
 * **Abgebrochene oder gedeckelte Seiten sind nie vollständig** und tragen
   keinen Folgecursor.
 * Beim Lesen wird **nicht geschrieben** — keine Migration, kein Startup-Write.

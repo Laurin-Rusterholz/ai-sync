@@ -49,7 +49,7 @@ import {
   ISSUERS, JOB_TOKEN_TYP, COMMAND_MAX_BYTES,
 } from "./quantus-v3-auth.mjs";
 import { parseCommandEnvelope, parseIdempotencyKey } from "./quantus-v3-command-envelope.mjs";
-import { resolveCursorConfig, signCursor, verifyCursor, describePage, NAMED_QUERIES, SCOPE_OBJECT_KINDS } from "./quantus-v3-cursor.mjs";
+import { resolveCursorConfig, signCursor, verifyCursor, describePage, isDataRevision, NAMED_QUERIES, SCOPE_OBJECT_KINDS } from "./quantus-v3-cursor.mjs";
 import { projectPage, pageSizeFor, entityVersionsOf } from "./quantus-v3-read-helpers.mjs";
 
 export const CORE_KEY = "app-data.json";
@@ -362,7 +362,7 @@ export async function handleCommandRequest(req, deps = {}) {
       return jsonResponse({
         ok: true, applied: false, dryRun: true, replayed: false,
         serverNow, requestId,
-        dataRevision: Number(snapshot?.automation?.dataRevision ?? 0),
+        dataRevision: isDataRevision(snapshot?.automation?.dataRevision) ? snapshot.automation.dataRevision : 0,
         entityVersions: { [String(ziel.target.id)]: ziel.target.entityVersion },
         verb: command.verb,
       }, { corsHeaders: cors });
@@ -498,7 +498,10 @@ export async function handleReadRequest(req, deps = {}, { route } = {}) {
   } catch {
     return denial(authError("auth_not_configured", "core_unavailable"), { requestId, corsHeaders: cors });
   }
-  const dataRevision = Number(snapshot?.automation?.dataRevision ?? 0);
+  // Die Revision kommt aus dem Kern und wird nicht zurechtgebogen: ein
+  // Bestand ohne brauchbare Revision ist kein Lesegrund (0 ist brauchbar).
+  const dataRevision = snapshot?.automation?.dataRevision;
+  if (!isDataRevision(dataRevision)) return denial(authError("auth_not_configured", "core_invalid"), { requestId, corsHeaders: cors });
 
   // Das Scope-Objekt kommt frisch aus dem autoritativen Bestand.
   const scopeObject = deps.domain.loadObject(snapshot, {
@@ -511,7 +514,7 @@ export async function handleReadRequest(req, deps = {}, { route } = {}) {
     seite = await verifyCursor(cursorParam, {
       config: cursorCfg.config, authConfig: config, principal,
       expectedQuery: query, expectedScopeKind: named.scopeKind, expectedScopeId: scopeId,
-      policyVersion: config.policyVersion, dataRevision: String(dataRevision),
+      policyVersion: config.policyVersion, dataRevision,
       scopeObject, now: deps.now,
     });
     if (!seite.ok) return denial(seite, { requestId, corsHeaders: cors });
@@ -549,7 +552,7 @@ export async function handleReadRequest(req, deps = {}, { route } = {}) {
   if (weiter && !abgebrochen) {
     const neu = await signCursor({
       config: cursorCfg.config, principal, query, scopeId,
-      dataRevision: String(dataRevision), policyVersion: config.policyVersion,
+      dataRevision, policyVersion: config.policyVersion,
       pageSize: page.pageSize, pageIndex: page.pageIndex + 1,
       afterId: rohdaten?.nextAfterId ?? null, now: deps.now,
     });

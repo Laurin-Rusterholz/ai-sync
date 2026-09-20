@@ -673,7 +673,7 @@ export function createGooglePublicKeySource({
   defaultTtlMs = 300_000,
 } = {}) {
   let cache = null;              // { pems: Map<kid,string>, keys: Map<kid,KeyObject>, expiresAt }
-  let lastRefreshAt = 0;
+  let lastRefreshAt = -Infinity; // auch ein FEHLGESCHLAGENER Versuch zählt
   let inFlight = null;
 
   async function doRefresh() {
@@ -690,34 +690,51 @@ export function createGooglePublicKeySource({
   }
 
   /* Singleflight: parallele Aufrufe teilen sich EINEN Abruf. `lastRefreshAt`
-     wird auch bei einem Fehlschlag gesetzt — sonst würde ein ausgefallener
-     Endpunkt in einer Schleife angefragt. */
+     wird auch bei einem Fehlschlag gesetzt — sonst fragte ein ausgefallener
+     Endpunkt in einer Schleife weiter. */
   function refresh() {
     if (inFlight) return inFlight;
     inFlight = doRefresh().finally(() => { lastRefreshAt = now(); inFlight = null; });
     return inFlight;
   }
 
+  const abkuehlzeitVorbei = () => (now() - lastRefreshAt) >= refreshCooldownMs;
+  const frisch = () => Boolean(cache) && cache.expiresAt > now();
+
   function fromCache(kid) {
-    if (!cache || !cache.pems.has(kid)) return null;
+    if (!frisch() || !cache.pems.has(kid)) return null;
     if (!cache.keys.has(kid)) cache.keys.set(kid, publicKeyFromPem(cache.pems.get(kid)));
     return cache.keys.get(kid);
   }
 
   return {
+    /*
+     * BEFUND (Review 9ff3423): Die Abkühlzeit galt nur für die unbekannte kid.
+     * War der Cache LEER oder ABGELAUFEN — etwa weil der Endpunkt gerade
+     * ausfällt —, lief jeder Aufruf erneut ins Netz: fünf Aufrufe mit
+     * erfundenen kids in derselben Minute ergaben fünf Abrufe.
+     *
+     * Jetzt gilt dieselbe Schranke für BEIDE Wege: ein Abruf je Abkühlzeit,
+     * gebündelt (Singleflight). Und ohne frisches Schlüsselmaterial gibt es
+     * kein Ja: ein abgelaufener Cache wird NICHT weiterbenutzt, auch nicht
+     * „nur diesmal".
+     */
     async get(kid) {
       const id = String(kid || "");
       if (!id) return null;
-      if (!cache || cache.expiresAt <= now()) await refresh();
 
-      const hit = fromCache(id);
-      if (hit) return hit;
+      if (!frisch()) {
+        if (!abkuehlzeitVorbei()) return null;      // fail closed, ohne Netz
+        await refresh();                            // wirft bei Ausfall
+        if (!frisch()) return null;
+      }
 
-      // Unbekannte kid: höchstens EIN Abruf je Abkühlzeit. Damit kostet eine
-      // Flut gefälschter Token mit erfundenen kids nicht je einen Netzabruf,
-      // und ein echter Schlüsselwechsel wirkt trotzdem — spätestens nach der
-      // Abkühlzeit, ohne auf den Ablauf von max-age zu warten.
-      if (now() - lastRefreshAt < refreshCooldownMs) return null;
+      const treffer = fromCache(id);
+      if (treffer) return treffer;
+
+      // Unbekannte kid kann ein Schlüsselwechsel sein — höchstens EIN Abruf
+      // je Abkühlzeit, damit erfundene kids kein Netz kosten.
+      if (!abkuehlzeitVorbei()) return null;
       await refresh();
       return fromCache(id);
     },
@@ -746,10 +763,19 @@ export function createIdentityToolkitUserLookup({ fetchImpl = globalThis.fetch, 
     const body = await res.json();
     const user = Array.isArray(body?.users) ? body.users[0] : null;
     if (!user) return null;
+    // `validSince` kommt als Sekunden-ZEICHENKETTE. Eine beschädigte Antwort
+    // darf daraus kein NaN machen, das später als „0" durchgeht: was nicht
+    // rein aus Ziffern besteht, ist ein Fehler.
+    let validSince = 0;
+    if (user.validSince != null) {
+      const roh = String(user.validSince).trim();
+      if (!/^\d{1,12}$/.test(roh)) throw new Error("user_lookup_invalid");
+      validSince = Number(roh);
+      if (!Number.isSafeInteger(validSince)) throw new Error("user_lookup_invalid");
+    }
     return {
       disabled: user.disabled === true,
-      // validSince kommt als Sekunden-Zeichenkette.
-      validSince: user.validSince != null ? Number(user.validSince) : 0,
+      validSince,
       tenantId: user.tenantId ? String(user.tenantId) : null,
     };
   };
@@ -877,10 +903,29 @@ export async function verifyFirebaseIdToken(idToken, {
     return authError("unauthorized", "user_lookup_failed");
   }
   if (!record || typeof record !== "object") return authError("unauthorized", "user_unknown");
-  if (record.disabled) return authError("forbidden", "user_disabled");
+  // `disabled` darf nur ein echtes `false` (oder gar nichts) sein. Ein
+  // "false" als Zeichenkette, eine 0 oder irgendein anderer Wert ist ein
+  // unbrauchbarer Datensatz — und der öffnet hier nichts.
+  if (record.disabled !== false && record.disabled != null) return authError("forbidden", "user_disabled");
 
-  const validSince = Number(record.validSince || 0);
-  if (!Number.isFinite(validSince) || validSince < 0) return authError("unauthorized", "user_lookup_invalid");
+  /*
+   * BEFUND (Review 9ff3423): `Number(record.validSince || 0)` deutete NaN zu 0
+   * um — aus einer beschädigten `validSince`-Antwort wurde „nie widerrufen".
+   * Genau das kann die echte Lookup-Funktion aus einer kaputten Antwort
+   * erzeugen. Jetzt: 0 ist gültig (nie widerrufen), fehlend ist 0, alles
+   * andere muss eine endliche, nicht negative GANZE Sekundenzahl sein —
+   * sonst wird nicht durchgelassen. Kein truthy-Rückfall.
+   */
+  const rohValidSince = record.validSince;
+  let validSince = 0;
+  if (rohValidSince != null) {
+    if (typeof rohValidSince !== "number") return authError("unauthorized", "user_lookup_invalid");
+    validSince = rohValidSince;
+  }
+  if (!Number.isFinite(validSince) || !Number.isInteger(validSince)
+    || validSince < 0 || validSince > 4_102_444_800) {
+    return authError("unauthorized", "user_lookup_invalid");
+  }
   // WIDERRUF: gemessen an auth_time, nicht an iat. Ein nach dem Widerruf
   // frisch AUSGESTELLTES Token (neues iat) trägt weiterhin die ALTE
   // Anmeldezeit — nur auth_time entlarvt es.
@@ -1094,31 +1139,84 @@ export async function verifyJobToken(token, {
   });
 }
 
-/* ── Anbieterschlüssel gehören nicht in einen Job-Kontext ──────────────── */
+/* ── Anbieterschlüssel gehören nicht in einen Job-Kontext ────────────────
+ *
+ * Ein Job-Kontext geht an einen Spezialisten. Läge dort ein Anbieter-Schlüssel
+ * (Anthropic, Gemini, OpenAI), wäre er genau dort, wo Modelltext entsteht.
+ *
+ * BEFUND (Review 9ff3423): Die Suche brach bei Erreichen der Tiefengrenze ab
+ * und meldete „sauber". Acht Ebenen `{nested:{…}}` um einen Schlüssel herum
+ * genügten also, um an ihr vorbeizukommen. Eine Prüfung, die nicht fertig
+ * wurde, darf nichts bestätigen: erreicht die Suche eine ihrer Grenzen
+ * (Tiefe, Knotenzahl, Zyklus, Getter, Symbolschlüssel), ist das Ergebnis
+ * NICHT „sauber", sondern „nicht prüfbar" — und damit eine Absage.
+ *
+ * Getter werden nicht aufgerufen (ein Getter könnte bei jedem Blick etwas
+ * anderes liefern und Nebenwirkungen haben); ein Objekt mit Gettern ist
+ * deshalb nicht prüfbar. Zyklen ebenso. Im Fehler steht nur, WORAN es lag —
+ * nie der gefundene Wert.
+ * ----------------------------------------------------------------------- */
 const SECRET_KEY_PATTERN = /(api[_-]?key|secret|token|password|passwort|private[_-]?key|credential|authorization)/i;
+// Die Wortgrenze steht je Alternative — ein PEM-Block beginnt mit „-----",
+// davor gibt es keine, und eine gemeinsame Grenze vorn hätte ihn durchgelassen.
 const SECRET_VALUE_PATTERN =
   /(\bsk-ant-[A-Za-z0-9_-]{8,}|\bsk-[A-Za-z0-9]{20,}|\bAIza[0-9A-Za-z_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/;
 
-export function assertNoProviderSecrets(value, { depth = 6 } = {}) {
-  const hit = scanForSecrets(value, depth);
-  if (hit) return authError("invalid_request", `provider_secret_in_context:${hit}`);
-  return authOk();
+export const SECRET_SCAN_LIMITS = Object.freeze({ depth: 12, maxNodes: 20_000, maxStringLength: 1_000_000 });
+
+export function assertNoProviderSecrets(value, { depth = SECRET_SCAN_LIMITS.depth, maxNodes = SECRET_SCAN_LIMITS.maxNodes } = {}) {
+  const zustand = { nodes: 0, maxNodes, gesehen: new WeakSet() };
+  const befund = scanForSecrets(value, depth, zustand);
+  if (befund === "clean") return authOk({ scanned: zustand.nodes });
+  if (["key", "value"].includes(befund)) return authError("invalid_request", `provider_secret_in_context:${befund}`);
+  // Nicht zu Ende geprüft ⇒ nicht bestätigt.
+  return authError("invalid_request", `provider_secret_scan_incomplete:${befund}`);
 }
 
-function scanForSecrets(value, depth) {
-  if (depth < 0) return null;
-  if (typeof value === "string") return SECRET_VALUE_PATTERN.test(value) ? "value" : null;
-  if (!value || typeof value !== "object") return null;
+/* Rückgabe: "clean" | "key" | "value" | "depth" | "nodes" | "cycle"
+ *          | "accessor" | "symbol" | "exotic" | "oversized_string" */
+function scanForSecrets(value, depth, zustand) {
+  if (++zustand.nodes > zustand.maxNodes) return "nodes";
+  if (depth < 0) return "depth";
+
+  if (typeof value === "string") {
+    if (value.length > SECRET_SCAN_LIMITS.maxStringLength) return "oversized_string";
+    return SECRET_VALUE_PATTERN.test(value) ? "value" : "clean";
+  }
+  if (value === null || typeof value !== "object") {
+    // Zahlen, Boolesche, undefined: nichts zu holen. Funktionen dagegen sind
+    // undurchsichtig.
+    return typeof value === "function" ? "exotic" : "clean";
+  }
+  if (zustand.gesehen.has(value)) return "cycle";
+  zustand.gesehen.add(value);
+
+  if (Object.getOwnPropertySymbols(value).length) return "symbol";
+
   if (Array.isArray(value)) {
-    for (const entry of value) { const hit = scanForSecrets(entry, depth - 1); if (hit) return hit; }
-    return null;
+    for (let i = 0; i < value.length; i++) {
+      const beschreibung = Object.getOwnPropertyDescriptor(value, i);
+      if (!beschreibung) continue;                       // Lücke in einem dünnen Array
+      if (!("value" in beschreibung)) return "accessor"; // Getter: nicht aufrufen
+      const befund = scanForSecrets(beschreibung.value, depth - 1, zustand);
+      if (befund !== "clean") return befund;
+    }
+    return "clean";
   }
-  for (const key of Object.keys(value)) {
+
+  // Map/Set/Date/RegExp & Co. lassen sich nicht über Eigenschaften prüfen.
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return "exotic";
+
+  for (const key of Object.getOwnPropertyNames(value)) {
     if (SECRET_KEY_PATTERN.test(key)) return "key";
-    const hit = scanForSecrets(value[key], depth - 1);
-    if (hit) return hit;
+    const beschreibung = Object.getOwnPropertyDescriptor(value, key);
+    if (!beschreibung) continue;
+    if (!("value" in beschreibung)) return "accessor";
+    const befund = scanForSecrets(beschreibung.value, depth - 1, zustand);
+    if (befund !== "clean") return befund;
   }
-  return null;
+  return "clean";
 }
 
 /* ══ 7. Transport — TLS, Herkunft, Grösse, striktes JSON ══════════════════ */

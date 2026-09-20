@@ -88,6 +88,22 @@ export const CURSOR_FIELDS = Object.freeze([
 ]);
 const JWT_STANDARD_FIELDS = Object.freeze(["iss", "sub", "aud", "iat", "exp", "jti", "nbf"]);
 
+/*
+ * Der Revisionsvertrag — EINE Stelle, für Ausstellen wie Prüfen.
+ *
+ * BEFUND (Review 9ff3423): `String(dataRevision || "")` verwarf die gültige
+ * Revision 0 („data_revision_missing") und nahm gleichzeitig -1, 1.5, {} und
+ * "not-a-revision" an, weil daraus per Umwandlung irgendeine Zeichenkette
+ * wurde. Beides ist derselbe Fehler: der Wert wurde nie geprüft, nur
+ * umgeformt.
+ *
+ * Eine Datenrevision ist eine NICHT NEGATIVE, SICHERE GANZE ZAHL — 0
+ * eingeschlossen, denn der frische Kernstand beginnt dort.
+ */
+export function isDataRevision(value) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
 export const MAX_PAGE_INDEX = 500;
 export const MAX_CURSOR_LIFETIME_SECONDS = 15 * 60;
 
@@ -191,8 +207,8 @@ export async function signCursor({
     return authError("invalid_request", "page_index_out_of_bounds");
   }
 
-  const revision = String(dataRevision || "");
-  if (!revision) return authError("invalid_request", "data_revision_missing");
+  if (!isDataRevision(dataRevision)) return authError("invalid_request", "data_revision_invalid");
+  const revision = dataRevision;
   const policy = String(policyVersion || "");
   if (!policy) return authError("invalid_request", "policy_version_missing");
 
@@ -256,7 +272,8 @@ export async function verifyCursor(cursor, {
   if (!wantScopeKind) return authError("forbidden", "expected_scope_kind_missing");
   if (!wantScopeId) return authError("forbidden", "expected_scope_id_missing");
   if (!policyVersion) return authError("forbidden", "policy_version_missing");
-  if (!dataRevision) return authError("forbidden", "data_revision_missing");
+  // 0 ist eine gültige Revision — aber „irgendwas" ist keine.
+  if (!isDataRevision(dataRevision)) return authError("forbidden", "data_revision_invalid");
   if (!principal || typeof principal !== "object") return authError("forbidden", "principal_missing");
   if (!scopeObject || typeof scopeObject !== "object") return authError("forbidden", "scope_object_missing");
 
@@ -324,7 +341,8 @@ export async function verifyCursor(cursor, {
   if (!scope.ok) return authError("invalid_request", "cursor_scope_invalid");
 
   if (String(payload.policyVersion || "") !== String(policyVersion)) return authError("forbidden", "cursor_policy_changed");
-  if (String(payload.dataRevision || "") !== String(dataRevision)) return authError("forbidden", "cursor_revision_changed");
+  if (!isDataRevision(payload.dataRevision)) return authError("invalid_request", "cursor_revision_invalid");
+  if (payload.dataRevision !== dataRevision) return authError("forbidden", "cursor_revision_changed");
 
   if (!Number.isInteger(payload.pageSize) || payload.pageSize < 1 || payload.pageSize > named.maxPageSize) {
     return authError("invalid_request", "page_size_out_of_bounds");

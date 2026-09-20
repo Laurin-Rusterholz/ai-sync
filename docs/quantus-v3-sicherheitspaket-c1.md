@@ -16,10 +16,25 @@ das benutzt — und was C1 **nicht** leistet.
 | Fassung | Stand |
 | --- | --- |
 | `5ac0bf7` | erste Fassung, unabhängig geprüft — **nicht abgenommen** |
-| diese Fassung | zwölf gemeldete Gegenbeispiele korrigiert, je ein Test in `tests/quantus-v3-auth-gegenbeispiele.test.mjs`; Vertragsänderungen (JOSE, Fachverben) umgesetzt |
+| `9ff3423` | zwölf Gegenbeispiele der ersten Runde korrigiert (`tests/quantus-v3-auth-gegenbeispiele.test.mjs`), Vertragsänderungen (JOSE, Fachverben); unabhängig geprüft — 79/79 grün, aber **fünf neue Gegenbeispiele** |
+| diese Fassung | die fünf Befunde der zweiten Runde korrigiert, je ein Test in `tests/quantus-v3-auth-gegenbeispiele-runde2.test.mjs`; beide Gegenbeispiel-Dateien bleiben stehen |
 
-Die Gegenbeispiel-Datei nennt jeden Fall mit seiner Nummer und dem gemeldeten
-Verhalten. Sie bleibt stehen, damit nichts davon zurückfällt.
+Beide Gegenbeispiel-Dateien nennen jeden Fall mit seiner Nummer und dem
+gemeldeten Verhalten. Sie bleiben stehen, damit nichts davon zurückfällt.
+
+**Der gemeinsame Nenner der zweiten Runde:** eine Prüfung, die nicht zu Ende
+kam oder einen Wert nur umgeformt hat, gab „in Ordnung" zurück. Ein Netzfehler,
+ein `NaN`, eine gültige `0`, eine zu tiefe Struktur — jedes Mal wurde aus
+„weiss nicht" ein „ja". Die Korrektur zeigt überall in dieselbe Richtung:
+**nicht geprüft heisst nicht bestätigt.**
+
+| # | Befund (9ff3423) | Jetzt |
+| --- | --- | --- |
+| 1 | Bei leerem oder abgelaufenem Cache lief jeder Aufruf ins Netz — fünf erfundene kids bei ausgefallenem Endpunkt ergaben fünf Abrufe | Abkühlzeit und Singleflight gelten für **beide** Wege; ein abgelaufener Cache wird nicht weiterbenutzt |
+| 2 | `Number(record.validSince \|\| 0)` deutete `NaN` zu „nie widerrufen" um | `validSince` muss fehlen oder eine endliche, nicht negative **ganze** Zahl sein (0 gültig); auch die Lookup-Funktion erzeugt kein `NaN` mehr; `disabled` muss ein echtes `false` sein |
+| 3 | `dataRevision: 0` — der frische Kernstand — wurde abgelehnt | 0 ist gültig, beim Ausstellen wie beim Prüfen |
+| 4 | `-1`, `1.5`, `{}`, `"not-a-revision"` kamen per Zeichenkettenumwandlung durch | ein Vertrag (`isDataRevision`): nicht negative sichere Ganzzahl, keine stillen Umwandlungen, im Cursor als Zahl signiert |
+| 5 | Die Geheimnissuche meldete „sauber", wenn sie ihre Tiefengrenze erreichte | Tiefe, Knotenzahl, Zyklen, Getter, Symbole und fremde Objektarten führen zu `provider_secret_scan_incomplete:*` — einer Absage; Getter werden nicht aufgerufen, der gefundene Wert steht nie im Fehler |
 
 ## 1. Umfang
 
@@ -27,7 +42,7 @@ Verhalten. Sie bleibt stehen, damit nichts davon zurückfällt.
 | --- | --- |
 | `netlify/lib/quantus-v3-auth.mjs` | Konfiguration (fail closed), Firebase-ID-Token, Dienst-Zugangsdaten, Job-Token, Rollenmatrix, Transport, Rate-Limiter-Vertrag |
 | `netlify/lib/quantus-v3-cursor.mjs` | signierte, seitenweise Kontextcursor |
-| `tests/quantus-v3-auth-*.test.mjs` | 79 Verhaltenstests (`node:test`), ohne Netz |
+| `tests/quantus-v3-auth-*.test.mjs` | 88 Verhaltenstests (`node:test`), ohne Netz |
 | `tests/fixtures/quantus-v3-auth-fixtures.mjs` | flüchtige Schlüssel, Attrappen, X.509-Bau in reinem JS |
 
 Abhängigkeit: **`jose`** (v6, keine Transitivabhängigkeiten) — auf Verlangen der
@@ -48,9 +63,12 @@ Nicht Teil von C1 und nicht angefasst: `netlify/lib/assistant-*.mjs`,
 | `quantus_command` | `quantus-ingest` | nicht freigeschaltet |
 | `quantus_run_status` | `quantus-run-status` | nicht freigeschaltet |
 
-`QUANTUS_V3_TOOLS[...].enabled` ist überall `false`; ein Test hält fest, dass zu
-keiner dieser Routen eine Netlify-Funktion existiert und dass die beiden Module
-ausser `node:`, sich selbst und `jose` nichts importieren.
+`QUANTUS_V3_TOOLS[...].enabled` ist überall `false`. C1 selbst verdrahtet
+nichts: ein Test hält fest, dass die beiden Module ausser `node:`, sich selbst
+und `jose` nichts importieren. Die Routendateien kamen mit **C2** dazu (siehe
+`docs/quantus-v3-c2-routen.md`); sie importieren nur Dienst und Verdrahtung,
+antworten ohne Konfiguration 503 und schreiben nur, wenn zwei Schalter
+ausdrücklich stehen — auch das prüft derselbe Test.
 
 ## 3. Erwartete Serverkonfiguration
 
@@ -104,18 +122,24 @@ entwertet sie sofort.
    `auth_time ≤ iat`; `sub` ≤ 128 Zeichen.
 4. **Mandant**: `firebase.tenant` bzw. `tenant_id`; Widerspruch ⇒ 401; fremder
    oder fehlender erwarteter Mandant ⇒ 403.
-5. **Widerruf und Sperre** über `accounts:lookup`: `disabled` ⇒ 403;
-   **`validSince > auth_time` ⇒ 401 `token_revoked`**. Gemessen wird an
+5. **Widerruf und Sperre** über `accounts:lookup`: `disabled` (alles ausser
+   einem echten `false` oder „fehlt") ⇒ 403;
+   **`validSince > auth_time` ⇒ 401 `token_revoked`**. `validSince` muss fehlen
+   (= 0) oder eine endliche, nicht negative ganze Sekundenzahl sein — ein
+   `NaN` aus einer beschädigten Antwort wird **nicht** zu 0. Gemessen wird an
    `auth_time`, nicht an `iat` (Firebase „Manage user sessions"; das Admin-SDK
    tut mit `verifyIdToken(token, true)` dasselbe) — ein nach dem Widerruf nur
    frisch ausgestelltes Token trägt eine neue `iat`, aber die alte Anmeldezeit.
    Fällt die Abfrage aus, wird nicht durchgelassen.
 
 **Schlüsselbezug:** Cache nach `max-age`, **Singleflight** (parallele Aufrufe
-teilen einen Abruf) und **Abkühlzeit** von 60 s: eine unbekannte `kid` löst
-höchstens einen Abruf je Abkühlzeit aus, sodass eine Flut gefälschter Token mit
-erfundenen `kid`s nicht je einen Netzabruf kostet. Ein echter Schlüsselwechsel
-wirkt trotzdem — spätestens nach der Abkühlzeit.
+teilen einen Abruf) und **Abkühlzeit** von 60 s — und zwar auf **beiden**
+Wegen: für die unbekannte `kid` wie für den leeren oder abgelaufenen Cache.
+Eine Flut gefälschter Token mit erfundenen `kid`s kostet also höchstens einen
+Abruf je Minute, und ein ausgefallener Endpunkt wird nicht in einer Schleife
+angefragt. Ein **abgelaufener Cache wird nicht weiterbenutzt**: ohne frisches
+Schlüsselmaterial gibt es kein Ja. Ein echter Schlüsselwechsel wirkt trotzdem —
+spätestens nach der Abkühlzeit.
 
 ### 4.2 Dienste
 
@@ -184,7 +208,9 @@ aus und wird abgelehnt. Schlüssel: Principal + Mandant + Verb.
 `signCursor` / `verifyCursor`: **JWT über `jose`**, eigener Aussteller, eigenes
 `typ`, eigener Schlüsselsatz. Gebunden an Principal, Principal-Art, Mandant,
 benannte Abfrage, Objektscope, Policy-Version, Datenrevision, Seitenposition,
-Ablauf (≤ 15 min).
+Ablauf (≤ 15 min). Die **Datenrevision ist eine nicht negative sichere
+Ganzzahl** (`isDataRevision`) — `0` eingeschlossen, alles andere abgelehnt,
+ohne stille Umwandlung, beim Ausstellen wie beim Prüfen.
 
 `verifyCursor` verlangt **zwingend** `expectedQuery`, `expectedScopeKind`,
 `expectedScopeId`, `policyVersion`, `dataRevision`, `principal`, `authConfig`
@@ -226,7 +252,7 @@ Voreinstellung ist `dry_run`.
 
 ## 6. Tests
 
-`npm run test:quantus-v3` (Teil von `npm test`): 79 Fälle über den Dateinamen-Glob
+`npm run test:quantus-v3` (Teil von `npm test`): 88 Fälle über den Dateinamen-Glob
 `tests/quantus-v3-auth-*.test.mjs`, ohne Netz, ohne bezahlte Aufrufe. Alle
 Schlüssel entstehen zur Laufzeit; im Repo steht kein Credentialwert.
 
