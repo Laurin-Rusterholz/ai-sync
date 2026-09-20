@@ -40,11 +40,11 @@ checkouts. No production data was read or modified for the initial code work.
 | D | Desktop/tablet/mobile command writers, offline queue, old-client gate | Disabled transport/IndexedDB component tested, including real Chrome recovery; no app wired yet |
 | E | Cloud runtime, slots, leases, fencing, retry, checkpoints, cost ledger | E1 f6d6a16/307ee47 passes 120 authored + 16 independent tests; E2 1537336 has three independent failures, corrections delegated; not integrated |
 | F | Authorized source adapters, mail ledger, document extraction, live UI | Open |
-| G | Job-scoped Claude/Gemini providers, review and untrusted-input isolation | G1 78e6829: nine authored tests pass, five independent counterexamples fail; corrections delegated; not integrated |
+| G | Job-scoped Claude/Gemini providers, review and untrusted-input isolation | Pure G1 d803f57 integrated with 14 authored + 6 independent tests; provider dispatch and actual backend attestation remain open |
 | H | T01-T40, production gates, cutover, 14-day trial and final acceptance | Open |
 
 Development delegation: Claude Code session
-`session_01Ls9ej6nh17wu9Wrd78Tugk` owns package B only. Integration owns this
+`session_01Ls9ej6nh17wu9Wrd78Tugk` owns B/G1 and the separate C3a domain adapter. Integration owns this
 ledger, the all-writer audit and existing Firebase CAS hardening. Development
 delegation through the UI is not the eventual API-based daily runtime.
 
@@ -108,6 +108,20 @@ fixture explicitly reporting `checkout` for the real idempotency module.
 Full `npm test` exits0; `npm ci` reports zero vulnerabilities. The initial
 integration failures were test-wiring assumptions (script placement and a
 module expected to be absent), not suppressed runtime failures.
+
+### Reviewed routing planner
+
+The pure routing planner, documentation and 14 authored tests from `d803f57`
+are integrated unchanged. Six independent tests, including a positive measured
+delegation control, also pass and run in `pretest`. Test fixtures were updated
+to the stricter 3.1 measurement contract; assertions were not weakened.
+The planner now rejects mismatched currencies, absent comparison evidence,
+future/stale or incorrectly bound measurements, contradictory risk authority
+and malformed required tools. Plans remain non-authorizing and send nothing.
+
+Actual server attestation of facts, source-scoped job creation, cost reservation,
+provider execution and result acceptance still need end-to-end integration.
+No model identifiers, prices, credentials or cost approvals were created.
 
 The five versioned instructions from concept chapters 15/16 are now stored in
 `prompts/quantus-v3/`. Their operative bodies match the supplied PDF after only
@@ -252,11 +266,20 @@ passes. The tests use genuine synthetic OIDC signatures and E2's storage stand-i
 not the real core envelope. Corrections, including bounded in-flight work, are
 delegated. E1/E2 remain unintegrated and no Cloud deployment occurred.
 
-G1 router78e6829 passes its nine authored tests and an independent normal case,
-but five counterexamples fail: mismatched cost units, missing self-cost comparison,
+An additional independent review of the E2 cost adapter307ee47 uses the actual
+integrated idempotency envelope and E1 reducers with local conditional storage.
+The normal dispatch control passes, but six counterexamples fail: receipt replay
+after settled/unknown outcomes dispatches again, duplicate concurrent claims
+dispatch twice, and request-start time permits dispatch after lease expiry or
+midnight during policy loading. The same receipt-replay bug is reproduced with
+E2's own fixture. Correction is delegated; these are not real provider calls.
+
+The initial G1 router78e6829 passed its nine authored tests and an independent normal case,
+but five counterexamples failed: mismatched cost units, missing self-cost comparison,
 future measurements, a risk flag bypassed by task classification, and malformed
-requiredTools throwing rather than structured denial. All are delegated before
-integration. No paid call or execution authority was created by these tests.
+requiredTools throwing rather than structured denial. These are fixed in the
+integrated d803f57 planner described above. No paid call or execution authority
+was created by these tests.
 
 ## Existing schedule snapshot (not changed)
 
@@ -320,7 +343,7 @@ integration. No paid call or execution authority was created by these tests.
 ## Next execution steps
 
 1. Finish the all-writer and deployed-service inventory.
-2. Review corrected C2 and E1/E2 against independent behavior tests.
+2. Review C3 domain/runtime binding and corrected E2 against independent tests.
 3. Bind strict command/auth/CAS routes to the reviewed kernel and real lease.
 4. Migrate all three app writers and cross-device fixtures before enabling writes.
 5. Implement and deploy dry-run runtime only after access/cost gates are explicit.
