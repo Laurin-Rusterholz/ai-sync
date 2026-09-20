@@ -1,8 +1,8 @@
 # Tagesbriefing v3 — serverseitiger Datenkern (Paket B)
 
-Stand: 19.09.2026, dritte Fassung: nach dem Review von 590dc78 (R1–R11) und
-der unabhaengigen zweiten Pruefung von 6e829d5 (B2-01–B2-09), alle mit
-Gegenbeispiel-Regressionstest. Dieses Paket ist **bewusst nicht der produktive Cutover**. Kein
+Stand: 20.09.2026, vierte Fassung: nach dem Review von 590dc78 (R1–R11), der
+zweiten Pruefung von 6e829d5 (B2-01–B2-09) und der dritten Pruefung von
+c4f8ac4 (B3-01–B3-04, Konzept 12.2), alle mit Gegenbeispiel-Regressionstest. Dieses Paket ist **bewusst nicht der produktive Cutover**. Kein
 Deployment, keine Provider-Aufrufe, keine Aenderung an Scheduler,
 Firebase-Regeln, Clients, CAS-Wegen (`firebase-admin.mjs`, `date-invite*`,
 `flowertech-*`) oder am Idempotenz-Umschlag (`quantus-v3-idempotency.mjs`).
@@ -18,7 +18,7 @@ Firebase-Regeln, Clients, CAS-Wegen (`firebase-admin.mjs`, `date-invite*`,
 | `netlify/lib/assistant-ampel.mjs` | `dailyAssistantTrafficLight`, `isEvaluationCurrent`, `bestandsFingerabdruck` |
 | `netlify/lib/assistant-abschluss.mjs` | `verpflichtungsmenge`, `pruefeAbschluss`, `closeRun`, `pruefeWiderspruch`, `invalidateClosure` |
 | `netlify/lib/assistant-core.mjs` | `applyCommand` (Domain-Aktion), `commandReducer` (Adapter fuer `applyIdempotentCommand`), `serializeCore` |
-| `tests/tagesbriefing-v3-kern.test.mjs` | 22 Tests, `npm run test:tagesbriefing` (auch in `npm test`) |
+| `tests/tagesbriefing-v3-kern.test.mjs` | 27 Tests, `npm run test:tagesbriefing` (auch in `npm test`) |
 
 Alle Module sind reines JavaScript **ohne `node:`-Importe** (der Test prueft
 das) und damit direkt im Browser nutzbar. Form jeder Mutation:
@@ -46,10 +46,20 @@ Client ihn spaeter, aendert das den Serverzustand **nicht** — es ist Drift,
 sichtbar in `effektiverZustand().drift` und in der Ampel als `LEGACY_DRIFT`
 (rot). Ein Altstatus „abgeschlossen“ kann kein `done` vortaeuschen (R1).
 
-Ein abgeschlossener Zustand ist nur belegt, wenn er aus der Migration stammt
-(Altstatus war damals abgeschlossen) oder `operationalStateSource.closure`
-den Abschlussbeleg des Kommandos traegt. Ein direkt hingeschriebenes `done`
-ist `STATE_CLAIM_UNPROVEN` (rot).
+Ein abgeschlossener Zustand hat genau eine von vier Herkuenften, die
+`abschlussBelegPruefen()` LIVE gegen den Bestand prueft (B3-03/04):
+
+| Herkunft | `operationalStateSource.closure` | Live-Pruefung |
+|---|---|---|
+| migration | fehlt; Altstatus war bei der Migration abgeschlossen, seither kein Kommando | keine (historische Alt-done-Migration) |
+| user | `{ kind:"user", actorId, at }` — der Nutzer erledigt seine eigene Aufgabe | actorId vorhanden |
+| cancel | `{ kind:"cancel", actorId, reason }` | Grund vorhanden |
+| evidence / job / answer | `{ kind, evidenceId\|jobId\|answerId, binding, boundAt }` | Beleg existiert, gehoert zu diesem Element, und seine heutige Signatur (`belegBindung`: Kennung, Art, Referenz, Fingerabdruck bzw. Ergebnis-Referenz+Hash, Review-Verdict+Zeitpunkt bzw. Antwort-Zeitpunkte+Text-Fingerabdruck) ist byteidentisch mit `binding` |
+
+Ergebnis: `STATE_CLAIM_UNPROVEN` (kein Beleg, kein Migrationsursprung),
+`CLOSURE_EVIDENCE_UNBOUND` (Bindung fehlt), `CLOSURE_EVIDENCE_LOST` (Beleg
+weg, fremd, abgelehnt), `CLOSURE_EVIDENCE_CHANGED` (Signatur anders) — alle
+rot, auch nach dem Abschluss (Manifest).
 
 ### Einmaliges Mapping (nur in `migrateCore`, R2)
 
@@ -85,8 +95,13 @@ done | cancelled → doing   (nur mit Grund: Wiedereroeffnung)
 
 `transitionState` verlangt `expectedVersion`. `done` verlangt zusaetzlich:
 keine offene Frage, kein laufender Job, keine ungepruefte Rueckgabe, fuer
-KI-Leads den vollstaendigen Ablauf (Interpretation, Recherche, Plan,
-Ausfuehrung, Ergebnis, Raster, Zuweisung, Begruendung, Verknuepfung) und
+KI-Leads `leadUnvollstaendig() === []` (Konzept 12.2: ein Ergebnis mit Ort
+in Quantus, explizite Rollen mit Executor und — nur wo vorhanden — ein
+gueltiger versionierter Routingnachweis `routing { schema:"lead-routing/3",
+routerVersion, executor, decidedAt, fingerprint }`, dessen Executor zu den
+Rollen passt; das alte Sechs-Kriterien-Raster wird nicht mehr verlangt,
+vorhandene `assessment`-Altfelder bleiben unangetastet, es werden keine
+Rasterdaten erfunden; die Routingintegration selbst folgt separat) und
 einen **passenden Beleg**: registrierter Beleg, angenommenes Job-Ergebnis
 oder konsumierte Nutzerantwort zu genau diesem Element. Eine Nutzeraufgabe
 (`accountable=user`) schliesst der Nutzer selbst (actor `user`) ohne Beleg;
@@ -137,12 +152,15 @@ Elements, `contextRefs` (jeder Verweis muss existieren), `purpose`,
 `outboxById["job:<id>"]` im `dry_run` — es wird nichts versandt. Ein
 Ruecklauf (`recordJobReturn`, **nur Worker**) ist nur fuer `queued|running`
 und vor `expiresAt` moeglich; abgebrochene, ersetzte, abgelaufene Jobs werden
-abgewiesen. Er speichert nur `result {ref, hash, stale}` — **das Element
-bleibt unveraendert** (R6). Erst `reviewJobResult` (Agent oder Nutzer) mit
-`accepted` setzt das Element auf `review`; `stale` (Element inhaltlich
-weiterentwickelt seit Eingangsversion; die Delegation selbst zaehlt nicht)
-kann nicht angenommen werden. Ein Lead-Abschluss setzt nie automatisch
-`reviewedAt`.
+abgewiesen. Er speichert nur `result {ref, hash, receivedAt, stale}` — **das
+Element bleibt unveraendert** (R6). `reviewJobResult` (Agent oder Nutzer)
+prueft bei `accepted` **live** (B3-02): Quelle existiert und ist offen,
+aktuelle Quellversion ∈ `acceptedVersions` (Eingangsversion plus die
+Delegation selbst; ein spaeterer legaler Zustandswechsel macht den Ruecklauf
+stale), Ergebnis mit Referenz und gueltigem Hash, Ruecklauf vor Ablauf. Das
+Review bindet `resultRef`, `resultHash` und `sourceVersion`; nur ein so
+gebundenes, angenommenes Ergebnis ist Abschlussbeleg und Fortschritts-
+ereignis. Ein Lead-Abschluss setzt nie automatisch `reviewedAt`.
 
 **Dokumente** (`registerDocument`, **nur Adapter**): bestaetigte
 `attachmentId` (gueltiger `attachment-text__*`-Schluessel nach
@@ -183,6 +201,17 @@ sourceCursors, policyRef (null, API-Paket), progressById, waitingById, migration
 idempotencyByKey   gehoert dem Umschlag quantus-v3-idempotency.mjs — der Kern liest und schreibt es NIE
 activeLease        gehoert Paket E1 (quantus-v3-runtime-state.mjs) — der Kern liest und schreibt es NIE
 ```
+
+**Migration mit v3-Spuren ist fail-closed** (B3-01): tragt der Bestand
+`automation`, `dailyBriefing.assistantRuns` oder ein Objekt mit
+`operationalState*`/`operationalRoles`, muss der Kern die vollstaendige
+Strukturpruefung bestehen, sonst `CORE_PARTIAL_V3` (503). Ledger, Outbox,
+Revision, Lease, Migrations- und Laufmarker werden nie durch `{}`/`0`
+„geheilt“ — das wuerde Replay-/Versandnachweise und die monotone Revision
+zuruecksetzen. Ohne Spuren ist es die erstmalige Legacy-Migration (fehlende
+Pflichtsammlungen werden leer angelegt, Fremdes und `_deleteLog` bleiben);
+eine wiederholte Migration eines intakten Kerns mappt nur neue Objekte ohne
+`operationalStateSource` (`report.mode: initial|repeat`).
 
 `pruefeKernStruktur(data)` prueft — nicht werfend — Pflichtsammlungen
 (`PFLICHT_STORES`: tasks, projects, chatgptLeads, chatgptTasks, chatgptNotes),
@@ -275,12 +304,17 @@ jeder Eingang — nur Kennungen, Zustaende, Zeitpunkte und Fingerabdruecke,
 keine Inhaltskopien. Genau eine Finalnote. Wiederholung: No-op.
 
 `pruefeWiderspruch(data, {date}, {now, policy})` vergleicht das ganze
-Manifest (B2-05/06/07): `REOPENED` (abgeschlossen → offen, auch Karten),
+Manifest (B2-05/06/07, B3-03/04): `REOPENED` (abgeschlossen → offen, auch
+Karten), `CLOSURE_EVIDENCE_LOST` (gebundener Abschlussbeleg heute nicht mehr
+gueltig, andere Bindung, anderer Beleg, andere Herkunft), `JOB_RESULT_CHANGED`
+(Ergebnis-Referenz/-Hash, Eingangsversion, Executor), `JOB_REVIEW_LOST`
+(Review, Verdict, Zeitpunkt, gebundene Ergebnisfelder),
 `WAITING_ENDED`, `WAITING_CARD_LOST`, `WAITING_CARD_CHANGED` (jedes Feld),
 `WAITING_EVIDENCE_LOST` (Beleg fehlt, anders, fremd), `WAITING_INVALID`
 (Karte besteht die volle Pruefung nicht mehr), `DOCUMENT_PROOF_LOST`
 (Extraktion/Ergebnisse/Hash), `JOB_REVIEW_LOST`, `PROJECT_DEADLINE_REOPENED`,
-`PROJECT_DEADLINE_DUE_AFTER_CLOSE`, `OBLIGATION_MISSING`. Ein verstrichenes
+`PROJECT_DEADLINE_DUE_AFTER_CLOSE`, `OBLIGATION_MISSING`, `DOCUMENT_PROOF_LOST`
+(auch wenn ein Ergebnis-Element des Dokuments verschwunden ist). Ein verstrichenes
 `followUpAt` ist kein Widerspruch (Nachfassung ist Arbeit des naechsten
 Laufs). Neuer Eingang und neue Elemente nach `closureCutoff` sind kein
 Widerspruch (`newIntake`, `nextRunDate`). `invalidateClosure` nur bei echtem
@@ -366,6 +400,11 @@ dahin ist dieser Kern ohne Umschlag und ohne E1 nicht schreibend zu benutzen.
 | B2-05/06/07 13 Widersprueche nach Abschluss (Beleg weg/veraendert, Karte veraendert/weg, Dokument-/Job-Nachweis weg, Projektfrist wieder offen / neu faellig, Reopen) mit Invalidierung und byteidentischer Finalnote; neuer Eingang und verstrichenes followUpAt kein Widerspruch | ja |
 | B2-08 ChatGPT-Notes-Schema, NoteFlow leer, Korrektur mit supersedes, alte Note unveraendert, fehlender Note-Eintrag rot | ja |
 | B2-09 Body-Zeit/-Kennung abgelehnt, prepared.now massgeblich (10:00 → zu frueh), ungueltiges prepared 500, 409/503/400 | ja |
+| B3-01 13 Loeschungen/Korruptionen (Ledger, Outbox, Revision, Belege, Marker, Lease, Laufphase/-revision, Pflichtsammlungen) an einem gueltigen v3-Kern → 503 ohne Heilung; nur Objekt-Spuren ebenso; Erstmigration und wiederholte intakte Migration erlaubt | ja |
+| B3-02 Ruecklauf zu v1, Nutzer-Wechsel auf v2, accepted abgelehnt (stale live), neuere Arbeit unveraendert; unbewertete Rueckgabe blockiert done; abgelehnter Job kein Beleg | ja |
+| B3-03 Beleg geloescht/getauscht/fremd/Bindung entfernt/umgebogen → Ampel rot und Widerspruch mit Invalidierung; Migration und Nutzer-Selbsterledigung unterscheidbar; handgeschriebenes user-closure unbelegt | ja |
+| B3-04 result.hash/-ref getauscht, reviewedAt/Review/Verdict entfernt, Job geloescht → rot und Widerspruch (CLOSURE_EVIDENCE_LOST, JOB_RESULT_CHANGED, JOB_REVIEW_LOST, OBLIGATION_MISSING); Dokument-Ergebnisziele verschwunden | ja |
+| Konzept 12.2 kleiner Lead ohne Raster vollstaendig; result/executor/routing/routing_executor_mismatch; Altfelder unveraendert, keine erfundenen Rasterdaten | ja |
 
 Nicht geprueft (nicht gebaut): HTTP, Auth, CAS-412 im echten
 `mutateAppData`, Lease/Fencing, Provider, Client-Merge, Oberflaechen.

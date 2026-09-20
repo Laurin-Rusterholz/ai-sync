@@ -18,7 +18,7 @@
 import {
   OPERATIONAL_STATES, WARTE_ZUSTAENDE, ABGESCHLOSSENE_ZUSTAENDE, EXECUTORS, TRANSITIONS,
   QUELLEN, effektiverZustand, rollenFuer, leererRun, pruefeId, sourceKey, validatePolicy,
-  KARTEN_ZUSTAENDE,
+  KARTEN_ZUSTAENDE, stringFingerprint,
 } from "./assistant-schema.mjs";
 import { klon, requireCore } from "./assistant-migration.mjs";
 import { classifyBlobKey } from "./blob-key-policy.mjs";
@@ -89,7 +89,7 @@ export function verifizierteEreignisse(data, sourceType, sourceId) {
   const passt = (o) => o && o.sourceType === sourceType && o.sourceId === sourceId;
   const ids = [];
   for (const [id, ev] of Object.entries(a.evidenceById)) if (passt(ev)) ids.push("evidence:" + id);
-  for (const [id, j] of Object.entries(a.jobsById)) if (passt(j) && j.state === "returned" && j.review && j.review.verdict === "accepted") ids.push("job:" + id);
+  for (const [id, j] of Object.entries(a.jobsById)) if (passt(j) && j.state === "returned" && j.review && j.review.verdict === "accepted" && j.result && j.review.resultHash === j.result.hash && j.review.resultRef === j.result.ref) ids.push("job:" + id);
   for (const [id, ans] of Object.entries(a.answersById)) {
     const q = a.questionsById[ans.questionId];
     if (ans.consumedAt && passt(q)) ids.push("answer:" + id);
@@ -481,20 +481,68 @@ export function setWaiting(input, payload, ctx) {
  * GENAU diesem Element — plus (fuer KI-Leads) den vollstaendig
  * dokumentierten Ablauf. Ein bereits gesetzter Altstatus ist nie eine
  * Freigabe. "cancelled" eines Leads darf nur der Nutzer. */
-const LEAD_PFLICHT = ["interpretation", "research", "plan", "execution", "result"];
-const LEAD_RASTER = ["menge", "werkzeug", "kontext", "quantusNaehe", "recherche", "zuschnitt"];
-
+/* Was ein KI-Lead fuer done braucht (Konzept 12.2): ein belegtes Ergebnis
+ * mit Ort in Quantus, eine explizite Verantwortung (accountable/executor)
+ * und — wo vorhanden — einen gueltigen versionierten Routingnachweis.
+ * Das alte Sechs-Kriterien-Raster (assessment) wird NICHT mehr verlangt;
+ * vorhandene Altfelder bleiben unangetastet, es werden keine Daten erfunden. */
+export const ROUTING_SCHEMA = "lead-routing/3";
 export function leadUnvollstaendig(l) {
   const m = [];
-  for (const f of LEAD_PFLICHT) if (!String(l[f] || "").trim()) m.push(f);
-  const a = istKarte(l.assessment) ? l.assessment : {};
-  if (!LEAD_RASTER.every((k) => a[k] === "chatgpt" || a[k] === "cowork")) m.push("assessment");
-  if (l.assignee !== "chatgpt" && l.assignee !== "cowork") m.push("assignee");
-  if (!String(l.assignmentReason || "").trim()) m.push("assignmentReason");
-  const links = Object.keys(l).filter((k) => /^linked[A-Z]/.test(k) && Array.isArray(l[k]) && l[k].length).length
-    + ((Array.isArray(l.externalLinks) ? l.externalLinks : []).filter((x) => x && (x.url || typeof x === "string")).length);
-  if (!links) m.push("link");
+  if (!String(l.result || "").trim()) m.push("result");
+  const rollen = rollenFuer("chatgptLead", l);
+  if (!rollen.explicit) m.push("roles");
+  if (!rollen.executor) m.push("executor");
+  if (l.routing !== undefined && l.routing !== null) {
+    const r = l.routing;
+    const gueltig = istKarte(r) && r.schema === ROUTING_SCHEMA && typeof r.routerVersion === "string" && r.routerVersion
+      && EXECUTORS.includes(r.executor) && typeof r.decidedAt === "string" && Number.isFinite(msAus(r.decidedAt))
+      && typeof r.fingerprint === "string" && r.fingerprint.length >= 16;
+    if (!gueltig) m.push("routing");
+    else if (rollen.executor && r.executor !== rollen.executor) m.push("routing_executor_mismatch");
+  }
   return m;
+}
+
+/* Bindung eines Abschlussbelegs: eine Signatur ueber den Belegstand zum
+ * Zeitpunkt des Abschlusses. Wird am Zustand gespeichert und spaeter LIVE
+ * gegen den tatsaechlichen Bestand geprueft (Ampel, Manifest). */
+function belegBindung(data, ref) {
+  const a = data.automation;
+  if (!istKarte(ref)) return null;
+  if (ref.kind === "evidence") { const e = a.evidenceById[ref.evidenceId]; return e ? "evidence:" + e.id + ":" + e.kind + ":" + e.ref + ":" + e.fingerprint + ":" + e.sourceType + ":" + e.sourceId : null; }
+  if (ref.kind === "job") {
+    const j = a.jobsById[ref.jobId];
+    if (!j || !j.result || !j.review) return null;
+    return "job:" + j.id + ":" + j.state + ":" + j.executor + ":" + j.inputVersion + ":" + j.result.ref + ":" + j.result.hash + ":" + j.review.verdict + ":" + j.review.reviewedAt + ":" + j.sourceType + ":" + j.sourceId;
+  }
+  if (ref.kind === "answer") {
+    const ans = a.answersById[ref.answerId]; const q = ans && a.questionsById[ans.questionId];
+    return ans && q ? "answer:" + ans.id + ":" + ans.questionId + ":" + ans.answeredAt + ":" + ans.consumedAt + ":" + stringFingerprint(ans.text) + ":" + q.sourceType + ":" + q.sourceId : null;
+  }
+  return null;
+}
+
+/* Live-Pruefung eines abgeschlossenen Zustands gegen den Bestand:
+ *   migration  Altstatus war bei der Migration abgeschlossen, seither kein Kommando
+ *   user       der Nutzer hat seine eigene Aufgabe erledigt (kein externer Beleg)
+ *   cancel     mit Grund abgebrochen
+ *   evidence/job/answer  Beleg muss existieren, zu diesem Element gehoeren und
+ *              die gebundene Signatur unveraendert tragen */
+export function abschlussBelegPruefen(data, sourceType, sourceId, e) {
+  const z = effektiverZustand(sourceType, e);
+  if (!ABGESCHLOSSENE_ZUSTAENDE.includes(z.state)) return { ok: true, origin: null };
+  const src = e.operationalStateSource || {};
+  const c = src.closure;
+  if (!istKarte(c)) return z.unproven ? { ok: false, code: "CLOSURE_UNPROVEN", origin: null } : { ok: true, origin: "migration" };
+  if (c.kind === "user") return typeof c.actorId === "string" && c.actorId ? { ok: true, origin: "user" } : { ok: false, code: "CLOSURE_UNPROVEN", origin: "user" };
+  if (c.kind === "cancel") return typeof c.reason === "string" && c.reason ? { ok: true, origin: "cancel" } : { ok: false, code: "CLOSURE_UNPROVEN", origin: "cancel" };
+  if (typeof c.binding !== "string" || !c.binding) return { ok: false, code: "CLOSURE_EVIDENCE_UNBOUND", origin: c.kind };
+  const b = abschlussBeleg(data, sourceType, sourceId, c);
+  if (!b.ok) return { ok: false, code: "CLOSURE_EVIDENCE_LOST", origin: c.kind, detail: b.code };
+  const live = belegBindung(data, c);
+  if (live !== c.binding) return { ok: false, code: "CLOSURE_EVIDENCE_CHANGED", origin: c.kind };
+  return { ok: true, origin: c.kind, binding: c.binding };
 }
 
 function abschlussBeleg(data, sourceType, sourceId, evidence) {
@@ -508,7 +556,8 @@ function abschlussBeleg(data, sourceType, sourceId, evidence) {
   if (evidence.kind === "job") {
     const j = a.jobsById[String(evidence.jobId || "")];
     if (!j || j.sourceType !== sourceType || j.sourceId !== sourceId) return { ok: false, code: "DONE_EVIDENCE_FOREIGN" };
-    if (j.state !== "returned" || !j.review || j.review.verdict !== "accepted") return { ok: false, code: "DONE_JOB_NOT_ACCEPTED" };
+    if (j.state !== "returned" || !j.review || j.review.verdict !== "accepted" || !j.result) return { ok: false, code: "DONE_JOB_NOT_ACCEPTED" };
+    if (j.review.resultHash !== j.result.hash || j.review.resultRef !== j.result.ref) return { ok: false, code: "DONE_JOB_RESULT_CHANGED" };
     return { ok: true, ref: { kind: "job", jobId: j.id } };
   }
   if (evidence.kind === "answer") {
@@ -592,8 +641,10 @@ export function transitionState(input, { sourceType, sourceId, state, expectedVe
     if (!nutzerSelbst) {
       const b = abschlussBeleg(data, sourceType, sourceId, evidence);
       if (!b.ok) return fehler(b.code);
-      belegRef = b.ref;
-    } else belegRef = { kind: "user", actorId: ctx.actor.id };
+      const binding = belegBindung(data, b.ref);
+      if (!binding) return fehler("DONE_EVIDENCE_UNBINDABLE", b.ref);
+      belegRef = { ...b.ref, binding, boundAt: nowIso };
+    } else belegRef = { kind: "user", actorId: ctx.actor.id, at: nowIso };
   }
   if (state === "cancelled") {
     if (!String(reason || "").trim()) return fehler("REASON_MISSING");
@@ -873,13 +924,28 @@ export function reviewJobResult(input, { jobId, verdict, reviewer, note }, ctx) 
   if (!String(reviewer || "").trim()) return fehler("REVIEWER_MISSING");
   if (j.review) return j.review.verdict === verdict ? { ok: true, data, job: j, created: false } : fehler("JOB_ALREADY_REVIEWED", j.review.verdict);
   if (j.state !== "returned" && j.state !== "failed") return fehler("JOB_NOT_RETURNED", j.state);
-  if (verdict === "accepted" && (j.state !== "returned" || !j.result || j.result.stale)) return fehler("JOB_RESULT_NOT_ACCEPTABLE", j.result ? "stale" : j.state);
-  j.review = { verdict, reviewer: String(reviewer).trim(), reviewedAt: isoAus(ctx.now), reviewedBy: ctx.actor ? ctx.actor.id : null, note: note ? String(note).slice(0, 500) : null };
+  if (verdict === "accepted") {
+    // LIVE pruefen — nicht das beim Ruecklauf gespeicherte stale-Flag:
+    // aktuelle Quellversion noch akzeptiert, Quelle offen, Ergebnis
+    // vorhanden und vollstaendig (ref + hash), Ablauf nicht ueberschritten.
+    if (j.state !== "returned" || !j.result || !j.result.ref || typeof j.result.hash !== "string" || !HASH_HEX.test(j.result.hash)) return fehler("JOB_RESULT_NOT_ACCEPTABLE", j.state);
+    const e = quelleFinden(data, j.sourceType, j.sourceId);
+    if (!e) return fehler("SOURCE_NOT_FOUND", j.sourceType + ":" + j.sourceId);
+    const z = effektiverZustand(j.sourceType, e);
+    if (z.unmigrated || z.unmapped) return fehler("JOB_RESULT_NOT_ACCEPTABLE", "source state unresolved");
+    if (ABGESCHLOSSENE_ZUSTAENDE.includes(z.state)) return fehler("SOURCE_CLOSED", z.state);
+    if (!(j.acceptedVersions || [j.inputVersion]).includes(z.version)) return fehler("JOB_RESULT_NOT_ACCEPTABLE", { reason: "stale", sourceVersion: z.version, acceptedVersions: j.acceptedVersions || [j.inputVersion] });
+    if (msAus(j.returnedAt) > msAus(j.expiresAt)) return fehler("JOB_RESULT_NOT_ACCEPTABLE", "returned after expiry");
+    j.result.stale = false;
+  }
+  j.review = { verdict, reviewer: String(reviewer).trim(), reviewedAt: isoAus(ctx.now), reviewedBy: ctx.actor ? ctx.actor.id : null, note: note ? String(note).slice(0, 500) : null,
+    resultRef: j.result ? j.result.ref : null, resultHash: j.result ? j.result.hash : null, sourceVersion: null };
   j.reviewedAt = j.review.reviewedAt;
   if (verdict === "accepted") {
     const e = quelleFinden(data, j.sourceType, j.sourceId);
-    const z = e ? effektiverZustand(j.sourceType, e) : null;
-    if (e && z && !z.unmigrated && !z.unmapped && !ABGESCHLOSSENE_ZUSTAENDE.includes(z.state) && z.state !== "review") {
+    const z = effektiverZustand(j.sourceType, e);
+    j.review.sourceVersion = z.version;
+    if (z.state !== "review") {
       setzeZustand(e, j.sourceType, "review", ctx.now, "job " + jobId + " accepted");
       delete data.automation.waitingById[sourceKey(j.sourceType, j.sourceId)];
     }

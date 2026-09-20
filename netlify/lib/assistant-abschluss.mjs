@@ -22,7 +22,7 @@
  * ═════════════════════════════════════════════════════════════════════════ */
 import { QUELLEN, WARTE_ZUSTAENDE, ABGESCHLOSSENE_ZUSTAENDE, effektiverZustand, rollenFuer, validatePolicy, pruefeId, canonicalJson } from "./assistant-schema.mjs";
 import { klon, requireCore } from "./assistant-migration.mjs";
-import { bump, chatgptNoteBauen, quelleFinden, pruefeWarteKarte } from "./assistant-buchhaltung.mjs";
+import { bump, chatgptNoteBauen, quelleFinden, pruefeWarteKarte, abschlussBelegPruefen } from "./assistant-buchhaltung.mjs";
 import { dailyAssistantTrafficLight } from "./assistant-ampel.mjs";
 import { istLokalDatum, isoAus, msAus, wandzeitZuMs, tagesEndeMs, datumPlusTage, assistentenTag } from "./assistant-zeit.mjs";
 
@@ -56,6 +56,11 @@ export function verpflichtungsmenge(data, runDate) {
         eintrag.waiting = w ? { state: w.state, counterparty: w.counterparty, waitingSince: w.waitingSince, nextAction: w.nextAction, followUpAt: w.followUpAt, evidence: w.evidence } : null;
         eintrag.evidenceIdentity = w ? belegIdentitaet(data, w.evidence) : null;
       }
+      if (ABGESCHLOSSENE_ZUSTAENDE.includes(z.state)) {
+        const ab = abschlussBelegPruefen(data, sourceType, id, e);
+        const c = e.operationalStateSource && e.operationalStateSource.closure;
+        eintrag.closure = { origin: ab.origin, ok: ab.ok, code: ab.ok ? null : ab.code, binding: c && typeof c.binding === "string" ? c.binding : null, ref: c ? { kind: c.kind, evidenceId: c.evidenceId || null, jobId: c.jobId || null, answerId: c.answerId || null } : null };
+      }
       if (sourceType === "task" && e.dueDate) eintrag.dueDate = String(e.dueDate).slice(0, 10);
       out[sourceType + ":" + id] = eintrag;
     }
@@ -71,8 +76,16 @@ export function verpflichtungsmenge(data, runDate) {
   }
   const a = data.automation;
   for (const [id, it] of Object.entries(a.intakeById)) out["intake:" + id] = { state: it && it.status, linkedTo: it && it.linkedTo ? it.linkedTo : null };
-  for (const [id, d] of Object.entries(a.documentsById)) out["document:" + id] = { state: d && d.status, parse: d && d.parse ? { outcome: d.parse.outcome, textRef: d.parse.textRef, extractHash: d.parse.extractHash } : null, results: d && d.results ? d.results : [], hash: d && d.hash };
-  for (const [id, j] of Object.entries(a.jobsById)) out["job:" + id] = { state: j && j.state, review: j && j.review ? { verdict: j.review.verdict, reviewedAt: j.review.reviewedAt } : null, resultHash: j && j.result ? j.result.hash : null };
+  for (const [id, d] of Object.entries(a.documentsById)) {
+    const results = d && Array.isArray(d.results) ? d.results : [];
+    out["document:" + id] = { state: d && d.status, parse: d && d.parse ? { outcome: d.parse.outcome, textRef: d.parse.textRef, extractHash: d.parse.extractHash } : null, results, resultsExist: results.every((r) => r && quelleFinden(data, r.sourceType, r.sourceId)), hash: d && d.hash, attachmentId: d && d.attachmentId };
+  }
+  for (const [id, j] of Object.entries(a.jobsById)) out["job:" + id] = {
+    state: j && j.state,
+    review: j && j.review ? { verdict: j.review.verdict, reviewedAt: j.review.reviewedAt, resultRef: j.review.resultRef, resultHash: j.review.resultHash, sourceVersion: j.review.sourceVersion } : null,
+    result: j && j.result ? { ref: j.result.ref, hash: j.result.hash, receivedAt: j.result.receivedAt } : null,
+    inputVersion: j && j.inputVersion, executor: j && j.executor,
+  };
   for (const [id, q] of Object.entries(a.questionsById)) out["question:" + id] = { state: q && q.status, answerId: q && q.answerId };
   for (const [id, ans] of Object.entries(a.answersById)) out["answer:" + id] = { state: ans && ans.consumedAt ? "consumed" : "open", consumedBy: ans && ans.consumedBy };
   return out;
@@ -186,9 +199,18 @@ export function pruefeWiderspruch(data, { date }, { now, policy }) {
       continue;
     }
     if (geschlossen(damals.state) && !geschlossen(heute.state)) { melden(key, damals.state, heute.state, "REOPENED"); continue; }
-    if (damals.state === "returned" && damals.review && (heute.state !== "returned" || !heute.review || heute.review.verdict !== damals.review.verdict)) { melden(key, "reviewed " + damals.review.verdict, heute.review ? heute.review.verdict : "unreviewed", "JOB_REVIEW_LOST"); continue; }
+    if (damals.closure && ABGESCHLOSSENE_ZUSTAENDE.includes(heute.state)) {
+      // Der gebundene Abschlussbeleg muss heute noch existieren, unveraendert
+      // sein und zum selben Beleg zeigen — nicht nur "closure vorhanden".
+      const h = heute.closure || {};
+      if (!h.ok || h.binding !== damals.closure.binding || canonicalJson(h.ref) !== canonicalJson(damals.closure.ref) || h.origin !== damals.closure.origin) { melden(key, damals.state, heute.state, "CLOSURE_EVIDENCE_LOST", { code: h.code || null }); continue; }
+    }
+    if (sourceType === "job" && damals.review) {
+      if (heute.state !== damals.state || !heute.review || canonicalJson(heute.review) !== canonicalJson(damals.review)) { melden(key, "reviewed " + damals.review.verdict, heute.review ? heute.review.verdict : "unreviewed", "JOB_REVIEW_LOST"); continue; }
+      if (canonicalJson(heute.result) !== canonicalJson(damals.result) || heute.inputVersion !== damals.inputVersion || heute.executor !== damals.executor) { melden(key, "result " + (damals.result && damals.result.hash), "result " + (heute.result && heute.result.hash), "JOB_RESULT_CHANGED"); continue; }
+    }
     if (sourceType === "document" && damals.state === "done") {
-      if (canonicalJson(heute.parse) !== canonicalJson(damals.parse) || canonicalJson(heute.results) !== canonicalJson(damals.results) || heute.hash !== damals.hash) melden(key, "done", "processing changed", "DOCUMENT_PROOF_LOST");
+      if (canonicalJson(heute.parse) !== canonicalJson(damals.parse) || canonicalJson(heute.results) !== canonicalJson(damals.results) || heute.hash !== damals.hash || heute.attachmentId !== damals.attachmentId || !heute.resultsExist) melden(key, "done", "processing changed", "DOCUMENT_PROOF_LOST");
       continue;
     }
     if (WARTE_ZUSTAENDE.includes(damals.state)) {

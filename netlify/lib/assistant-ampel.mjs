@@ -25,7 +25,7 @@ import {
   validatePolicy, sourceKey, stringFingerprint, canonicalJson,
 } from "./assistant-schema.mjs";
 import { pruefeKernStruktur } from "./assistant-migration.mjs";
-import { pruefeWarteKarte, quelleFinden } from "./assistant-buchhaltung.mjs";
+import { pruefeWarteKarte, quelleFinden, abschlussBelegPruefen } from "./assistant-buchhaltung.mjs";
 import {
   assistentenTag, faelligeSlots, naechsteSlotGrenzeMs, isoAus, msAus, ZEIT, istLokalDatum,
 } from "./assistant-zeit.mjs";
@@ -135,8 +135,14 @@ export function dailyAssistantTrafficLight(run, data, now, policy) {
     if (z.unmapped) { grund("coverage", z.reason === "unknown" ? "UNKNOWN_LEGACY_STATE" : "AMBIGUOUS_LEGACY_STATE", sourceType, id, z.legacyNow); return; }
     if (z.versionInvalid) grund("coverage", "STATE_VERSION_INVALID", sourceType, id, null);
     if (z.drift) grund("coverage", "LEGACY_DRIFT", sourceType, id, z.drift);
-    if (z.unproven) grund("coverage", "STATE_CLAIM_UNPROVEN", sourceType, id, z.state);
-    if (ABGESCHLOSSENE_ZUSTAENDE.includes(z.state)) return;
+    if (ABGESCHLOSSENE_ZUSTAENDE.includes(z.state)) {
+      // Abgeschlossen ist nur gruen, wenn der gebundene Abschlussbeleg LIVE
+      // im Bestand steht und unveraendert ist (Migration und Nutzer-
+      // Selbsterledigung sind eigene, klar benannte Herkuenfte).
+      const ab = abschlussBelegPruefen(data, sourceType, id, e);
+      if (!ab.ok) grund("coverage", ab.code === "CLOSURE_UNPROVEN" ? "STATE_CLAIM_UNPROVEN" : ab.code, sourceType, id, { origin: ab.origin, detail: ab.detail || null });
+      return;
+    }
 
     // Faelligkeit: harte Frist einer Aufgabe; KI-Leads und ChatGPT-Aufgaben sind stets Arbeit des Assistenten.
     const due = sourceType === "task" && e.dueDate ? String(e.dueDate).slice(0, 10) : null;

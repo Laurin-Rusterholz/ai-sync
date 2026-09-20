@@ -72,22 +72,28 @@ export function klon(v) {
   return v === undefined ? undefined : JSON.parse(JSON.stringify(v));
 }
 
-/* Wiederverwendung: was schon da ist, bleibt; nur fehlende Bereiche werden
- * angelegt. Ein vorhandener Bereich mit falschem Typ ist ein Fehler. */
+/* Hat der Bestand schon v3-Spuren? Dann ist er entweder ein vollstaendiger,
+ * gueltiger v3-Kern (wiederholte Migration erlaubt: nur neue, noch nicht
+ * gemappte Objekte) — oder er ist PARTIELL/KAPUTT, und dann ist die Migration
+ * fail-closed. Es wird nie ein Ledger, eine Outbox, eine Revision, eine Lease
+ * oder ein Marker "geheilt": das wuerde Replay-/Versandnachweise und die
+ * monotone Revision zuruecksetzen. */
+export function v3Spuren(data) {
+  const spuren = [];
+  if (data.automation !== undefined) spuren.push("automation");
+  if (istKarte(data.dailyBriefing) && data.dailyBriefing.assistantRuns !== undefined) spuren.push("dailyBriefing.assistantRuns");
+  for (const q of Object.values(QUELLEN)) {
+    const store = data.entities[q.store];
+    if (!istKarte(store)) continue;
+    for (const [id, e] of Object.entries(store)) {
+      if (istKarte(e) && (e.operationalStateSource !== undefined || e.operationalState !== undefined || e.operationalStateVersion !== undefined || e.operationalRoles !== undefined)) { spuren.push(`entities.${q.store}.${id}`); break; }
+    }
+  }
+  return spuren;
+}
+
 function ergaenzeAutomation(data, bericht) {
-  const vorlage = leereAutomation();
-  if (data.automation === undefined) { data.automation = vorlage; bericht.created.push("automation"); return; }
-  const a = data.automation;
-  for (const [k, v] of Object.entries(vorlage)) {
-    if (a[k] === undefined) { a[k] = v; bericht.created.push("automation." + k); continue; }
-    if (istKarte(v) && !istKarte(a[k])) throw new CoreDocumentError("CORE_AUTOMATION_CORRUPT", `automation.${k} ist keine Karte.`);
-  }
-  if (a.schemaVersion !== SCHEMA_VERSION) {
-    if (Number.isInteger(a.schemaVersion) && a.schemaVersion > SCHEMA_VERSION) throw new CoreDocumentError("CORE_SCHEMA_NEWER", `automation.schemaVersion ${a.schemaVersion} ist neuer als ${SCHEMA_VERSION}.`);
-    a.schemaVersion = SCHEMA_VERSION;
-    bericht.created.push("automation.schemaVersion=" + SCHEMA_VERSION);
-  }
-  if (!(Number.isSafeInteger(a.dataRevision) && a.dataRevision >= 0)) throw new CoreDocumentError("CORE_REVISION_CORRUPT", "automation.dataRevision ist keine gueltige Revision.");
+  if (data.automation === undefined) { data.automation = leereAutomation(); bericht.created.push("automation"); }
 }
 
 function ergaenzeRuns(data, bericht) {
@@ -122,26 +128,37 @@ function mappeZustaende(data, nowIso, bericht) {
 }
 
 /* Die Migration. Gibt IMMER einen neuen Bestand zurueck (tiefe Kopie); die
- * Eingabe wird nicht veraendert. changed=false heisst: byteidentisch. */
+ * Eingabe wird nicht veraendert. changed=false heisst: byteidentisch.
+ *
+ *   · ohne v3-Spuren: erstmalige Legacy-Migration — Pflichtsammlungen und
+ *     Kern werden angelegt, Altstatus einmal gemappt, alles Fremde bleibt
+ *   · mit v3-Spuren: der Kern muss VOLLSTAENDIG gueltig sein (Struktur-
+ *     pruefung), sonst CORE_PARTIAL_V3 (503); dann werden nur Objekte
+ *     ohne operationalStateSource (neu vom Client angelegt) gemappt */
 export function migrateCore(input, { now } = {}) {
   if (typeof now !== "number" || !Number.isFinite(now)) throw new TypeError("migrateCore: now (ms) fehlt");
   const bestand = pruefeBestand(input);
   const data = klon(bestand);
-  const bericht = { created: [], mapped: [], conflicts: [] };
+  const bericht = { created: [], mapped: [], conflicts: [], mode: null };
   const nowIso = isoAus(now);
 
-  for (const k of PFLICHT_STORES) {
-    if (data.entities[k] === undefined) { data.entities[k] = {}; bericht.created.push("entities." + k); }
+  const spuren = v3Spuren(data);
+  if (spuren.length) {
+    const f = pruefeKernStruktur(data);
+    if (f.length) throw new CoreDocumentError("CORE_PARTIAL_V3", "v3-Spuren (" + spuren.join(", ") + ") in einem unvollstaendigen oder kaputten Kern — keine erneute Erstmigration: " + f.map((x) => x.code + "@" + x.path).join("; "));
+    bericht.mode = "repeat";
+  } else {
+    bericht.mode = "initial";
+    for (const k of PFLICHT_STORES) {
+      if (data.entities[k] === undefined) { data.entities[k] = {}; bericht.created.push("entities." + k); }
+    }
+    ergaenzeAutomation(data, bericht);
+    ergaenzeRuns(data, bericht);
   }
-  ergaenzeAutomation(data, bericht);
-  ergaenzeRuns(data, bericht);
   mappeZustaende(data, nowIso, bericht);
 
   const a = data.automation;
   const bisher = istKarte(a.migration) ? a.migration : null;
-  // Konflikte werden gefuehrt, bis ein Kommando den Zustand gesetzt hat
-  // (operationalStateUnmapped fehlt dann am Objekt). Ohne Unterschied bleibt
-  // das Migrationsobjekt byteidentisch.
   const nochOffen = (bisher ? bisher.conflicts || [] : []).filter((c) => {
     if (c.kind === "corrupt_entity") return !istKarte(data.entities?.[QUELLEN[c.sourceType]?.store]?.[c.sourceId]);
     const e = data.entities?.[QUELLEN[c.sourceType]?.store]?.[c.sourceId];

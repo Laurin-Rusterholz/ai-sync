@@ -159,18 +159,14 @@ test("Migration ist idempotent, versioniert und einmalig; Fremdes und _deleteLog
   const m2 = K.migrateCore(m1.data, { now: NOW + 5 * STD });
   assert.equal(m2.changed, false);
   assert.equal(JSON.stringify(m2.data), JSON.stringify(m1.data));
-  // Vorhandene, gleichwertige Struktur wird wiederverwendet.
-  const mitAutomation = bestand();
-  mitAutomation.automation = { schemaVersion: 3, dataRevision: 7, intakeById: { i1: { id: "i1", status: "open", text: "x" } }, eigenes: true };
-  const m3 = K.migrateCore(mitAutomation, { now: NOW });
-  assert.equal(m3.data.automation.dataRevision, 7);
-  assert.equal(m3.data.automation.intakeById.i1.text, "x");
-  assert.equal(m3.data.automation.eigenes, true);
-  // Korrupte vorhandene Struktur ist ein Fehler, wird nicht geleert.
-  const korrupt = bestand(); korrupt.automation = { schemaVersion: 3, dataRevision: "sieben" };
-  assert.throws(() => K.migrateCore(korrupt, { now: NOW }), (e) => e.code === "CORE_REVISION_CORRUPT");
-  const korrupt2 = bestand(); korrupt2.automation = { schemaVersion: 3, dataRevision: 0, questionsById: [] };
-  assert.throws(() => K.migrateCore(korrupt2, { now: NOW }), (e) => e.code === "CORE_AUTOMATION_CORRUPT");
+  // Ein vollstaendiger v3-Kern mit fremden Zusatzfeldern bleibt bei erneuter Migration erhalten (nichts wird ersetzt).
+  const voll = K.klon(m1.data); voll.automation.eigenes = true; voll.automation.dataRevision = 7;
+  const m3 = K.migrateCore(voll, { now: NOW });
+  assert.equal(m3.changed, false); assert.equal(m3.report.mode, "repeat");
+  assert.equal(m3.data.automation.dataRevision, 7); assert.equal(m3.data.automation.eigenes, true);
+  // Partielle v3-Spuren werden NICHT als Erstmigration geheilt (B3-01, siehe eigener Test).
+  const partiell = bestand(); partiell.automation = { schemaVersion: 3, dataRevision: 7, intakeById: { i1: { id: "i1", status: "open", text: "x" } }, eigenes: true };
+  assert.throws(() => K.migrateCore(partiell, { now: NOW }), (e) => e.code === "CORE_PARTIAL_V3" && e.status === 503);
 });
 
 test("R2: 'wartet' ohne Ursache wird nicht geraten; unbekannt/mehrdeutig sind Migrationskonflikte; Rollen explizit; nie erneut aus Altfeldern", () => {
@@ -1032,4 +1028,192 @@ test("B2-09: der Umschlag-Adapter nimmt Zeit und Kennung nur aus prepared; Body-
   assert.throws(() => reducer(K.klon(w.data), { type: "ensureRun", payload: { date, extra: 1 } }, prepared(now)), (e) => e.code === "COMMAND_REJECTED" && e.status === 400);
   // Lokale Domain-Tests duerfen now stellen (applyCommand), der Adapter nicht — die Kennung ist die requestId.
   assert.equal(K.applyCommand(data, { type: "ensureRun", commandId: "lokal", now, payload: { date } }, { policy: POLICY, actor: AGENT }).ok, true);
+});
+
+/* ══ Dritte Pruefung (B3-01 … B3-04, Konzept 12.2) ═══════════════════════ */
+test("B3-01: v3-Spuren in einem unvollstaendigen Kern sind fail-closed (503); erste Legacy-Migration und wiederholte intakte Migration bleiben erlaubt", () => {
+  // Gueltiger, bereits migrierter Kern: erneute Migration ist unveraendert.
+  const { data } = basisTag();
+  const wieder = K.migrateCore(data, { now: NOW + STD });
+  assert.equal(wieder.changed, false); assert.equal(wieder.report.mode, "repeat");
+  // Loeschungen von Ledger, Outbox, Revision: kein stilles {} / 0.
+  for (const [pfad, loeschen] of [
+    ["automation.idempotencyByKey", (k) => { delete k.automation.idempotencyByKey; }],
+    ["automation.outboxById", (k) => { delete k.automation.outboxById; }],
+    ["automation.dataRevision", (k) => { delete k.automation.dataRevision; }],
+    ["automation.evidenceById", (k) => { delete k.automation.evidenceById; }],
+    ["automation.migration", (k) => { delete k.automation.migration; }],
+    ["automation.activeLease", (k) => { k.automation.activeLease = "runner"; }],
+    ["automation.schemaVersion", (k) => { delete k.automation.schemaVersion; }],
+    ["dailyBriefing.assistantRuns", (k) => { delete k.dailyBriefing.assistantRuns; }],
+    ["dailyBriefing.assistantRuns.<date>.phase", (k) => { k.dailyBriefing.assistantRuns["2026-09-19"].phase = "closed"; }],
+    ["dailyBriefing.assistantRuns.<date>.revision", (k) => { delete k.dailyBriefing.assistantRuns["2026-09-19"].revision; }],
+    ["entities.chatgptLeads", (k) => { delete k.entities.chatgptLeads; }],
+    ["entities.chatgptNotes", (k) => { delete k.entities.chatgptNotes; }],
+    ["entities.projects", (k) => { k.entities.projects = []; }],
+  ]) {
+    const k = K.klon(data); loeschen(k);
+    const vorher = JSON.stringify(k);
+    assert.throws(() => K.migrateCore(k, { now: NOW + STD }), (e) => (e.code === "CORE_PARTIAL_V3" || e.code === "CORE_STORE_CORRUPT") && e.status === 503, pfad + " wurde still geheilt");
+    assert.equal(JSON.stringify(k), vorher, pfad + ": Eingabe veraendert");
+  }
+  // Nur automation geloescht, aber Laeufe/Objekte tragen v3-Spuren → ebenfalls partiell.
+  const ohneAutomation = K.klon(data); delete ohneAutomation.automation;
+  assert.throws(() => K.migrateCore(ohneAutomation, { now: NOW }), (e) => e.code === "CORE_PARTIAL_V3");
+  const nurObjekt = bestand(); nurObjekt.entities.chatgptLeads.l1.operationalStateSource = { legacyValue: "in_arbeit" };
+  assert.throws(() => K.migrateCore(nurObjekt, { now: NOW }), (e) => e.code === "CORE_PARTIAL_V3");
+  assert.deepEqual(K.v3Spuren(nurObjekt), ["entities.chatgptLeads.l1"]);
+  // Echte Erstmigration: keine Spuren → erlaubt, fehlende Pflichtsammlungen werden leer angelegt, Fremdes und Grabsteine bleiben.
+  const legacy = { entities: { tasks: { t1: { id: "t1", status: "todo" } }, chatgptLeads: {} }, _deleteLog: { tasks: { t9: 1 } }, fremd: 1, dailyBriefing: { routines: [] } };
+  const m = K.migrateCore(legacy, { now: NOW });
+  assert.equal(m.report.mode, "initial");
+  assert.deepEqual(m.data._deleteLog, legacy._deleteLog); assert.equal(m.data.fremd, 1);
+  assert.deepEqual(m.data.entities.chatgptNotes, {}); assert.deepEqual(m.data.entities.projects, {});
+  assert.deepEqual(m.data.dailyBriefing.routines, []);
+  assert.equal(m.data.automation.dataRevision, 0);
+  // Wiederholte intakte Migration nimmt neue Client-Objekte ohne v3-Felder mit, ohne den Rest anzufassen.
+  const neu = K.klon(m.data); neu.entities.chatgptLeads.l2 = { id: "l2", status: "neu", readAt: null };
+  const m2 = K.migrateCore(neu, { now: NOW + STD });
+  assert.equal(m2.report.mode, "repeat"); assert.equal(m2.data.entities.chatgptLeads.l2.operationalState, "doing");
+  assert.equal(m2.data.automation.migration.migratedAt, m.data.automation.migration.migratedAt);
+});
+
+/* Gemeinsame Basis fuer B3-02…04: ChatGPT-Aufgabe t1 (v1) am gruenen Tag. */
+function aufgabenTag() {
+  const s = basisTag((d) => { d.entities.chatgptTasks.t1 = { id: "t1", text: "Review", state: "offen", createdAt: "2026-09-18T00:00:00Z" }; return d; });
+  s.data = mussOk(run(s.data, "addItemRef", { date: s.date, sourceType: "chatgptTask", sourceId: "t1" }, s.now), "ref");
+  return s;
+}
+const JOB = (now) => ({ jobId: "job_review", kind: "review", purpose: "Ergebnis pruefen", sourceType: "chatgptTask", sourceId: "t1", inputVersion: 1, executor: "claude", contextRefs: [{ sourceType: "chatgptTask", sourceId: "t1" }], expiresAt: new Date(now + STD).toISOString() });
+
+test("B3-02: ein Ruecklauf zu v1 kann nach einem legalen Zustandswechsel auf v2 nicht mehr angenommen werden — Review prueft live, nicht das gespeicherte stale-Flag", () => {
+  let { data, now } = aufgabenTag();
+  data = mussOk(run(data, "createJob", JOB(now), now), "job");
+  data = mussOk(run(data, "recordJobReturn", { jobId: "job_review", outcome: "returned", resultRef: "review_result", resultHash: "a".repeat(64) }, now + MIN, WORKER), "return");
+  assert.equal(data.automation.jobsById.job_review.result.stale, false);
+  // Ohne weitere Aenderung: accepted korrekt (Kontrolle, auf einer Kopie).
+  const direkt = run(data, "reviewJobResult", { jobId: "job_review", verdict: "accepted", reviewer: "laurin" }, now + 2 * MIN, USER);
+  assert.equal(direkt.ok, true); assert.equal(direkt.data.automation.jobsById.job_review.review.sourceVersion, 1);
+  // Legaler Zustandswechsel durch den Nutzer → v2.
+  data = mussOk(run(data, "transitionState", { sourceType: "chatgptTask", sourceId: "t1", state: "review", expectedVersion: 1 }, now + 2 * MIN, USER), "review v2");
+  assert.equal(ver(data, "chatgptTask", "t1"), 2);
+  const spaet = run(data, "reviewJobResult", { jobId: "job_review", verdict: "accepted", reviewer: "laurin" }, now + 3 * MIN, USER);
+  assert.equal(spaet.error, "JOB_RESULT_NOT_ACCEPTABLE"); assert.equal(spaet.detail.reason, "stale"); assert.equal(spaet.detail.sourceVersion, 2);
+  assert.equal(data.entities.chatgptTasks.t1.operationalStateVersion, 2, "neuere Arbeit wurde veraendert");
+  assert.equal(data.automation.jobsById.job_review.review, null);
+  // Abgelehnt bleibt moeglich; der abgelehnte Job ist kein Abschlussbeleg.
+  const rej = mussOk(run(data, "reviewJobResult", { jobId: "job_review", verdict: "rejected", reviewer: "laurin", note: "stale" }, now + 3 * MIN, USER), "reject");
+  assert.equal(run(rej, "transitionState", { sourceType: "chatgptTask", sourceId: "t1", state: "done", expectedVersion: 2, evidence: { kind: "job", jobId: "job_review" } }, now + 4 * MIN).error, "DONE_JOB_NOT_ACCEPTED");
+  // Solange die Rueckgabe ungeprueft ist, ist done blockiert; nach der Ablehnung ist der Beleg ein anderer, und ein zweites Review gibt es nicht.
+  let d2 = mussOk(run(data, "registerEvidence", { evidenceId: "ev_t1", kind: "message", ref: "m", sourceType: "chatgptTask", sourceId: "t1", origin: { adapter: "x", ref: "y" }, observedAt: new Date(now).toISOString(), fingerprint: "0123456789abcdef0123" }, now + 3 * MIN, ADAPTER), "ev");
+  assert.equal(run(d2, "transitionState", { sourceType: "chatgptTask", sourceId: "t1", state: "done", expectedVersion: 2, evidence: { kind: "evidence", evidenceId: "ev_t1" } }, now + 4 * MIN).error, "JOB_RETURN_UNREVIEWED");
+  d2 = mussOk(run(d2, "reviewJobResult", { jobId: "job_review", verdict: "rejected", reviewer: "laurin" }, now + 4 * MIN, USER), "reject");
+  d2 = mussOk(run(d2, "transitionState", { sourceType: "chatgptTask", sourceId: "t1", state: "done", expectedVersion: 2, evidence: { kind: "evidence", evidenceId: "ev_t1" } }, now + 5 * MIN), "done");
+  assert.equal(run(d2, "reviewJobResult", { jobId: "job_review", verdict: "accepted", reviewer: "x" }, now + 6 * MIN, USER).error, "JOB_ALREADY_REVIEWED");
+  assert.equal(d2.entities.chatgptTasks.t1.operationalState, "done");
+});
+
+test("B3-03: ein done ist an seinen Beleg gebunden — verschwindet oder aendert sich der Beleg, ist die Ampel rot und der Abschluss widerlegt; Migration und Nutzer-Selbsterledigung sind unterscheidbar", () => {
+  let { data, now, date } = aufgabenTag();
+  data = mussOk(run(data, "registerEvidence", { evidenceId: "proof_review", kind: "mail", ref: "rfc822:<r@p.example>", sourceType: "chatgptTask", sourceId: "t1", origin: { adapter: "gmail", ref: "m1" }, observedAt: new Date(now - MIN).toISOString(), fingerprint: "sha256-abcdef0123456789" }, now, ADAPTER), "beleg");
+  data = mussOk(run(data, "transitionState", { sourceType: "chatgptTask", sourceId: "t1", state: "done", expectedVersion: 1, evidence: { kind: "evidence", evidenceId: "proof_review" } }, now, AGENT), "done");
+  const closure = data.entities.chatgptTasks.t1.operationalStateSource.closure;
+  assert.equal(closure.kind, "evidence"); assert.ok(closure.binding.includes("sha256-abcdef0123456789"));
+  gruen(ampel(data, date, now), "vor Abschluss");
+  data = mussOk(run(data, "recordSourceCheck", { date, sourceId: "quantus-core", cursor: "c2", outcome: "ok" }, now, ADAPTER), "core");
+  const d1 = mussOk(run(data, "closeRun", { date, finalNoteId: "note_final" }, now), "close");
+  assert.equal(d1.dailyBriefing.assistantRuns[date].closureOutcomes["chatgptTask:t1"].closure.origin, "evidence");
+  const t1 = now + 5 * MIN;
+  for (const [name, mut, code] of [
+    ["Beleg geloescht", (k) => { delete k.automation.evidenceById.proof_review; }, "CLOSURE_EVIDENCE_LOST"],
+    ["Beleg-Fingerabdruck getauscht", (k) => { k.automation.evidenceById.proof_review.fingerprint = "sha256-0000000000000000"; }, "CLOSURE_EVIDENCE_CHANGED"],
+    ["Beleg an fremdes Element gebunden", (k) => { k.automation.evidenceById.proof_review.sourceId = "t2"; }, "CLOSURE_EVIDENCE_LOST"],
+    ["Bindung am Zustand entfernt", (k) => { delete k.entities.chatgptTasks.t1.operationalStateSource.closure.binding; }, "CLOSURE_EVIDENCE_UNBOUND"],
+    ["closure auf anderen Beleg umgebogen", (k) => { k.entities.chatgptTasks.t1.operationalStateSource.closure.evidenceId = "anderer"; }, "CLOSURE_EVIDENCE_LOST"],
+  ]) {
+    const k = K.klon(d1); mut(k);
+    const ev = ampel(k, date, t1);
+    assert.equal(ev.coverage, "red", name + ": " + JSON.stringify(ev.reasons));
+    assert.ok(hatCode(ev, code, "t1"), name + ": " + JSON.stringify(ev.reasons));
+    const w = K.pruefeWiderspruch(k, { date }, { now: t1, policy: POLICY });
+    assert.ok(w.contradictions.some((c) => c.sourceId === "t1" && c.reason === "CLOSURE_EVIDENCE_LOST"), name + ": " + JSON.stringify(w.contradictions));
+    const inv = run(k, "invalidateClosure", { date, correctionId: "korr_" + name.replace(/\W+/g, "_"), reason: name, contradiction: { sourceType: "chatgptTask", sourceId: "t1" } }, t1);
+    assert.equal(inv.ok, true, name + ": " + inv.error);
+  }
+  // Historische Alt-done-Migration: kein Beleg noetig, klar als "migration" gefuehrt.
+  const alt = K.migrateCore({ entities: { tasks: {}, projects: {}, notes: {}, chatgptNotes: {}, chatgptLeads: {}, chatgptTasks: { c9: { id: "c9", text: "alt", state: "erledigt", resolvedAt: "2026-09-01T00:00:00Z" } } } }, { now: NOW }).data;
+  assert.deepEqual(K.abschlussBelegPruefen(alt, "chatgptTask", "c9", alt.entities.chatgptTasks.c9), { ok: true, origin: "migration" });
+  assert.ok(!hatCode(K.dailyAssistantTrafficLight(K.leererRun(date, "3.0"), alt, now, POLICY), "STATE_CLAIM_UNPROVEN", "c9"));
+  // Nutzer-Selbsterledigung einer Nutzeraufgabe: Herkunft "user", ohne externen Beleg, bleibt gruen.
+  const u0 = basisTag((d) => { d.entities.tasks.u1 = { id: "u1", title: "meins", status: "todo", dueDate: "2026-09-19" }; return d; });
+  let u = mussOk(run(u0.data, "addItemRef", { date, sourceType: "task", sourceId: "u1" }, u0.now), "ref");
+  u = mussOk(run(u, "transitionState", { sourceType: "task", sourceId: "u1", state: "done", expectedVersion: 1 }, u0.now, USER), "user done");
+  assert.equal(K.abschlussBelegPruefen(u, "task", "u1", u.entities.tasks.u1).origin, "user");
+  gruen(ampel(u, date, u0.now), "user done");
+  // Ein von Hand hingeschriebenes closure {kind:"user"} ohne actorId ist unbelegt.
+  const f = K.klon(u); f.entities.tasks.u1.operationalStateSource.closure = { kind: "user" };
+  assert.ok(hatCode(ampel(f, date, u0.now), "STATE_CLAIM_UNPROVEN", "u1"));
+});
+
+test("B3-04: ein done ueber ein angenommenes Job-Ergebnis bindet Ergebnis-Hash, -Referenz und Review — Tausch nach dem Abschluss ist rot und ein Widerspruch", () => {
+  let { data, now, date } = aufgabenTag();
+  data = mussOk(run(data, "createJob", JOB(now), now), "job");
+  data = mussOk(run(data, "recordJobReturn", { jobId: "job_review", outcome: "returned", resultRef: "review_result", resultHash: "a".repeat(64) }, now + MIN, WORKER), "return");
+  data = mussOk(run(data, "reviewJobResult", { jobId: "job_review", verdict: "accepted", reviewer: "laurin" }, now + 2 * MIN, USER), "review");
+  assert.equal(ver(data, "chatgptTask", "t1"), 2);
+  data = mussOk(run(data, "transitionState", { sourceType: "chatgptTask", sourceId: "t1", state: "done", expectedVersion: 2, evidence: { kind: "job", jobId: "job_review" } }, now + 3 * MIN), "done");
+  assert.ok(data.entities.chatgptTasks.t1.operationalStateSource.closure.binding.includes("a".repeat(64)));
+  data = mussOk(run(data, "recordSourceCheck", { date, sourceId: "quantus-core", cursor: "c2", outcome: "ok" }, now + 3 * MIN, ADAPTER), "core");
+  gruen(ampel(data, date, now + 3 * MIN), "vor Abschluss");
+  const d1 = mussOk(run(data, "closeRun", { date, finalNoteId: "note_final" }, now + 3 * MIN), "close");
+  const t1 = now + 10 * MIN;
+  for (const [name, mut, ampelCode, wCodes] of [
+    ["result.hash getauscht", (k) => { k.automation.jobsById.job_review.result.hash = "b".repeat(64); }, "CLOSURE_EVIDENCE_LOST", ["CLOSURE_EVIDENCE_LOST", "JOB_RESULT_CHANGED"]],
+    ["result.ref getauscht", (k) => { k.automation.jobsById.job_review.result.ref = "other_result"; }, "CLOSURE_EVIDENCE_LOST", ["CLOSURE_EVIDENCE_LOST", "JOB_RESULT_CHANGED"]],
+    ["reviewedAt entfernt", (k) => { delete k.automation.jobsById.job_review.review.reviewedAt; }, "CLOSURE_EVIDENCE_CHANGED", ["CLOSURE_EVIDENCE_LOST", "JOB_REVIEW_LOST"]],
+    ["Review entfernt", (k) => { k.automation.jobsById.job_review.review = null; }, "CLOSURE_EVIDENCE_LOST", ["CLOSURE_EVIDENCE_LOST", "JOB_REVIEW_LOST"]],
+    ["Verdict getauscht", (k) => { k.automation.jobsById.job_review.review.verdict = "rejected"; }, "CLOSURE_EVIDENCE_LOST", ["CLOSURE_EVIDENCE_LOST", "JOB_REVIEW_LOST"]],
+    ["Job geloescht", (k) => { delete k.automation.jobsById.job_review; }, "CLOSURE_EVIDENCE_LOST", ["CLOSURE_EVIDENCE_LOST", "OBLIGATION_MISSING"]],
+  ]) {
+    const k = K.klon(d1); mut(k);
+    const ev = ampel(k, date, t1);
+    assert.equal(ev.coverage, "red", name + ": " + JSON.stringify(ev.reasons));
+    assert.ok(hatCode(ev, ampelCode, "t1"), name + ": " + JSON.stringify(ev.reasons));
+    const w = K.pruefeWiderspruch(k, { date }, { now: t1, policy: POLICY });
+    for (const c of wCodes) assert.ok(w.contradictions.some((x) => x.reason === c), name + " erwartet " + c + ": " + JSON.stringify(w.contradictions));
+  }
+  // Dokument-Ergebnisse, die auf verschwundene Elemente zeigen, sind ein Widerspruch.
+  let d2 = mussOk(run(d1, "registerDocument", { documentId: "doc1", attachmentId: ATT("a.pdf"), name: "a.pdf", hash: H64, mime: "application/pdf", size: 10, origin: { channel: "mail", ref: "m" }, linkedTo: { sourceType: "chatgptTask", sourceId: "t1" } }, t1, ADAPTER), "doc");
+  d2 = mussOk(run(d2, "recordDocumentParse", { documentId: "doc1", outcome: "parsed", textRef: ATT("a.txt"), extractHash: "c".repeat(64) }, t1, ADAPTER), "parse");
+  d2 = mussOk(run(d2, "transitionState", { sourceType: "document", sourceId: "doc1", state: "done", results: [{ sourceType: "chatgptTask", sourceId: "t1" }] }, t1), "doc done");
+  const m = K.verpflichtungsmenge(d2, date);
+  assert.equal(m["document:doc1"].resultsExist, true);
+  const weg = K.klon(d2); delete weg.entities.chatgptTasks.t1;
+  assert.equal(K.verpflichtungsmenge(weg, date)["document:doc1"].resultsExist, false);
+});
+
+test("Konzept 12.2: das Sechs-Kriterien-Raster ist keine Pflicht mehr; Ergebnis, explizite Rollen und ein vorhandener Routingnachweis werden geprueft; Altfelder bleiben", () => {
+  const t0 = "2026-09-18T00:00:00Z";
+  const s = basisTag((d) => { d.entities.chatgptLeads.k1 = { id: "k1", title: "klein", rawInput: "x", status: "in_arbeit", readAt: t0, assignee: "chatgpt", result: "#/organizations/abc", createdAt: t0 }; return d; });
+  let { data, now, date } = s;
+  data = mussOk(run(data, "addItemRef", { date, sourceType: "chatgptLead", sourceId: "k1" }, now), "ref");
+  assert.deepEqual(K.leadUnvollstaendig(data.entities.chatgptLeads.k1), [], "ein kleiner Lead ohne Raster, Begruendung oder Verknuepfung ist vollstaendig");
+  data = mussOk(run(data, "registerEvidence", { evidenceId: "ev_k1", kind: "message", ref: "m", sourceType: "chatgptLead", sourceId: "k1", origin: { adapter: "x", ref: "y" }, observedAt: new Date(now).toISOString(), fingerprint: "0123456789abcdef0123" }, now, ADAPTER), "ev");
+  const fertig = mussOk(run(data, "transitionState", { sourceType: "chatgptLead", sourceId: "k1", state: "done", expectedVersion: 1, evidence: { kind: "evidence", evidenceId: "ev_k1" } }, now), "done");
+  assert.equal(fertig.entities.chatgptLeads.k1.assessment, undefined, "es werden keine Rasterdaten erfunden");
+  // Ohne Ergebnis, ohne Executor, mit ungueltigem oder widerspruechlichem Routingnachweis: unvollstaendig.
+  const ohneErgebnis = K.klon(data.entities.chatgptLeads.k1); ohneErgebnis.result = " ";
+  assert.deepEqual(K.leadUnvollstaendig(ohneErgebnis), ["result"]);
+  const ohneExecutor = K.klon(data.entities.chatgptLeads.k1); ohneExecutor.operationalRoles = { accountable: "chatgpt", executor: null };
+  assert.deepEqual(K.leadUnvollstaendig(ohneExecutor), ["executor"]);
+  const kaputt = K.klon(data.entities.chatgptLeads.k1); kaputt.routing = { decision: "irgendwas" };
+  assert.deepEqual(K.leadUnvollstaendig(kaputt), ["routing"]);
+  const widerspruch = K.klon(data.entities.chatgptLeads.k1); widerspruch.routing = { schema: "lead-routing/3", routerVersion: "1.0", executor: "claude", decidedAt: "2026-09-19T08:00:00Z", fingerprint: "0123456789abcdef" };
+  assert.deepEqual(K.leadUnvollstaendig(widerspruch), ["routing_executor_mismatch"]);
+  const passt = K.klon(widerspruch); passt.routing.executor = "openai";
+  assert.deepEqual(K.leadUnvollstaendig(passt), []);
+  // Legacy-Rasterfelder bleiben unangetastet und werden weder verlangt noch veraendert.
+  const alt = K.klon(data.entities.chatgptLeads.k1); alt.assessment = { menge: "cowork", werkzeug: null }; alt.assignmentReason = ""; alt.linkedOrganizations = [];
+  assert.deepEqual(K.leadUnvollstaendig(alt), []);
+  assert.deepEqual(alt.assessment, { menge: "cowork", werkzeug: null });
 });
