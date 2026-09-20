@@ -4,6 +4,12 @@ Source of requirements: `Quantus-Tagesbriefing-Gesamtkonzept-v3.pdf`, 36 pages,
 provided by the owner on 2026-09-19. This ledger records implementation evidence,
 not approval and not a replacement for the complete specification.
 
+Latest independent release review: [release readiness](quantus-v3-release-readiness.md).
+The20Sep review reproduced two E2 stale-authority cases and one C3b cache-bound
+case after the previous counterexamples passed. Neither component is integrated;
+all three app regression baselines passed again. See that review for precise
+revision IDs and the dependency-ordered release gates, not a completion claim.
+
 ## Non-negotiable release boundaries
 
 - Keep `appStore/app-data_json` and the existing entities authoritative.
