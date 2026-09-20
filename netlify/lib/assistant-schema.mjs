@@ -337,7 +337,7 @@ export const COMMAND_SCHEMAS = Object.freeze({
   recordDocumentParse:  Object.freeze({ required: ["documentId", "outcome"], optional: ["error", "textRef", "extractHash"], actors: ["adapter", "agent", "system"] }),
   createJob:            Object.freeze({ required: ["jobId", "kind", "purpose", "sourceType", "sourceId", "inputVersion", "executor", "contextRefs", "expiresAt"], optional: [], actors: ["agent", "system"] }),
   cancelJob:            Object.freeze({ required: ["jobId", "reason"], optional: [], actors: ["agent", "system", "user"] }),
-  recordJobReturn:      Object.freeze({ required: ["jobId", "outcome"], optional: ["resultRef", "resultHash", "error"], actors: ["worker"] }),
+  recordJobReturn:      Object.freeze({ required: ["jobId", "outcome"], optional: ["resultRef", "resultHash", "error", "summary"], actors: ["worker"] }),
   reviewJobResult:      Object.freeze({ required: ["jobId", "verdict", "reviewer"], optional: ["note"], actors: ["agent", "user"] }),
   closeRun:             Object.freeze({ required: ["date", "finalNoteId"], optional: [], actors: ["agent", "system"] }),
   invalidateClosure:    Object.freeze({ required: ["date", "correctionId", "reason", "contradiction"], optional: [], actors: ["agent", "system", "user"] }),
@@ -347,6 +347,7 @@ export const COMMAND_SCHEMAS = Object.freeze({
   appendRunNote:        Object.freeze({ required: ["date", "noteId", "text"], optional: ["linkedLeadId"], actors: ["user", "agent", "system"] }),
   recordRunEvent:       Object.freeze({ required: ["date", "eventId", "event"], optional: ["detail"], actors: ["agent", "system"] }),
   recordRunCheckpoint:  Object.freeze({ required: ["date", "checkpointId", "stage"], optional: ["note"], actors: ["agent", "system"] }),
+  ensureRunSlot:        Object.freeze({ required: ["date", "slot", "receiptId"], optional: ["note"], actors: ["agent", "system"] }),
 });
 
 export function validateCommandShape(command) {

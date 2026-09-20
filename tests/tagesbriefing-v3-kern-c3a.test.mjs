@@ -175,6 +175,30 @@ test("askQuestion traegt Antwortoptionen (C3a): kurze Liste, geprueft, die Antwo
   assert.equal(a.ok, true, "die Antwort ist nicht auf die Optionen beschraenkt");
 });
 
+test("ensureRunSlot: Lauf anlegen und Slot quittieren in EINER Revision; recordJobReturn traegt die Zusammenfassung", () => {
+  let d = K.migrateCore(bestand(), { now: NOW - 60 * MIN }).data;
+  const rev = d.automation.dataRevision;
+  const at = K.slotBeginnMs(DATE, "process09") + MIN;
+  const r = run(d, "ensureRunSlot", { date: DATE, slot: "process09", receiptId: "rcpt_p9" }, SYSTEM, at);
+  assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.created, true); assert.equal(r.receiptCreated, true);
+  assert.equal(r.data.automation.dataRevision, rev + 1, "genau eine Revision");
+  const lauf = r.data.dailyBriefing.assistantRuns[DATE];
+  assert.equal(lauf.phase, "active"); assert.equal(lauf.slotReceipts.process09.receiptId, "rcpt_p9"); assert.equal(lauf.slotReceipts.process09.slotKey, K.slotKey("laurin", DATE, "process09", POLICY.version));
+  const wieder = run(r.data, "ensureRunSlot", { date: DATE, slot: "process09", receiptId: "rcpt_p9" }, SYSTEM, at + MIN);
+  assert.equal(wieder.created, false); assert.equal(wieder.receiptCreated, false); assert.equal(wieder.noop, true);
+  assert.equal(run(r.data, "ensureRunSlot", { date: DATE, slot: "process09", receiptId: "anders" }, SYSTEM, at + MIN).error, "SLOT_ALREADY_RECEIPTED");
+  assert.equal(run(r.data, "ensureRunSlot", { date: DATE, slot: "close23", receiptId: "rcpt_c23" }, SYSTEM, at).error, "SLOT_NOT_STARTED");
+  assert.equal(run(r.data, "ensureRunSlot", { date: DATE, slot: "mittag", receiptId: "x" }, SYSTEM, at).error, "SLOT_UNKNOWN");
+  assert.equal(run(r.data, "ensureRunSlot", { date: DATE, slot: "process09", receiptId: "x" }, USER, at).error, "ACTOR_REJECTED");
+  const zweiter = run(r.data, "ensureRunSlot", { date: DATE, slot: "continue14", receiptId: "rcpt_c14" }, AGENT, K.slotBeginnMs(DATE, "continue14") + MIN);
+  assert.equal(zweiter.ok, true); assert.equal(zweiter.created, false); assert.equal(zweiter.receiptCreated, true);
+  // Zusammenfassung am Ergebnis.
+  let e = basis();
+  e = mussOk(run(e, "createJob", { jobId: "job_s", kind: "recherche", purpose: "x", sourceType: "chatgptLead", sourceId: "l1", inputVersion: 1, executor: "claude", contextRefs: [], expiresAt: new Date(NOW + 60 * MIN).toISOString() }), "job");
+  const ret = run(e, "recordJobReturn", { jobId: "job_s", outcome: "returned", resultRef: "res_s", resultHash: "a".repeat(64), summary: "Drei Treffer, einer passt." }, WORKER);
+  assert.equal(ret.ok, true, JSON.stringify(ret)); assert.equal(ret.data.automation.jobsById.job_s.result.summary, "Drei Treffer, einer passt.");
+});
+
 test("Kern-Invarianten: jedes neue Kommando hat Schema und Handler, bewegt die Revision genau um eins und laesst Ledger und Lease unberuehrt", () => {
   for (const k of ["createTask", "addComment", "appendRunNote", "recordRunEvent", "recordRunCheckpoint"]) assert.ok(K.COMMAND_SCHEMAS[k], k);
   let d = basis();

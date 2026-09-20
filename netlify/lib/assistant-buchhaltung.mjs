@@ -891,7 +891,7 @@ export function cancelJob(input, { jobId, reason }, ctx) {
   return { ok: true, data, job: j, created: true };
 }
 
-export function recordJobReturn(input, { jobId, outcome, resultRef, resultHash, error }, ctx) {
+export function recordJobReturn(input, { jobId, outcome, resultRef, resultHash, error, summary }, ctx) {
   ctxPruefen(ctx);
   const data = klon(requireCore(input));
   const j = data.automation.jobsById[jobId];
@@ -908,7 +908,7 @@ export function recordJobReturn(input, { jobId, outcome, resultRef, resultHash, 
   if (outcome === "returned") {
     if (!String(resultRef || "").trim()) return fehler("JOB_RESULT_REF_MISSING");
     if (typeof resultHash !== "string" || !HASH_HEX.test(resultHash)) return fehler("JOB_RESULT_HASH_INVALID");
-    j.result = { ref: String(resultRef).trim(), hash: resultHash, receivedAt: isoAus(ctx.now), receivedFrom: ctx.actor ? ctx.actor.id : null, stale: !z || !(j.acceptedVersions || [j.inputVersion]).includes(z.version), sourceVersionAtReturn: z ? z.version : null };
+    j.result = { ref: String(resultRef).trim(), hash: resultHash, summary: summary ? String(summary).slice(0, 8000) : null, receivedAt: isoAus(ctx.now), receivedFrom: ctx.actor ? ctx.actor.id : null, stale: !z || !(j.acceptedVersions || [j.inputVersion]).includes(z.version), sourceVersionAtReturn: z ? z.version : null };
   } else {
     j.error = String(error || "failed").slice(0, 500);
   }
@@ -1096,6 +1096,39 @@ export function recordRunCheckpoint(input, { date, checkpointId, stage, note }, 
   runAnfassen(run, ctx.now);
   bump(data, ctx.now);
   return { ok: true, data, checkpoint: eintrag, created: true };
+}
+
+/* Der Slot-Tick des Schedulers: Lauf anlegen, falls er fehlt, UND den Slot
+ * quittieren — in EINER Revision, weil der Transaktionsumschlag je Kommando
+ * genau eine erlaubt. Dieselben Pruefungen wie ensureRun + recordSlotReceipt. */
+export function ensureRunSlot(input, { date, slot, receiptId, note }, ctx) {
+  ctxPruefen(ctx);
+  if (!istLokalDatum(date)) return fehler("DATE_INVALID", date);
+  const p = validatePolicy(ctx.policy);
+  if (!p.ok) return fehler("POLICY_INVALID", p.errors);
+  try { slotDefinition(slot); } catch { return fehler("SLOT_UNKNOWN", slot); }
+  pruefeId(receiptId, "receiptId");
+  if (slotBeginnMs(date, slot) > ctx.now) return fehler("SLOT_NOT_STARTED", { slot, startsAt: isoAus(slotBeginnMs(date, slot)) });
+  const data = klon(requireCore(input));
+  let run = runVon(data, date);
+  let created = false;
+  if (!run) {
+    run = leererRun(date, ctx.policy.version);
+    run.createdAt = isoAus(ctx.now);
+    run.updatedAt = run.createdAt;
+    data.dailyBriefing.assistantRuns[date] = run;
+    created = true;
+  }
+  if (run.phase === "final") return fehler("RUN_FINAL", date);
+  const vorhanden = run.slotReceipts[slot];
+  if (vorhanden && vorhanden.receiptId === receiptId) return { ok: true, data, run, created, receipt: vorhanden, receiptCreated: false };
+  if (vorhanden) return fehler("SLOT_ALREADY_RECEIPTED", { slot, receiptId: vorhanden.receiptId });
+  const key = slotKey(ctx.policy.tenant, date, slot, ctx.policy.version);
+  run.slotReceipts[slot] = { receiptId, slotKey: key, at: isoAus(ctx.now), note: note ? String(note).slice(0, 500) : null };
+  if (run.phase === "created") run.phase = "active";
+  runAnfassen(run, ctx.now);
+  bump(data, ctx.now);
+  return { ok: true, data, run, created, receipt: run.slotReceipts[slot], receiptCreated: true };
 }
 
 export { KARTEN_ZUSTAENDE };

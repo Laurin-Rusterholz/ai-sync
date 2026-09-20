@@ -61,6 +61,7 @@ const HANDLER = Object.freeze({
   appendRunNote: B.appendRunNote,
   recordRunEvent: B.recordRunEvent,
   recordRunCheckpoint: B.recordRunCheckpoint,
+  ensureRunSlot: B.ensureRunSlot,
   closeRun,
   invalidateClosure,
 });
