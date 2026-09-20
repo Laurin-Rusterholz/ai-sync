@@ -35,12 +35,12 @@ checkouts. No production data was read or modified for the initial code work.
 | Package | Scope | Current evidence |
 | --- | --- | --- |
 | A | Writer, automation, schema and regression inventory | Initial source inventory below; deployed service inventory still open |
-| B | Canonical states, migration, server traffic lights, closure | c4f8ac4 passes 22 authored and 10 prior independent tests; six new migration/proof/review regressions delegated, not accepted |
+| B | Canonical states, migration, server traffic lights, closure | Reviewed pure kernel 9b6a564 integrated with 27 authored + 16 independent tests; no live migration or API wiring |
 | C | Auth, four strict APIs, idempotency, entity versions, CAS | C1 33a4b3d: 88 authored and five independent tests pass; C2 independent chain review found 11 failures, fixes delegated |
 | D | Desktop/tablet/mobile command writers, offline queue, old-client gate | Disabled transport/IndexedDB component tested, including real Chrome recovery; no app wired yet |
-| E | Cloud runtime, slots, leases, fencing, retry, checkpoints, cost ledger | E1 022e844: nine independent failures; 8031323 correction awaiting review; E2 source package underway, no deployment |
+| E | Cloud runtime, slots, leases, fencing, retry, checkpoints, cost ledger | E1 8031323 passes 107 authored + nine prior independent tests; six further dispatch/runtime-reset failures delegated; E2 source work underway |
 | F | Authorized source adapters, mail ledger, document extraction, live UI | Open |
-| G | Job-scoped Claude/Gemini providers, review and untrusted-input isolation | Open |
+| G | Job-scoped Claude/Gemini providers, review and untrusted-input isolation | Pure routing planner delegated; provider calls and acceptance remain open |
 | H | T01-T40, production gates, cutover, 14-day trial and final acceptance | Open |
 
 Development delegation: Claude Code session
@@ -55,7 +55,29 @@ evidence/missing waiting start becomes green, cancelled jobs can return, parsed
 documents can close without processing evidence, closure omissions hide later
 contradictions, array-shaped entities pass validation, policy can weaken hard
 bounds, and a second idempotency ledger conflicts with the verified envelope.
-The package has NOT been integrated or accepted. Corrections are in progress.
+This initial submission was not accepted. It is superseded by the reviewed
+9b6a564 component described below; these historical defects remain regression
+tests, not current known failures.
+
+### Reviewed pure kernel
+
+The seven `assistant-*.mjs` modules, documentation and 27 authored tests are
+integrated unchanged from Claude commit `9b6a564`. Sixteen additional independent
+tests are now part of `npm run test:assistant-core` and `pretest`, including the
+actual integrated idempotency reducer. All 43 tests and the full desktop
+`npm test` pass. No runtime imports these modules in a production writer yet.
+
+Validated behaviors include fail-closed repeated migration of partial v3 data,
+full-source evaluation rather than supplied item references, trusted server
+time, immutable ChatGPT Notes, verified waiting/closure evidence, and fresh
+source/result checks when accepting worker returns. Loss or modification of
+bound proof invalidates the evaluation and closure without rewriting history.
+The obsolete manual six-criteria assessment is not a completion requirement.
+
+This is component acceptance, not complete package or release acceptance.
+Authenticated domain bindings, UI writers, source adapters, archive handling,
+actual lease/fencing checks, production migration and live tests remain open.
+The kernel contains no competing lease or idempotency implementation.
 
 The five versioned instructions from concept chapters 15/16 are now stored in
 `prompts/quantus-v3/`. Their operative bodies match the supplied PDF after only
@@ -170,13 +192,21 @@ lost waiting proof and reopened project deadline not invalidating closure,
 notes in the wrong original store, and untrusted command time overriding the
 prepared server time. Sent to Claude for correction; not integrated or released.
 
-The next B correction `c4f8ac4` is being reviewed independently; its own passing
-tests are not acceptance. C1 `9ff3423` has 79 passing own tests but five failing
-independent security regressions (key-source failure cooldown, malformed
-revocation timestamp, zero/invalid cursor revisions and nested secret scanning).
-E1 `022e844` has 95 passing own tests but nine independent runtime/cost regressions.
-Both sets were sent for correction. C2 `39728bc` has not yet been independently
-reviewed with the real idempotency helper. None of these packages is integrated.
+The intermediate B correction `c4f8ac4` passed ten B2 tests, but six B3 tests
+exposed lost migration ledgers, stale review acceptance and missing/changed done
+proof. All are fixed in the integrated `9b6a564` component. C1 `33a4b3d` passes
+88 authored and all five second-round independent tests, but C2 remains under
+correction following the actual HTTP/idempotency composition review above.
+
+E1 `8031323` passes 107 authored tests and the nine first-round independent
+tests, including charging historical catch-up against the real billing day.
+A second review found six further failures in four groups: dispatch ignores a
+missing/expired/revoked current policy; an old-day reservation can dispatch
+against yesterday's allowance; two pre-existing reservations for the same
+unresolved content both receive dispatch permission; and deleting the entire
+initialized runtime after lease release resets the fence and cost ledger.
+All six are reproduced with real pure functions and a passing normal-dispatch
+control, then delegated. E1/E2 are not integrated or production-enabled.
 
 ## Existing schedule snapshot (not changed)
 
@@ -206,19 +236,19 @@ reviewed with the real idempotency helper. None of these packages is integrated.
 | T08 | Three clients + worker preserve answers/runs/foreign fields | Open |
 | T09 | Nested assistantRuns survives merge, reload and device change | Open |
 | T10 | Old offline writer cannot replace protected state/tombstones | Open |
-| T11 | Immutable user response wins; stale agent rejected | Open |
-| T12 | Semantic migration idempotent; unknown state visible | Claude package B, pending review |
-| T13 | Omitted lead/page never produces green | Claude package B, pending review |
-| T14 | Incomplete waiting proof is not green | Claude package B, pending review |
-| T15 | Three unsupported deferrals stay red despite text edits | Claude package B, pending review |
-| T16 | Agent cannot assert green/finalAt/final note | Open; pure-core portion delegated |
-| T17 | Atomic idempotent final note and closure | Open; pure-core portion delegated |
-| T18 | Later contradiction invalidates without editing historical note | Claude package B, pending review |
+| T11 | Immutable user response wins; stale agent rejected | Partial: pure response/version and stale-result tests pass; real client concurrency open |
+| T12 | Semantic migration idempotent; unknown state visible | Partial: pure migration tests pass; production migration rehearsal open |
+| T13 | Omitted lead/page never produces green | Partial: full-set kernel evaluation tested; authenticated paging open |
+| T14 | Incomplete waiting proof is not green | Partial: kernel and changed/lost-proof tests pass; real source adapter proof open |
+| T15 | Three unsupported deferrals stay red despite text edits | Partial: pure state-transition tests pass; enabled writer tests open |
+| T16 | Agent cannot assert green/finalAt/final note | Partial: pure strict command guard tested; authenticated HTTP binding open |
+| T17 | Atomic idempotent final note and closure | Partial: kernel and actual idempotency composition pass; endpoint/readback open |
+| T18 | Later contradiction invalidates without editing historical note | Partial: pure closure manifest and immutable-note regressions pass |
 | T19 | Lease expiry and fencing reject stale owner | Open |
 | T20 | Duplicate delivery/crash never loses or duplicates job | Open |
 | T21 | Independent monitor detects and catches up missing slot | Open |
-| T22 | Zurich DST produces unique expected slots | Claude package B, pending review |
-| T23 | 23:00 closes today; 04:00 carries references, not copies | Claude package B, pending review |
+| T22 | Zurich DST produces unique expected slots | Partial: pure calendar/slot tests pass; deployed scheduler evidence open |
+| T23 | 23:00 closes today; 04:00 carries references, not copies | Partial: pure cutoff/carry-over tests pass; runner composition open |
 | T24 | Time/cost exhaustion checkpoints; no false green/loop | Open |
 | T25 | Atomic parallel reservations enforce cost limit | Open |
 | T26 | Unknown mail outcome is not blindly resent | Open |
@@ -226,22 +256,22 @@ reviewed with the real idempotency helper. None of these packages is integrated.
 | T28 | Mail cursors recover gaps with message-ID dedupe | Open |
 | T29 | Risky mail cannot be authorized by confidence/majority | Open |
 | T30 | Source injection cannot change policy or export authority | Open |
-| T31 | Unreadable document remains open; processed proof required | Open; pure-core portion delegated |
-| T32 | Specialist scope limited to job; stale result cannot close | Open |
-| T33 | Questions appear now; user answer consumed once | Open; pure-core portion delegated |
+| T31 | Unreadable document remains open; processed proof required | Partial: kernel parse/processed-proof tests pass; actual extraction adapter open |
+| T32 | Specialist scope limited to job; stale result cannot close | Partial: fresh job-result/source binding tested; provider and HTTP scopes open |
+| T33 | Questions appear now; user answer consumed once | Partial: immutable answer/consumption tested; UI and worker composition open |
 | T34 | Snooze/vacation/minimal cannot hide hard deadlines | Open |
 | T35 | Archive failure cannot truncate jobs/replay history | Open |
 | T36 | Notes refresh and offline/current status are accurate | Open |
 | T37 | Real UI handlers and window exports work | Open |
-| T38 | Existing Notes/tasks/leads/links/attachments/sync regressions | Baseline partially verified above; full new-build run open |
+| T38 | Existing Notes/tasks/leads/links/attachments/sync regressions | Partial: integrated desktop full npm test passes; final three-client build open |
 | T39 | Monitor itself and failed warning delivery are monitored | Open |
 | T40 | Backup restore cannot replay external actions | Partial: unsafe legacy privileged v3 restore blocked and restore race tested; full isolated v3 recovery/reconciliation drill open |
 
 ## Next execution steps
 
-1. Finish the writer inventory and separate remaining desktop baseline suites.
-2. Review Claude package B against actual behaviors, not claimed test counts.
-3. Build strict command/auth/CAS envelope around that reviewed kernel.
+1. Finish the all-writer and deployed-service inventory.
+2. Review corrected C2 and E1/E2 against independent behavior tests.
+3. Bind strict command/auth/CAS routes to the reviewed kernel and real lease.
 4. Migrate all three app writers and cross-device fixtures before enabling writes.
 5. Implement and deploy dry-run runtime only after access/cost gates are explicit.
 6. Run all acceptance, rollback and live tests; then begin the dated 14-day trial.
