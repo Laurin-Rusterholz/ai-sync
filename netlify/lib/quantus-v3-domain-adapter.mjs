@@ -246,6 +246,26 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
       coverage: bewertung.coverage, operations: bewertung.operations, evaluationCached: bewertung.cached,
     });
   }
+  /*
+   * Enge Nachweisprojektion (E2-Abschlussnachweis, Tagesbriefing v3):
+   * NUR die tatsaechlich von B gespeicherte Quellenpruefung
+   * (`run.sourceChecks[sourceId]`, gesetzt durch `recordSourceCheck`) —
+   * Original-Quellen-Id, Ergebnis, echte Pruefzeit. KEIN `cursor` (kann
+   * ein adapterinternes Fortsetzungsmerkmal sein), KEIN `detail`
+   * (Freitext bis 500 Zeichen), KEIN `checkedBy`. Das ist bewusst NICHT
+   * dieselbe Liste wie `run.itemRefs`/`run.context` — Arbeitselemente
+   * (Leads, Aufgaben) sind KEIN Nachweis einer Quellenpruefung.
+   */
+  function laufQuellPruefungObjekt(data, run, sourceId) {
+    const eintrag = run.sourceChecks && run.sourceChecks[sourceId];
+    if (!istKarte(eintrag)) return null;
+    return basis("source_check", sourceId, {
+      runId: run.id, jobId: run.id,
+      outcome: eintrag.outcome,
+      checkedAt: eintrag.checkedAt,
+      entityVersion: Number.isInteger(run.revision) ? run.revision : 0,
+    });
+  }
   function quellObjekt(data, kind, sourceType, id) {
     const e = B.quelleFinden(data, sourceType, id);
     if (!e) return null;
@@ -416,6 +436,14 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
       case "run.queue": return seite(laeufe(data).map((r) => laufObjekt(data, r)), { pageSize, afterId });
       case "run.status": return seite(laeufe(data).map((r) => laufStatusObjekt(data, r)), { pageSize, afterId });
       case "policy.current": return seite([policyObjekt()], { pageSize, afterId });
+      case "run.sourceChecks": {
+        const run = laufNachId(data, scopeId);
+        if (!run) return { items: [], hasMore: false, nextAfterId: null, aborted: true, abortReason: "scope_not_found" };
+        const alle = Object.keys(run.sourceChecks || {}).sort()
+          .map((sourceId) => laufQuellPruefungObjekt(data, run, sourceId))
+          .filter(Boolean);
+        return seite(alle, { pageSize, afterId });
+      }
       default: throw fail("invalid_request", "query_unknown:" + String(query), 400);
     }
   }

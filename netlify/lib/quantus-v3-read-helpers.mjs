@@ -39,6 +39,9 @@ export const VISIBLE_FIELDS = Object.freeze({
   assignment: Object.freeze(["id", "runId", "workerKind", "state", "entityVersion", "dueAt"]),
   worker_result: Object.freeze(["id", "assignmentId", "state", "summary", "entityVersion", "updatedAt"]),
   system_status: Object.freeze(["id", "state", "entityVersion", "updatedAt"]),
+  // Enge Nachweisprojektion: nur Quelle, Ergebnis, echte Pruefzeit.
+  // Kein `cursor`, kein `detail`, kein `checkedBy`.
+  source_check: Object.freeze(["id", "runId", "outcome", "checkedAt", "entityVersion"]),
 });
 
 /* Verschachtelte Felder, die ausnahmsweise mitdürfen — mit eigener Liste. */
@@ -62,6 +65,7 @@ export const SCOPE_RELATION = Object.freeze({
   "run.queue": (item) => Boolean(item.id),
   "run.status": (item) => Boolean(item.id),
   "policy.current": (item) => Boolean(item.id),
+  "run.sourceChecks": (item, scopeId) => String(item.runId || "") === scopeId,
 });
 
 export function belongsToScope(query, item, scopeId) {

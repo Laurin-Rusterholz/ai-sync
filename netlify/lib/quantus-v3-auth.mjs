@@ -182,6 +182,10 @@ export const DATA_CATEGORIES = Object.freeze([
   "intake", "task", "lead", "briefing", "briefing_answer", "question",
   "document", "assignment", "worker_result", "run", "run_context",
   "run_status", "note", "policy", "system_status",
+  // Enge Nachweisprojektion (Tagesbriefing v3, E2-Abschlussnachweis):
+  // NUR Quelle, Ergebnis, Pruefzeit — kein Freitext, kein Cursor, kein
+  // Geheimnis. Siehe VISIBLE_FIELDS.source_check.
+  "source_check",
 ]);
 
 /* Objektart → Datenkategorie. Die Kategorie wird aus dem serverseitig
@@ -203,6 +207,7 @@ export const OBJECT_KIND_CATEGORY = Object.freeze({
   note: "note",
   policy: "policy",
   system_status: "system_status",
+  source_check: "source_check",
 });
 
 export function dataCategoryForObjectKind(kind) {
@@ -296,7 +301,7 @@ export const ROLE_POLICY = Object.freeze({
     issuedBy: ISSUERS.serviceCredential,
     binding: "tenant",
     verbs: Object.freeze({
-      "context.read": ["run", "run_status"],
+      "context.read": ["run", "run_status", "source_check"],
       "run.ensure":   ["run"],
       "run.claim":    ["run"],
       "run.renew":    ["run"],
@@ -312,7 +317,7 @@ export const ROLE_POLICY = Object.freeze({
     issuedBy: ISSUERS.serviceCredential,
     binding: "tenant",
     verbs: Object.freeze({
-      "context.read":           ["run", "run_status", "system_status", "note", "briefing", "briefing_answer", "policy"],
+      "context.read":           ["run", "run_status", "system_status", "note", "briefing", "briefing_answer", "policy", "source_check"],
       "briefing.consumeAnswer": ["briefing_answer"],
       "document.processed":     ["document"],
       "run.checkpoint":         ["run"],

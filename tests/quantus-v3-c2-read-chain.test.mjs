@@ -67,7 +67,9 @@ test("eine Route bedient nur ihre eigenen Abfragen", async () => {
   assert.equal(unbekannt.status, 403);
 
   // Und die Zuordnung selbst ist eng.
-  assert.deepEqual([...ROUTE_QUERIES["quantus-run-status"]], ["run.status", "run.queue"]);
+  // "run.sourceChecks" ist die enge Nachweisprojektion (Tagesbriefing v3,
+  // E2-Abschlussnachweis): Original-Quellen-Id, Ergebnis, echte Pruefzeit.
+  assert.deepEqual([...ROUTE_QUERIES["quantus-run-status"]], ["run.status", "run.queue", "run.sourceChecks"]);
 });
 
 test("die Seite zeigt nur Felder aus der Sichtliste — der Mailtext bleibt drin", async () => {
