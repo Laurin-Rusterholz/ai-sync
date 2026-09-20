@@ -42,6 +42,9 @@ const DEPS = [
   // Hier wird der Weg INNERHALB des Trichters geprueft, also gibt der Waechter
   // null zurueck; canonicalWrite darf gar nicht erst gerufen werden.
   "coreWriteGuard", "canonicalWrite",
+  // F-27: geschuetzte v3-Namensraeume kommen in diesen Fixtures nicht vor,
+  // ein Stub ohne Luecke laesst den bestehenden Merge-Weitergabe-Test unberuehrt.
+  "guardV3ProtectedWrite",
 ];
 const OHNE_TRICHTER = [() => null, async () => { throw new Error("canonicalWrite darf hier nicht greifen"); }];
 // Die echte Fehlereinstufung mitlaufen lassen: ein permission_denied aus der
@@ -91,6 +94,7 @@ function build(refBundle, { blobKey = "app-data.json", device = "dev_desktop_1" 
     async () => ({ ok: false, provider: "rtdb" }),
     () => { APP.state.storage.status = "auth_required"; }, isAuthDeniedError,
     ...OHNE_TRICHTER,
+    () => null,   // F-27: keine v3-Fixtures hier, keine Luecke
   );
   return { fn, APP, fails };
 }

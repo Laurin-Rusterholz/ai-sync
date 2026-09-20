@@ -5,7 +5,7 @@ deployed Firebase rules, deployed workflows or production scheduler settings.
 Desktop baseline 721d0ab; tablet 75ef8fb; mobile ccb11b7. The integration branch
 retains all existing client writers until their replacements pass acceptance.
 
-## Baustein D — the real desktop boundary for protected v3 run data (done, narrow)
+## Baustein D — the real desktop boundary for protected v3 run data (corrected, F-27)
 
 Independently confirmed befund: `mergeData()` (`public/index.html`) had no
 dedicated branch for `automation` (E1 lease/fence, idempotency ledger, cost
@@ -14,69 +14,98 @@ accounting, package-B coordination: `questionsById`/`answersById`/`jobsById`/
 (package B: one run per calendar day, `revision`, `phase`, `finalEvaluation`,
 `sourceChecks`, `slotReceipts`). Both root keys already exist in the local
 clone, so the catch-all safety net at the end of `mergeData()` — which only
-fills in *missing* root keys — never reached them. Any desktop tab left open
-longer than one v3 program run (the four daily slots are hours apart) wrote
-its stale copy back on the *next* save of anything at all (checking a habit is
-enough): a lease the server had already released, a reset fence counter, an
-idempotency ledger missing entries recorded since, an already-closed day
-(`closeRun`) reverting to open.
+fills in *missing* root keys — never reached them.
 
-Fixed in `mergeData()`: both namespaces now use explicit, server-revision-
-faithful whole-object replacement — never a generic field-by-field/shallow
-merge, since a mixed combination (e.g. an old lease next to a new fence
-counter, or one field of a closed run next to another field of the still-open
-run underneath it) is a state neither side ever actually had.
-- `automation`: the side with the higher `automation.dataRevision` wins
-  entirely; local wins on a tie (so a tab that just wrote through the real v3
-  command API doesn't overtake itself in the same merge round); a remote
-  copy with no local counterpart is adopted whole.
-- `dailyBriefing.assistantRuns`: per calendar date, the side with the higher
-  `revision` wins entirely; a date known only to one side is kept.
+**A first fix (revision-comparison) was independently reviewed and rejected.**
+It let the side with the higher `dataRevision`/`revision` win, local winning
+ties. Four counterexamples against the real, extracted `mergeData()` proved
+this wrong: a local revision number is no evidence of a server commit — it
+can be mutated, arbitrarily inflated, or simply stale after archival.
+(1) same `dataRevision`, locally mutated data → local won regardless;
+(2) a locally inflated `dataRevision` beat a genuine, lower server revision;
+(3) an archived, now-empty server `assistantRuns` (`{}`) let a removed local
+run come back; (4) a server with no v3 namespace at all kept the old local
+`automation`/runs standing, to be uploaded whole on the next push.
 
-This closes the funnel at its single choke point: `canonicalWrite()` always
-reads a fresh remote snapshot before calling `mergeData(basis, fresh)`, and
-every desktop save path (`doSave` → `remotePut` → `canonicalWrite`, and the
-periodic `syncFreshness()` pull-and-merge) goes through it — no separate
-patch path bypasses the merge, so none needed to be touched or newly
-introduced. `TRANSPORT_ROOTS` (fields excluded from the merge/backup funnel)
-does not list `automation`, confirming it already flows through this same
-funnel today, unprotected until this fix.
+**Corrected model: verbatim server adoption, fail-closed on a gap — never a
+comparison.** `mergeData()` now:
+- Adopts `automation` and `dailyBriefing.assistantRuns` **exactly** as the
+  freshly read server holds them whenever that namespace is structurally
+  present — including an *empty* one (an archived/rotated day is a valid,
+  authoritative state, not something to reconstruct from a stale local
+  copy). No revision is compared; no field-level merge; local's differing
+  copy of these namespaces is never part of what gets adopted.
+- Marks a **gap** (`merged._v3ProtectedGap`, via `markV3ProtectedGap()`)
+  when the server namespace is missing entirely while local holds a
+  non-empty one — this is the case a real commit can never explain away,
+  and it is never resolved by keeping or uploading the local copy.
 
-Verified with the real, extracted `mergeData()` function (same technique as
-`tests/sync-merge.test.mjs`) in `tests/quantus-v3-desktop-boundary.test.mjs`:
-higher-revision server automation/run wins wholly; a lower-revision remote
-never displaces a newer local copy; a remote-only namespace is adopted; the
-winning side stays internally consistent (lease and fence counter come from
-the same side, never mixed); an offline/invalid remote snapshot leaves local
-untouched (Offline-Gegenprobe); and a reload-shaped round trip (stale
-localStorage snapshot merged against a fresh server read, as `syncFreshness`
-does) ends up with the server's revision, not the pre-reload local one
-(Reload-Gegenprobe) — 21 checks, plus the existing `sync-merge.test.mjs`
-(89 checks) re-run clean as a regression check. Full `npm test` exit 0.
+**The gap blocks the actual write, at every real write path — it is not a
+merge-level decision.** A new `guardV3ProtectedWrite(merged)` — called after
+`mergeData()` at each of `canonicalWrite()`'s own merge step, the RTDB
+transaction callback inside `rtdbJsonPut()` (checked on **every** invocation
+Firebase makes of that callback, including internal retries on write
+contention — not just the first), the Netlify 412 conflict retry inside
+`netlifyBlobPut()`, and the device-heuristic remerge inside
+`firebaseJsonPut()` — detects the flag, strips it from the payload (so it can
+never leak into anything actually written or persisted), and turns the write
+into a visible, sourced failure (`reason: 'v3_protected_gap'`) instead of
+proceeding. No root-snapshot upload happens in this case.
+
+**The differing local state is not silently lost.** `guardV3ProtectedWrite()`
+hands off to `retainV3ProtectedGapLocally()`, a real (not documented-only)
+handler wired to the already-tested, previously-unused
+`public/quantus-v3-command-client.mjs`: it opens the durable intent queue
+(`openCommandQueue()`) and calls the sanctioned `retainLegacy()` — never
+`enqueue()`, since this is not a command to submit, just a local record kept
+separate from the authoritative run — with a content-derived, idempotent
+operation id, then shows a throttled, visible toast naming the affected
+namespaces and stating plainly that the write was held back and the local
+copy kept separately, not uploaded. No user-answer-to-a-briefing-question UI
+is invented; this is the real protection/retention handler that a future
+answer feature would also need to route around, not a placeholder for it.
+
+Verified two ways:
+- **Merge-model level** (`tests/quantus-v3-desktop-boundary.test.mjs`, same
+  extraction technique as `tests/sync-merge.test.mjs`, extended to also cut
+  out the three new helper functions): the four counterexamples now behave
+  correctly — a present server namespace always wins verbatim regardless of
+  either side's revision number, an archived empty server map is adopted
+  as-is (no revival), and a fully absent server namespace against a
+  non-empty local one marks a gap without touching what mergeData returns
+  for retention. 19 checks.
+- **Real write-path level** (`tests/quantus-v3-protected-write-boundary.test.mjs`,
+  new): extracts and runs the actual `canonicalWrite()` and `rtdbJsonPut()`
+  from `public/index.html` (only network/Firebase-SDK leaf dependencies are
+  injected, never the merge/guard/write logic itself) against a controllable
+  fake RTDB `ref.transaction()` and fake `remoteGetByKey`/`remotePutByKey`.
+  Confirms: `canonicalWrite()` never calls `remotePutByKey()` when the fresh
+  server read lacks the v3 namespace (no root upload), while it writes the
+  server's automation **verbatim** — discarding a fabricated local
+  `dataRevision: 999` — when the server does hold one; the RTDB transaction
+  aborts (`return undefined`, nothing committed) if the gap is detected only
+  on a **later** invocation of the callback, simulating Firebase's own
+  internal retry under write contention; and `retainV3ProtectedGapLocally()`
+  is actually invoked with the correct namespaces and data on every abort.
+  27 checks. Full `npm test` exit 0 (all counts above plus the existing
+  `sync-merge.test.mjs` and every other extraction-based test in
+  `tests/f25-*`/`tests/f26-*`/`tests/sync-rtdb-transaction.test.mjs` that
+  independently cuts out `canonicalWrite`/`rtdbJsonPut`/`netlifyBlobPut`,
+  each updated with a no-op `guardV3ProtectedWrite` stub where their own
+  fixtures carry no v3 namespace).
 
 **Explicitly not done by this step, and left open:**
 - **Local user answers to a v3 briefing question are not yet a feature of
-  the desktop client** (no code path exists — confirmed by grep: zero
-  references to `assistantRuns` anywhere in `public/index.html` before this
-  change). The constraint stands as a design boundary for when that feature
-  is built: such an answer is a separate, durably stored intent with its own
-  stable id (`openCommandQueue().enqueue()` from the already-tested,
-  still-unused-by-the-app `public/quantus-v3-command-client.mjs`), submitted
-  through the real command API — never a value embedded in or copied from
-  the locally held `automation`/`assistantRuns` snapshot this merge fix
-  protects. `openCommandQueue().retainLegacy()` is the sanctioned place to
-  durably keep an old/unmapped local operation that cannot be resolved into
-  a v3 command, so it is preserved and can be surfaced to the user, instead
-  of being silently dropped or forced through as an uncoordinated whole-
-  document overwrite ("root patch"). No such code path exists yet either;
-  this documents where it must go if and when one is written.
-- **`public/quantus-v3-command-client.mjs` remains unused by the running
-  app.** This step protects the existing generic merge funnel against the
-  concrete corruption risk; it does not migrate any UI writer onto the
-  command-client/command-API path. That migration (`canonicalWrite`'s many
-  existing callers converting whole-snapshot writes into bounded commands)
-  is the substantially larger remaining item from "Confirmed core writers"
-  above and is not part of this step.
+  the desktop client.** The retention path this step wires
+  (`retainLegacy()`) is the sanctioned place such an answer would also need
+  to go through if it could not be resolved into a real v3 command — this
+  step does not add that feature, only the boundary and a working handler
+  a future one must route around.
+- **`public/quantus-v3-command-client.mjs`'s `enqueue()`/command-submission
+  path remains unused by the running app** — only `retainLegacy()` is now
+  wired, and only from this protection boundary. Migrating any UI writer
+  onto the command-API path is unchanged, substantially larger remaining
+  work.
 - **Tablet (`public/app.js`) and mobile (`js/store.js`) are untouched and
   remain exactly as risky as described above** — their own whole-wrapper
   transaction and whole-JSON-PUT writers have no equivalent protection yet.
@@ -108,7 +137,7 @@ or test a tablet mirror as though it were still an active writer.
 
 | Surface | Inspected behavior | Remaining work |
 | --- | --- | --- |
-| Desktop merge | `automation` and `dailyBriefing.assistantRuns` are now explicit, revision-faithful whole-object merges (see Baustein D above); everything else in `dailyBriefing` keeps its existing field-level merge | Tablet has no equivalent protection — its own whole-wrapper transaction writer can still overwrite these namespaces with a stale copy. |
+| Desktop merge | `automation` and `dailyBriefing.assistantRuns` are adopted verbatim from the freshly read server (never compared by revision) or flagged as a gap that blocks the write at every real write path and retains the differing local copy separately (see Baustein D above); everything else in `dailyBriefing` keeps its existing field-level merge | Tablet has no equivalent protection — its own whole-wrapper transaction writer can still overwrite these namespaces with a stale copy. |
 | DocStudio | Reads canonical core through APP_BLOB_PATH; writes docOrgs/docExamples/docDocuments satellite nodes | Authorized source projection and import contract; do not incorrectly label every satellite write a core replacement. Move client-embedded webhook credential handling behind the server boundary without copying its value into documentation. |
 | Universal UI | Core live listener in quantus-universal-ui.js | Reader freshness/revision handling, no observed independent core mutation. |
 | Drive | postMessage bridge opens the PDF editor | Bind bridge input to an allowed source; no observed independent core writer in this scan. |

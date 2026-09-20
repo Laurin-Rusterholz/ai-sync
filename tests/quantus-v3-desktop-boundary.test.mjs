@@ -1,25 +1,36 @@
 /*
  * Tagesbriefing v3, Baustein D — die echte Desktop-Grenze fuer geschuetzte
- * v3-Laufdaten.
+ * v3-Laufdaten. KORRIGIERTE FASSUNG (F-27).
  *
- * BEFUND: `mergeData()` hatte fuer `automation` (E1-Lease/Fenz, Idempotenz-
- * Ledger, Kostenbuchhaltung, B-Koordination: questionsById/answersById/
- * jobsById/evidenceById/sourceCursors/dataRevision) und
- * `dailyBriefing.assistantRuns` (Paket B: EIN Lauf je Kalendertag,
- * `revision`, `phase`, `finalEvaluation`, `sourceChecks`, `slotReceipts`)
- * KEINEN eigenen Zweig. Beide Wurzelschluessel existieren immer schon im
- * lokalen Klon, also griff auch der Auffangzweig am Ende von mergeData()
- * nie (er ergaenzt nur FEHLENDE Wurzelschluessel). Ein Desktop-Tab, der
- * laenger offen war als ein v3-Programmlauf dauert — die vier taeglichen
- * Termine liegen Stunden auseinander —, schrieb bei JEDER naechsten
- * Speicherung (ein abgehaktes Habit genuegt) seine VERALTETE Kopie zurueck:
- * eine Lease, die der Server laengst freigegeben hat, ein zurueckgesetzter
- * Fenz-Zaehler, ein Idempotenz-Ledger ohne die inzwischen verbuchten
- * Eintraege, ein bereits abgeschlossener Tag (`closeRun`), der wieder
- * offen erscheint.
+ * BEFUND an der vorigen Fassung dieses Zwecks (Commit 5a90b01, unabhaengig
+ * geprueft, NICHT freigegeben): der damalige Zweig liess bei Gleichstand
+ * oder hoeherer LOKALER `dataRevision`/`revision` die lokale Kopie gewinnen.
+ * Vier Gegenproben mit der echten, extrahierten mergeData() zeigten, dass
+ * das falsch ist, weil eine lokale Revisionszahl KEIN Beleg fuer einen
+ * Servercommit ist — sie laesst sich mutieren, beliebig hochsetzen oder ist
+ * nach einer Archivierung schlicht veraltet:
+ *   (1) gleiche dataRevision, lokal veraendert  → lokal gewann (falsch)
+ *   (2) lokal hochgesetzte Revision999 ggn. Server5 → lokal gewann (falsch)
+ *   (3) Server assistantRuns={} nach Archivierung → alter lokaler Lauf kam
+ *       zurueck (falsch, Wiederauferstehung eines entfernten Laufs)
+ *   (4) Server ganz ohne v3-Namensraum → alte lokale automation/Laeufe
+ *       blieben fuer einen Root-Upload erhalten (falsch, stiller Verlust
+ *       fremder Aenderungen beim naechsten Push)
+ *
+ * KORREKTUR: kein Revisionsvergleich mehr. automation und
+ * dailyBriefing.assistantRuns werden VERBATIM vom frisch gelesenen
+ * Serverstand uebernommen, wenn er strukturell gueltig ist — auch ein
+ * leerer/archivierter Stand zaehlt als gueltig und wird NICHT mit der
+ * lokalen Kopie vereinigt. Fehlt der Serverstand komplett, waehrend lokal
+ * ein nicht-leerer Namensraum existiert, markiert mergeData() das als
+ * Luecke (`_v3ProtectedGap`) statt die lokale Kopie zu behalten — das
+ * eigentliche Blockieren/Aufbewahren am Schreibpfad ist NICHT Sache dieser
+ * Datei, siehe dazu tests/quantus-v3-protected-write-boundary.test.mjs
+ * (echte canonicalWrite()/rtdbJsonPut()-Neuversuche).
  *
  * Dieser Test laesst die ECHTE Funktion aus `public/index.html` laufen —
- * exakt dieselbe Ausschneidetechnik wie `tests/sync-merge.test.mjs`.
+ * dieselbe Ausschneidetechnik wie `tests/sync-merge.test.mjs`, erweitert um
+ * die drei neuen Hilfsfunktionen, die mergeData() jetzt aufruft.
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -31,7 +42,16 @@ const index = fs.readFileSync(path.join(root, "public/index.html"), "utf8");
 let checks = 0;
 const ok = (condition, message) => { assert.ok(condition, message); checks++; };
 
+function slice(marker, endMarker) {
+  const start = index.indexOf(marker);
+  ok(start > 0, `Marker nicht gefunden: ${marker}`);
+  const end = index.indexOf(endMarker, start + marker.length);
+  ok(end > start, `Endmarker nicht gefunden nach ${marker}: ${endMarker}`);
+  return index.slice(start, end);
+}
+
 function loadMergeData() {
+  const gapSrc = slice("function markV3ProtectedGap(merged, namespace) {", "\n// ── Main merge function ──");
   const start = index.indexOf("function mergeData(local, remote) {");
   const end = index.indexOf("\nfunction ", start + 10);
   ok(start > 0 && end > start, "mergeData() wurde in index.html nicht gefunden");
@@ -44,11 +64,11 @@ function loadMergeData() {
   const fn = new Function(
     "idbBackup", "localStorage", "normalizeData", "mergeAndPersistDeleteLog",
     "flattenDeleteLog", "mergeEntity", "entityTimestamp", "console",
-    atSrc + "\n" + transportSrc + "\n" + index.slice(start, end) + "\nreturn mergeData;"
+    atSrc + "\n" + transportSrc + "\n" + gapSrc + "\n" + index.slice(start, end) + "\nreturn mergeData;"
   );
   return fn(
     () => {}, { getItem: () => null, setItem() {} }, (d) => d, () => ({}), () => ({}),
-    (a, b) => b, (e) => Number(e && (e.updatedAt || e.createdAt)) || 0, { log() {}, warn() {} }
+    (a, b) => b, (e) => Number(e && (e.updatedAt || e.createdAt)) || 0, { log() {}, warn() {}, error() {} }
   );
 }
 const mergeData = loadMergeData();
@@ -56,138 +76,97 @@ const mergeData = loadMergeData();
 function basisBestand(over = {}) {
   return { entities: { tasks: {} }, ...over };
 }
+const gapsOf = (m) => (Array.isArray(m._v3ProtectedGap) ? m._v3ProtectedGap.slice() : null);
 
-// ── 1. automation: der Server-Stand mit der hoeheren dataRevision gewinnt GANZ ──
+// ── Gegenprobe 1: gleiche dataRevision, lokal veraendert → Server gewinnt VERBATIM, keine Luecke ──
 {
   const local = basisBestand({
     automation: {
       schemaVersion: 3, dataRevision: 5,
-      activeLease: { holder: "alter-scheduler", fence: 3, expiresAtMs: 1000 },
-      idempotencyByKey: { "alt": { state: "committed" } },
-      questionsById: {}, answersById: {}, jobsById: {}, evidenceById: {},
+      activeLease: { holder: "lokaler-tab", fence: 99, expiresAtMs: 999999999 },
+      idempotencyByKey: { alt: { state: "committed" }, geistereintrag: { state: "committed" } },
     },
   });
   const remote = basisBestand({
     automation: {
-      schemaVersion: 3, dataRevision: 12,
+      schemaVersion: 3, dataRevision: 5,
       activeLease: null,
-      idempotencyByKey: { "alt": { state: "committed" }, "neu": { state: "committed" } },
-      questionsById: { q1: { id: "q1", status: "open" } }, answersById: {}, jobsById: {}, evidenceById: {},
+      idempotencyByKey: { alt: { state: "committed" } },
     },
   });
   const m = mergeData(local, remote);
-  ok(m.automation.dataRevision === 12,
-    `Server-automation (dataRevision 12) haette gewinnen muessen, blieb aber bei ${m.automation.dataRevision}`);
   ok(m.automation.activeLease === null,
-    "eine veraltete lokale Lease ueberlebte den Merge — genau der gemeldete Befund");
-  ok(Object.keys(m.automation.idempotencyByKey).length === 2,
-    "der neuere Idempotenz-Ledger-Eintrag fehlt nach dem Merge");
-  ok(m.automation.questionsById.q1?.id === "q1", "die neuere Frage aus automation fehlt nach dem Merge");
+    "Gegenprobe 1: bei gleicher dataRevision haette der Server-Stand (activeLease:null) VERBATIM gelten muessen");
+  ok(!("geistereintrag" in m.automation.idempotencyByKey),
+    "Gegenprobe 1: der lokale Ledger-Eintrag haette NICHT ins Ergebnis gelangen duerfen");
+  ok(gapsOf(m) === null, "Gegenprobe 1: bei vorhandenem Serverstand darf keine Luecke markiert werden");
 }
 
-// ── 2. automation: eine NIEDRIGERE Server-Revision darf lokal nicht verdraengen ──
+// ── Gegenprobe 2: lokal hochgesetzte Revision999 gegen Server5 → Server gewinnt trotzdem VERBATIM ──
 {
-  const local = basisBestand({ automation: { schemaVersion: 3, dataRevision: 20, activeLease: { holder: "ich", fence: 9 } } });
-  const remote = basisBestand({ automation: { schemaVersion: 3, dataRevision: 7, activeLease: null } });
+  const local = basisBestand({ automation: { schemaVersion: 3, dataRevision: 999, activeLease: { holder: "faelschung" } } });
+  const remote = basisBestand({ automation: { schemaVersion: 3, dataRevision: 5, activeLease: null } });
   const m = mergeData(local, remote);
-  ok(m.automation.dataRevision === 20, "eine juengere lokale automation-Revision wurde durch eine aeltere Server-Kopie ersetzt");
-  ok(m.automation.activeLease?.holder === "ich", "die aktuelle lokale Lease ging verloren");
+  ok(m.automation.dataRevision === 5,
+    `Gegenprobe 2: eine lokale Revisionszahl ist kein Beleg — der Server-Stand (dataRevision5) haette gelten muessen, blieb aber bei ${m.automation.dataRevision}`);
+  ok(m.automation.activeLease === null, "Gegenprobe 2: die gefaelschte lokale Lease haette nicht gewinnen duerfen");
+  ok(gapsOf(m) === null, "Gegenprobe 2: bei vorhandenem Serverstand darf keine Luecke markiert werden");
 }
 
-// ── 3. automation: fehlt sie lokal, wird die Server-Kopie GANZ uebernommen ──
+// ── Gegenprobe 3: Server assistantRuns={} nach Archivierung → NICHT aus lokal wiederbeleben ──
 {
+  const local = basisBestand({
+    dailyBriefing: { assistantRuns: { "2026-09-18": { revision: 7, phase: "closed", finalEvaluation: "alt-und-archiviert" } } },
+  });
+  const remote = basisBestand({ dailyBriefing: { assistantRuns: {} } });
+  const m = mergeData(local, remote);
+  ok(Object.keys(m.dailyBriefing.assistantRuns).length === 0,
+    "Gegenprobe 3: ein archivierter, jetzt leerer Serverstand darf den entfernten Lauf NICHT wiederbeleben");
+  ok(gapsOf(m) === null, "Gegenprobe 3: ein leeres {} vom Server ist ein gueltiger, kein fehlender Stand — keine Luecke");
+}
+
+// ── Gegenprobe 4: Server ganz ohne v3-Namensraum → Luecke, NICHT die lokale Kopie behalten/hochladen ──
+{
+  const local = basisBestand({
+    automation: { schemaVersion: 3, dataRevision: 42, activeLease: { holder: "alt" } },
+    dailyBriefing: { assistantRuns: { "2026-09-19": { revision: 3, phase: "open" } } },
+  });
+  const remote = basisBestand({}); // altes Server-Backend, kennt weder automation noch dailyBriefing
+  const m = mergeData(local, remote);
+  const gaps = gapsOf(m);
+  ok(Array.isArray(gaps) && gaps.includes("automation") && gaps.includes("assistantRuns"),
+    `Gegenprobe 4: fehlender v3-Namensraum bei nicht-leerem lokalen Stand haette eine Luecke markieren muessen, war aber ${JSON.stringify(gaps)}`);
+  // Die lokale Kopie bleibt im Rueckgabewert NUR zur Aufbewahrung/Anzeige
+  // stehen — ob daraus tatsaechlich NICHT geschrieben wird, entscheidet der
+  // Schreibpfad (guardV3ProtectedWrite), nicht mergeData() selbst.
+  ok(m.automation.dataRevision === 42, "Gegenprobe 4: die lokale Kopie bleibt im Merge-Ergebnis fuer die Aufbewahrung erhalten");
+}
+
+// ── Randfaelle, die weiterhin gelten muessen ──
+{
+  // Ein leerer lokaler automation-Stand ({}) ist NICHT "nicht-leer" — bei
+  // fehlendem Serverstand darf dafuer keine Luecke markiert werden (nichts
+  // Bedeutsames stuende sonst zur Aufbewahrung an).
+  const local = basisBestand({ automation: {} });
+  const remote = basisBestand({});
+  const m = mergeData(local, remote);
+  ok(gapsOf(m) === null, "Ein leerer lokaler automation-Stand darf bei fehlendem Server keine Luecke ausloesen");
+}
+{
+  // Kein lokaler Namensraum + kein Server-Namensraum: unveraendert, keine Luecke.
   const local = basisBestand({});
-  const remote = basisBestand({ automation: { schemaVersion: 3, dataRevision: 3, activeLease: { holder: "server", fence: 1 } } });
+  const remote = basisBestand({});
   const m = mergeData(local, remote);
-  ok(m.automation?.dataRevision === 3 && m.automation?.activeLease?.holder === "server",
-    "eine Server-automation ohne lokales Gegenstueck wurde nicht uebernommen");
+  ok(gapsOf(m) === null, "Ohne lokalen oder fernen v3-Stand gibt es keine Luecke");
+  ok(!("automation" in m), "Ohne jeden v3-Stand bleibt automation unberuehrt");
 }
-
-// ── 4. automation: kein Feld-fuer-Feld-Merge — die gewinnende Seite bleibt IN SICH KONSISTENT ──
 {
-  // Waere automation feld-fuer-Feld gemergt, koennte die lokale (aeltere)
-  // Lease neben dem neueren Fenz-Zaehler des Servers landen — ein Zustand,
-  // den keine Seite je hatte.
-  const local = basisBestand({ automation: { schemaVersion: 3, dataRevision: 4, activeLease: { holder: "alt", fence: 1 }, runtime: { leaseFenceCounter: 1 } } });
-  const remote = basisBestand({ automation: { schemaVersion: 3, dataRevision: 9, activeLease: { holder: "neu", fence: 4 }, runtime: { leaseFenceCounter: 4 } } });
-  const m = mergeData(local, remote);
-  ok(m.automation.activeLease.holder === "neu" && m.automation.runtime.leaseFenceCounter === 4,
-    "Lease und Fenz-Zaehler stammen nicht konsistent von derselben (gewinnenden) Seite");
+  // Offline-Gegenprobe: ein remote ohne entities laesst local unangetastet
+  // zurueckgeben (mergeData()s eigene Fruehsperre) — automation/assistantRuns
+  // werden dabei erst gar nicht angefasst.
+  const local = basisBestand({ automation: { schemaVersion: 3, dataRevision: 1 } });
+  const m = mergeData(local, { entities: null });
+  ok(m === local, "Offline-Gegenprobe: ein ungueltiger Fernstand muss local unveraendert zurueckgeben");
 }
 
-// ── 5. assistantRuns: je Kalendertag gewinnt die hoehere `revision` GANZ ──
-{
-  const local = basisBestand({
-    dailyBriefing: { routines: [], dailyLog: {}, assistantRuns: {
-      "2026-09-20": { id: "run_2026-09-20", date: "2026-09-20", phase: "active", revision: 3, sourceChecks: {} },
-    } },
-  });
-  const remote = basisBestand({
-    dailyBriefing: { routines: [], dailyLog: {}, assistantRuns: {
-      "2026-09-20": { id: "run_2026-09-20", date: "2026-09-20", phase: "final", revision: 11,
-        finalEvaluation: { coverage: "green", operations: "green" },
-        sourceChecks: { "quantus-core": { outcome: "ok", checkedAt: "2026-09-20T22:00:00Z" } } },
-    } },
-  });
-  const m = mergeData(local, remote);
-  const run = m.dailyBriefing.assistantRuns["2026-09-20"];
-  ok(run.revision === 11 && run.phase === "final",
-    `ein bereits abgeschlossener Tag (revision 11) wurde durch die aeltere lokale Kopie (revision 3, phase active) ersetzt — actual: revision=${run.revision} phase=${run.phase}`);
-  ok(run.finalEvaluation?.coverage === "green", "die Abschlussbewertung des Servers fehlt nach dem Merge");
-  ok(run.sourceChecks["quantus-core"]?.outcome === "ok", "die Quellenpruefung des Servers fehlt nach dem Merge");
-}
-
-// ── 6. assistantRuns: eine juengere lokale Revision bleibt gegen einen aelteren Server-Stand stehen ──
-{
-  const local = basisBestand({ dailyBriefing: { routines: [], dailyLog: {}, assistantRuns: {
-    "2026-09-20": { id: "run_2026-09-20", date: "2026-09-20", phase: "final", revision: 15 },
-  } } });
-  const remote = basisBestand({ dailyBriefing: { routines: [], dailyLog: {}, assistantRuns: {
-    "2026-09-20": { id: "run_2026-09-20", date: "2026-09-20", phase: "active", revision: 6 },
-  } } });
-  const m = mergeData(local, remote);
-  ok(m.dailyBriefing.assistantRuns["2026-09-20"].revision === 15,
-    "eine aeltere Server-Kopie hat eine neuere lokale Kopie verdraengt");
-}
-
-// ── 7. assistantRuns: ein Tag, den nur der Server kennt, geht nicht verloren ──
-{
-  const local = basisBestand({ dailyBriefing: { routines: [], dailyLog: {}, assistantRuns: {} } });
-  const remote = basisBestand({ dailyBriefing: { routines: [], dailyLog: {}, assistantRuns: {
-    "2026-09-19": { id: "run_2026-09-19", date: "2026-09-19", phase: "final", revision: 8 },
-  } } });
-  const m = mergeData(local, remote);
-  ok(m.dailyBriefing.assistantRuns["2026-09-19"]?.revision === 8, "ein nur serverseitig bekannter Lauf fehlt nach dem Merge");
-}
-
-// ── 8. Offline-Gegenprobe: ohne (gueltigen) Server-Stand bleibt lokal unveraendert ──
-{
-  const local = basisBestand({
-    automation: { schemaVersion: 3, dataRevision: 42, activeLease: { holder: "ich", fence: 2 } },
-    dailyBriefing: { routines: [], dailyLog: {}, assistantRuns: { "2026-09-20": { id: "run_2026-09-20", revision: 7 } } },
-  });
-  for (const kaputterRemote of [null, undefined, {}, { entities: undefined }]) {
-    const m = mergeData(local, kaputterRemote);
-    ok(m === local || (m.automation?.dataRevision === 42 && m.dailyBriefing?.assistantRuns?.["2026-09-20"]?.revision === 7),
-      "ein ungueltiger/fehlender Serverstand (offline) hat lokale v3-Daten veraendert");
-  }
-}
-
-// ── 9. Reload-Gegenprobe: das Merge-Ergebnis ist das, was nach einem
-//      Neuladen als lokaler Stand persistiert wuerde — nicht die alte
-//      lokale Kopie, die vor dem Merge in localStorage lag. ────────────
-{
-  // Simuliert loadLocalData() -> (veraltete automation aus localStorage),
-  // dann syncFreshness()/canonicalWrite() -> mergeData gegen den frischen
-  // Serverstand. Das Ergebnis MUSS die Server-Revision tragen — sonst
-  // wuerde ein Reload (das exakt diesen localStorage-Stand laedt) den
-  // Server-Fortschritt erneut zuruecksetzen, sobald das Geraet das
-  // naechste Mal speichert.
-  const ausLocalStorageGeladen = basisBestand({ automation: { schemaVersion: 3, dataRevision: 2, activeLease: { holder: "vor-dem-neuladen", fence: 1 } } });
-  const vomServerGelesen = basisBestand({ automation: { schemaVersion: 3, dataRevision: 30, activeLease: null } });
-  const nachDemMerge = mergeData(ausLocalStorageGeladen, vomServerGelesen);
-  ok(nachDemMerge.automation.dataRevision === 30 && nachDemMerge.automation.activeLease === null,
-    "der Stand, der nach einem Neuladen erneut gespeichert wuerde, traegt noch die veraltete automation");
-}
-
-console.log(`quantus-v3-desktop-boundary: ${checks} Pruefungen bestanden.`);
+console.log(`quantus-v3-desktop-boundary: ${checks} checks passed`);

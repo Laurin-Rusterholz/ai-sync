@@ -197,6 +197,7 @@ function umgebung({ rtdbLesenOk = true, transaktion = "ambiguous",
     "isRtdbCloudAvailable", "primaryCloudProvider", "normalizeData", "mergeData", "coreAuthReady",
     "coreKeyAuthGate", "hasAnyCloudProviderAvailable", "firebaseJsonPut", "firebaseJsonGet",
     "rtdbJsonGet", "netlifyBlobGet", "rtdbDbRef", "fetchWithTimeout", "buildStorageAuthHeaders",
+    "guardV3ProtectedWrite",
     "console", "_lastShadowWriteAt", "JSON", "Date", "Promise", "Error", "Object", "Array", "Math", "String",
     quelle + "\nreturn { canonicalWrite, remotePutByKey, netlifyBlobPut };")(
     APP, _cloudHealth, _remoteEtags, ["rtdb", "netlify"], 2,
@@ -217,6 +218,7 @@ function umgebung({ rtdbLesenOk = true, transaktion = "ambiguous",
       return { ok: true, status: 200, headers: { get: () => "srv-3" }, json: async () => ({}) };
     },
     () => ({}),
+    () => null,   // F-27: diese Attrappe kennt keinen v3-Namensraum, keine Luecke
     { log: () => {}, info: (...a) => meldungen.push(a.join(" ")),
       warn: (...a) => meldungen.push(a.join(" ")), error: (...a) => meldungen.push(a.join(" ")) },
     0, JSON, Date, Promise, Error, Object, Array, Math, String);

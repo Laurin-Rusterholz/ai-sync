@@ -104,7 +104,7 @@ const stand = (notizen, meta) => ({
   const put = new Function(
     "APP", "shouldTryCloudProvider", "coreAuthReady", "rememberCoreAuthRequired", "rememberCloudFailure",
     "rememberCloudSuccess", "getOrCreateDeviceId", "getDataTimestamp", "rtdbDbRef", "rtdbNodeKey",
-    "RTDB_NODE", "RTDB_DB_URL", "fetchWithTimeout", "coreWriteGuard", "canonicalWrite",
+    "RTDB_NODE", "RTDB_DB_URL", "fetchWithTimeout", "coreWriteGuard", "canonicalWrite", "guardV3ProtectedWrite",
     "console", "JSON", "Date", "Promise", "Error",
     funktionAsync("rtdbJsonPut") + "\nreturn rtdbJsonPut;")(
     { state: { settings: { storage: { blobKey: "app-data.json" } }, storage: {} } },
@@ -113,6 +113,7 @@ const stand = (notizen, meta) => ({
     "appStore", "https://x", async () => ({ ok: false, status: 500 }),
     () => null,   // Waechter: hier wird der Trichter-Weg selbst geprueft
     async () => { throw new Error("canonicalWrite darf hier nicht greifen"); },
+    () => null,   // F-27: diese Fixtures kennen keinen v3-Namensraum, keine Luecke
     { log() {}, warn() {}, error() {} }, JSON, Date, Promise, Error);
 
   const res = await put("app-data.json", vonB, { mergeFn: mergeData, _viaCanonicalWrite: true });
@@ -152,7 +153,7 @@ const stand = (notizen, meta) => ({
   const put = new Function(
     "APP", "shouldTryCloudProvider", "buildStorageAuthHeaders", "rememberCloudFailure",
     "rememberCloudSuccess", "getDataTimestamp", "_remoteEtags", "fetchWithTimeout",
-    "coreWriteGuard", "canonicalWrite", "isCoreDataKey", "console", "JSON", "Date", "encodeURIComponent",
+    "coreWriteGuard", "canonicalWrite", "isCoreDataKey", "guardV3ProtectedWrite", "console", "JSON", "Date", "encodeURIComponent",
     src + "\nreturn netlifyBlobPut;")(
     APP, () => true, () => ({}), () => {}, () => {},
     (d) => Date.parse(d?.meta?.updatedAt) || 0, {},
@@ -172,6 +173,7 @@ const stand = (notizen, meta) => ({
     () => null,
     async () => { throw new Error("canonicalWrite darf hier nicht greifen"); },
     (k) => k === "app-data.json",
+    () => null,   // F-27: diese Fixtures kennen keinen v3-Namensraum, keine Luecke
     { log() {}, warn() {}, error() {} }, JSON, Date, encodeURIComponent);
 
   const res = await put("app-data.json", unser, { mergeFn: mergeData, _viaCanonicalWrite: true });
