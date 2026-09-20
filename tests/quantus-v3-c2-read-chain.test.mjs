@@ -147,11 +147,12 @@ test("abgebrochene und unbrauchbare Seiten sind nie vollständig", async () => {
   assert.equal(res.body.pageStatus, "aborted");
   assert.equal(res.body.cursor, null);
 
-  // Ein Eintrag ohne Id ist unbrauchbar — die Seite gilt als abgebrochen.
+  // Ein Eintrag ohne Art und Id ist kein Datensatz: das ist ein Vertragsbruch
+  // des Fachadapters, kein „unvollständige Seite" — 403, ohne Daten.
   const unbrauchbar = makeDomain({ listResult: { items: [{ text: "ohne Id" }], hasMore: false } });
   const res2 = await handleReadRequest(leseAnfrage(), deps({ domain: unbrauchbar }), { route: "quantus-context" });
-  assert.equal(res2.body.complete, false);
-  assert.equal(res2.body.pageStatus, "aborted");
+  assert.equal(res2.status, 403);
+  assert.equal(res2.body.reason, "item_kind_mismatch");
 
   // Und eine Lieferung, die gar keine Liste ist, ebenfalls.
   const keineListe = makeDomain({ listResult: { items: { error: "source-unavailable" }, hasMore: false } });
@@ -166,7 +167,12 @@ test("Spezialist: nur der Kontext seines Laufs", async () => {
     config, audience: "quantus-context", jobId: RUN_ID, role: "specialist_claude",
     principalId: "claude-spezialist", tenant: TENANT, now,
   })).token;
-  const domain = makeDomain({ listResult: { items: [{ kind: "run_context", id: "ctx_1", runId: RUN_ID, entityVersion: 1, title: "Kontext", text: "Inhalt" }], hasMore: false } });
+  // Die Einträge kommen aus dem autoritativen Bestand und tragen deshalb
+  // Mandant und Auftragsbindung — ohne sie werden sie nicht ausgeliefert.
+  const domain = makeDomain({ listResult: { items: [{
+    kind: "run_context", id: "ctx_1", runId: RUN_ID, jobId: RUN_ID, tenant: TENANT,
+    entityVersion: 1, title: "Kontext", text: "Inhalt",
+  }], hasMore: false } });
 
   const eigener = await handleReadRequest(
     leseAnfrage({ query: "run.context", scopeId: RUN_ID, token, origin: null }),

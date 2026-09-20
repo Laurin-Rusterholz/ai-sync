@@ -33,7 +33,7 @@ const now = () => JETZT;
 const APP = "https://management-xo2-pro.netlify.app";
 const idem = await idempotencyPort();
 
-function umgebung({ schreiben = false, overrides = {} } = {}) {
+function umgebung({ schreiben = true, overrides = {} } = {}) {
   return makeEnv({
     tenant: TENANT,
     mode: schreiben ? "enforce" : null,
@@ -133,22 +133,44 @@ test("Körperform: Content-Type, Grösse, striktes JSON, geschlossener Umschlag"
   assert.equal(ohneSchluessel.body.reason, "idempotency_key_missing");
 });
 
-test("Standard ist Trockenlauf: alles geprüft, nichts geschrieben", async () => {
-  const env = umgebung();                      // ohne enforce/API-Freigabe
+test("ohne Schreibfreigabe: 503 api_writes_disabled — KEINE Quittung", async () => {
+  const env = umgebung({ schreiben: false });          // Standard
   const store = makeStore();
   const res = await sende(deps({ env, store }));
-  assert.equal(res.status, 200);
-  assert.equal(res.body.ok, true);
-  assert.equal(res.body.applied, false, "im Trockenlauf wurde geschrieben");
-  assert.equal(res.body.dryRun, true);
-  assert.equal(res.body.entityVersions[LEAD_ID], 17);
-  assert.ok(res.body.serverNow && res.body.requestId);
-  assert.equal(store.spur.mutates, 0, "der Trockenlauf hat den Speicher angefasst");
-  assert.equal(store.spur.reads, 1);
+  assert.equal(res.status, 503);
+  assert.equal(res.body.error, "api_writes_disabled");
+  // Nichts, was ein Client als Speicherung ablegen könnte.
+  for (const feld of ["ok", "applied", "dryRun", "replayed", "serverNow", "dataRevision", "entityVersions"]) {
+    if (feld === "ok") { assert.equal(res.body.ok, false); continue; }
+    assert.equal(Object.prototype.hasOwnProperty.call(res.body, feld), false, `die Absage trägt ${feld}`);
+  }
+  assert.equal(store.spur.mutates, 0);
+  assert.equal(store.spur.reads, 0, "ohne Freigabe wurde der Kern gelesen");
+});
+
+test("ausdrückliches Prüfen: kein Schreiben, und keine Quittungsfelder", async () => {
+  const env = umgebung({ schreiben: false });
+  const store = makeStore();
+  const domain = makeDomain();
+  const res = await sende(deps({ env, store, domain }), {
+    headers: commandHeaders({ token: nutzerToken(), origin: APP, validateOnly: true }),
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body.validated, true);
+  assert.equal(res.body.applied, false);
+  assert.equal(res.body.stored, false);
+  assert.equal(res.body.domainConditionsEvaluated, false, "der Trockenlauf behauptet Fachprüfungen");
+  assert.equal(res.body.observedEntityVersion, 17);
+  assert.equal(res.headers["X-Quantus-Applied"], "false");
+  for (const feld of ["ok", "replayed", "dataRevision", "entityVersions", "serverNow", "dryRun"]) {
+    assert.equal(Object.prototype.hasOwnProperty.call(res.body, feld), false, `die Prüfantwort trägt ${feld}`);
+  }
+  assert.equal(store.spur.mutates, 0, "beim Prüfen wurde geschrieben");
+  assert.equal(domain.spur.applies, 0, "applyVerb lief im Trockenlauf");
 });
 
 test("mit Freigabe: der Befehl wirkt, mit Versionen und Revision", async () => {
-  const env = umgebung({ schreiben: true });
+  const env = umgebung();
   const store = makeStore();
   const res = await sende(deps({ env, store }));
   assert.equal(res.status, 200, JSON.stringify(res.body));
@@ -161,7 +183,7 @@ test("mit Freigabe: der Befehl wirkt, mit Versionen und Revision", async () => {
 });
 
 test("Wiederholung: derselbe Schlüssel wirkt einmal — und wird ERNEUT autorisiert", async () => {
-  const env = umgebung({ schreiben: true });
+  const env = umgebung();
   const store = makeStore();
   const domain = makeDomain();
   const d = deps({ env, store, domain });
@@ -169,15 +191,18 @@ test("Wiederholung: derselbe Schlüssel wirkt einmal — und wird ERNEUT autoris
 
   const erste = await sende(d, { headers: kopf });
   assert.equal(erste.body.applied, true);
-  const ladenNachErster = domain.spur.loads.length;
+  const aufloesungenNachErster = domain.spur.resolves;
+  const bindungenNachErster = domain.spur.bindings;
 
   const zweite = await sende(d, { headers: kopf });
   assert.equal(zweite.status, 200);
   assert.equal(zweite.body.replayed, true, "die Wiederholung hat erneut geschrieben");
   assert.equal(zweite.body.entityVersions[LEAD_ID], 18);
   assert.equal(store.snapshot.entities.leads[LEAD_ID].entityVersion, 18, "die Wiederholung hat die Version erhöht");
-  assert.ok(domain.spur.loads.length > ladenNachErster,
-    "bei der Wiederholung wurde nicht erneut autorisiert");
+  assert.ok(domain.spur.resolves > aufloesungenNachErster,
+    "bei der Wiederholung wurde das Ziel nicht neu aufgelöst");
+  assert.ok(domain.spur.bindings > bindungenNachErster,
+    "bei der Wiederholung wurde die aktive Bindung nicht neu geprüft");
 
   // Gleicher Schlüssel, ANDERER Inhalt ⇒ 409.
   const anders = await sende(d, { headers: kopf, body: commandBody({ payload: { leadId: LEAD_ID, text: "etwas anderes" } }) });
@@ -186,7 +211,7 @@ test("Wiederholung: derselbe Schlüssel wirkt einmal — und wird ERNEUT autoris
 });
 
 test("Wiederholung ohne Recht: die alte Quittung wird nicht ausgehändigt", async () => {
-  const env = umgebung({ schreiben: true });
+  const env = umgebung();
   const store = makeStore();
   const d = deps({ env, store });
   const kopf = commandHeaders({ token: nutzerToken(), idempotencyKey: "schluessel-2", origin: APP });
@@ -202,7 +227,7 @@ test("Wiederholung ohne Recht: die alte Quittung wird nicht ausgehändigt", asyn
 });
 
 test("veraltete Entitätsversion ⇒ 409, gemessen am frischen Objekt", async () => {
-  const env = umgebung({ schreiben: true });
+  const env = umgebung();
   const store = makeStore();
   const res = await sende(deps({ env, store }), { body: commandBody({ expectedEntityVersion: 16 }) });
   assert.equal(res.status, 409);
@@ -211,7 +236,7 @@ test("veraltete Entitätsversion ⇒ 409, gemessen am frischen Objekt", async ()
 });
 
 test("fremdes Objekt, fremder Mandant, unbekanntes Objekt ⇒ 403", async () => {
-  const env = umgebung({ schreiben: true });
+  const env = umgebung();
   const d = () => deps({ env, store: makeStore() });
 
   const fremd = await sende(d(), { body: commandBody({ expectedEntityVersion: 3, payload: { leadId: "lead_fremd", text: "hallo" } }) });
@@ -223,46 +248,62 @@ test("fremdes Objekt, fremder Mandant, unbekanntes Objekt ⇒ 403", async () => 
   assert.equal(gibtsNicht.body.reason, "object_not_found");
 });
 
-test("Spezialist: Job-Token, Lease und Verbgrenzen", async () => {
-  const env = umgebung({ schreiben: true });
+test("Spezialist: Job-Token, aktive Zuweisung und Verbgrenzen", async () => {
+  const env = umgebung();
   const { config } = resolveAuthConfig(env.read);
   const token = (await mintJobToken({
     config, audience: "quantus-ingest", jobId: RUN_ID, role: "specialist_claude",
     principalId: "claude-spezialist", tenant: TENANT, now,
   })).token;
 
-  // Ohne Lease: 403, obwohl das Token gültig ist.
-  const ohneLease = await sende(deps({ env, store: makeStore() }), {
-    token, body: commandBody({ verb: "worker.return", expectedEntityVersion: 5, payload: { assignmentId: "a1", resultRef: "r1", summary: "fertig" } }),
-    headers: commandHeaders({ token, origin: null }),
-  });
-  assert.equal(ohneLease.status, 403);
-  assert.ok(["lease_not_held", "object_not_found", "verb_not_allowed_for_role"].includes(ohneLease.body.reason), ohneLease.body.reason);
-
-  // Mit Lease, aber verbotenes Verb (lead.comment) ⇒ 403.
-  const mitLease = makeStore({ snapshot: makeCoreSnapshot({ leaseOwner: "claude-spezialist", leaseExpiresAt: new Date(JETZT + 300_000).toISOString() }) });
-  const verboten = await sende(deps({ env, store: mitLease }), {
+  // Verbotenes Verb (lead.comment) ⇒ 403, trotz gültigem Token.
+  const verboten = await sende(deps({ env, store: makeStore() }), {
     token, headers: commandHeaders({ token }), body: commandBody(),
   });
   assert.equal(verboten.status, 403);
   assert.equal(verboten.body.reason, "verb_not_allowed_for_role");
 
+  // Erlaubtes Verb mit aktiver Zuweisung ⇒ 200.
+  const erlaubt = await sende(deps({ env, store: makeStore() }), {
+    token, headers: commandHeaders({ token }),
+    body: commandBody({
+      verb: "worker.return", expectedEntityVersion: 0,
+      payload: { assignmentId: "assignment_1", resultRef: "ergebnis_1", summary: "fertig", sourceVersion: 2 },
+    }),
+  });
+  assert.equal(erlaubt.status, 200, JSON.stringify(erlaubt.body));
+  assert.equal(erlaubt.body.applied, true);
+
+  // Ohne aktive Zuweisung ⇒ 403 aus der Bindungsprüfung des Fachadapters.
+  const ohneZuweisung = makeStore();
+  ohneZuweisung.snapshot.entities.assignments.assignment_1.state = "closed";
+  const gesperrt = await sende(deps({ env, store: ohneZuweisung }), {
+    token, headers: commandHeaders({ token }),
+    body: commandBody({
+      verb: "worker.return", expectedEntityVersion: 0,
+      payload: { assignmentId: "assignment_1", resultRef: "ergebnis_1", summary: "fertig", sourceVersion: 2 },
+    }),
+  });
+  assert.equal(gesperrt.status, 403);
+  assert.equal(gesperrt.body.reason, "assignment_not_active");
+
   // Job-Token für einen ANDEREN Lauf ⇒ 403.
-  const fremderLauf = await sende(deps({ env, store: mitLease }), {
+  const fremderLauf = await sende(deps({ env, store: makeStore() }), {
     token, headers: commandHeaders({ token }), body: commandBody({ jobId: "job_20260920_99" }),
   });
   assert.equal(fremderLauf.status, 403);
 });
 
 test("CAS: Konflikte werden wiederholt, Erschöpfung ist 503", async () => {
-  const env = umgebung({ schreiben: true });
+  const env = umgebung();
 
   const mitKonflikten = makeStore({ conflictsBefore: 2 });
   const domain = makeDomain();
   const ok = await sende(deps({ env, store: mitKonflikten, domain }));
   assert.equal(ok.status, 200);
   assert.equal(mitKonflikten.spur.mutatorCalls, 3, "der Mutator lief nicht je Versuch");
-  assert.ok(domain.spur.loads.length >= 3, "es wurde nicht in jedem Versuch neu autorisiert");
+  assert.equal(domain.spur.resolves, 3, "es wurde nicht in jedem CAS-Versuch neu autorisiert");
+  assert.equal(domain.spur.bindings, 3, "die aktive Bindung wurde nicht je Versuch geprüft");
 
   const dauerkonflikt = makeStore({ alwaysConflict: true });
   const res = await sende(deps({ env, store: dauerkonflikt }));
@@ -276,7 +317,7 @@ test("CAS: Konflikte werden wiederholt, Erschöpfung ist 503", async () => {
 });
 
 test("Ratenbegrenzung: 429 mit Retry-After; ein untauglicher Zähler ist 503", async () => {
-  const env = umgebung({ schreiben: true });
+  const env = umgebung();
 
   const zuViel = await sende(deps({ env, store: makeStore(), rateLimiter: makeRateLimiter({ limitReachedAfter: 0 }) }));
   assert.equal(zuViel.status, 429);
@@ -293,7 +334,7 @@ test("Ratenbegrenzung: 429 mit Retry-After; ein untauglicher Zähler ist 503", a
 });
 
 test("fehlender Adapter ⇒ 503, niemals ein Schein-Erfolg", async () => {
-  const env = umgebung({ schreiben: true });
+  const env = umgebung();
 
   const ohneDomaene = await sende(deps({ env, store: makeStore(), domain: null }));
   assert.equal(ohneDomaene.status, 503);
@@ -313,7 +354,7 @@ test("fehlender Adapter ⇒ 503, niemals ein Schein-Erfolg", async () => {
 });
 
 test("Herkunft: Browser ohne Origin abgewiesen, Dienst originlos erlaubt", async () => {
-  const env = umgebung({ schreiben: true });
+  const env = umgebung();
 
   const ohneOrigin = await sende(deps({ env, store: makeStore() }), {
     headers: commandHeaders({ token: nutzerToken() }),     // kein Origin
@@ -364,11 +405,12 @@ test("die Statusabbildung deckt genau die vereinbarten Fälle", () => {
 });
 
 test("welche Idempotenz-Fassung lief, steht im Testlauf", () => {
-  assert.ok(["integration", "stand-in"].includes(idem.source));
+  // „checkout" = Modul im Zweig, „git:<sha>" = kontrolliert aus dem
+  // Integrationsstand geladen, „stand-in" = Nachbildung (KEIN
+  // Integrationsnachweis — dann sagt es der Lauf ausdrücklich).
+  assert.ok(/^(checkout|git:[0-9a-f]{7,40}|stand-in)$/.test(idem.source), idem.source);
+  console.log(`# Idempotenz-Fassung im Lauf: ${idem.source}`);
   if (idem.source === "stand-in") {
-    // Kein Fehler, aber es muss sichtbar sein: in diesem Paketzweig liegt das
-    // Modul des Integrationsstandes nicht, die Kette wurde gegen eine
-    // vertragstreue Nachbildung gefahren.
-    console.log("# Hinweis: quantus-v3-idempotency.mjs fehlt im Checkout — Nachbildung verwendet");
+    console.log("# ACHTUNG: kein Integrationsnachweis — quantus-v3-idempotency.mjs war weder im Checkout noch im Git-Objektspeicher erreichbar");
   }
 });

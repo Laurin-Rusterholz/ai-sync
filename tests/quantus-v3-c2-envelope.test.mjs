@@ -27,8 +27,9 @@ test("das Beispiel aus dem Konzept wird wörtlich angenommen", () => {
   const res = parseCommandEnvelope(structuredClone(PDF_BEISPIEL));
   assert.equal(res.ok, true, res.reason);
   assert.deepEqual(JSON.parse(JSON.stringify(res.command)), PDF_BEISPIEL);
-  assert.equal(res.descriptor.kind, "lead");
-  assert.equal(res.descriptor.idField, "leadId");
+  assert.equal(res.descriptor.resource.kind, "lead");
+  assert.equal(res.descriptor.resource.idField, "leadId");
+  assert.equal(res.descriptor.anchor.self, true);
   assert.equal(COMMAND_SCHEMA_VERSION, 3);
   assert.deepEqual([...ENVELOPE_FIELDS], ["schemaVersion", "verb", "jobId", "expectedEntityVersion", "payload"]);
 });
@@ -114,12 +115,29 @@ test("jedes Fachverb hat ein Schema, ein Ziel und eine bekannte Objektart", () =
 
   for (const [verb, beschreibung] of Object.entries(COMMAND_VERBS)) {
     assert.ok(beschreibung.fields && Object.keys(beschreibung.fields).length, `${verb} hat kein Schema`);
-    assert.ok(beschreibung.target && beschreibung.target.kind, `${verb} hat kein Ziel`);
-    assert.ok(Object.prototype.hasOwnProperty.call(OBJECT_KIND_CATEGORY, beschreibung.target.kind),
-      `${verb}: unbekannte Zielart ${beschreibung.target.kind}`);
-    if (beschreibung.target.idField) {
-      assert.ok(Object.prototype.hasOwnProperty.call(beschreibung.fields, beschreibung.target.idField),
-        `${verb}: das Zielfeld ${beschreibung.target.idField} fehlt im Schema`);
+    // Ressource: worauf das Verb wirkt.
+    const res = beschreibung.resource;
+    assert.ok(res && res.kind, `${verb} hat keine Ressource`);
+    assert.ok(Object.prototype.hasOwnProperty.call(OBJECT_KIND_CATEGORY, res.kind),
+      `${verb}: unbekannte Ressourcenart ${res.kind}`);
+    if (res.idField) {
+      assert.ok(Object.prototype.hasOwnProperty.call(beschreibung.fields, res.idField),
+        `${verb}: das Ressourcenfeld ${res.idField} fehlt im Schema`);
+    } else {
+      // Ohne Id-Feld muss gesagt sein, woher die Ressource kommt.
+      assert.ok(res.creates === true || res.fromJob === true || res.ensure === true,
+        `${verb}: Ressource ohne Id-Feld und ohne Herkunft`);
+    }
+    // Anker: woran die Bindung hängt.
+    const anker = beschreibung.anchor;
+    assert.ok(anker && (anker.self === true || anker.kind), `${verb} hat keinen Anker`);
+    if (anker.kind) {
+      assert.ok(Object.prototype.hasOwnProperty.call(OBJECT_KIND_CATEGORY, anker.kind),
+        `${verb}: unbekannte Ankerart ${anker.kind}`);
+      if (anker.idField) {
+        assert.ok(Object.prototype.hasOwnProperty.call(beschreibung.fields, anker.idField),
+          `${verb}: das Ankerfeld ${anker.idField} fehlt im Schema`);
+      }
     }
   }
 });
@@ -129,8 +147,10 @@ test("Beispiele aus mehreren Verben laufen durch", () => {
     ["run.claim", { leaseSeconds: 300 }],
     ["run.finalize", { outcome: "complete" }],
     ["run.ensure", { slot: "09:00", date: "2026-09-20" }],
-    ["worker.assign", { assignmentId: "a_1", workerKind: "claude", contextRef: "ctx_1" }],
-    ["worker.return", { assignmentId: "a_1", resultRef: "r_1", summary: "fertig" }],
+    ["worker.assign", { assignmentId: "a_1", executor: "claude", sourceVersion: 3, allowedContextIds: ["ctx_1"] }],
+    ["worker.return", { assignmentId: "a_1", resultRef: "r_1", summary: "fertig", sourceVersion: 3 }],
+    ["lead.schedule", { leadId: "lead_1", waitUntil: "2026-09-25T09:00:00Z", counterparty: "Muster AG", nextAction: "Nachfassen", evidenceRefs: ["artifact_1"] }],
+    ["document.register", { documentId: "doc_1", title: "Vertrag", attachmentRef: "att_1", contentHash: "a".repeat(64), origin: "mail" }],
     ["briefing.answer", { briefingId: "b_1", questionId: "q_1", answer: "ja", decision: "yes" }],
     ["note.append", { noteId: "n_1", text: "Notiz", noteScope: "run" }],
   ];
@@ -152,4 +172,26 @@ test("der Idempotenz-Schlüssel kommt aus der Kopfzeile und hat eine Form", () =
     assert.equal(res.ok, false, `"${String(kaputt)}" wurde akzeptiert`);
     assert.equal(res.status, 400);
   }
+});
+
+test("die Kernvertragsfelder sind Pflicht — nichts wird erfunden", () => {
+  const ohne = (verb, payload) => parseCommandEnvelope({ schemaVersion: 3, verb, jobId: "job_1", expectedEntityVersion: 0, payload });
+
+  // Warten ohne Gegenpartei, nächste Handlung oder Belege gibt es nicht.
+  assert.equal(ohne("lead.schedule", { leadId: "l_1", waitUntil: "2026-09-25T09:00:00Z" }).reason, "field_missing:counterparty");
+  assert.equal(ohne("lead.schedule", { leadId: "l_1", waitUntil: "2026-09-25T09:00:00Z", counterparty: "X" }).reason, "field_missing:nextAction");
+  assert.equal(ohne("lead.schedule", { leadId: "l_1", waitUntil: "2026-09-25T09:00:00Z", counterparty: "X", nextAction: "Y" }).reason, "field_missing:evidenceRefs");
+
+  // Ein Dokument ohne Anhang, Abdruck oder Herkunft ist keine Registrierung.
+  assert.equal(ohne("document.register", { documentId: "d_1", title: "T" }).reason, "field_missing:attachmentRef");
+  assert.equal(ohne("document.register", { documentId: "d_1", title: "T", attachmentRef: "a_1" }).reason, "field_missing:contentHash");
+  assert.equal(ohne("document.register", { documentId: "d_1", title: "T", attachmentRef: "a_1", contentHash: "kein-hash", origin: "mail" }).reason, "field_invalid:contentHash");
+
+  // Ein Worker-Auftrag ohne Quellversion oder erlaubte Kontexte ebenso.
+  assert.equal(ohne("worker.assign", { assignmentId: "a_1", executor: "claude" }).reason, "field_missing:sourceVersion");
+  assert.equal(ohne("worker.assign", { assignmentId: "a_1", executor: "claude", sourceVersion: 1 }).reason, "field_missing:allowedContextIds");
+  assert.equal(ohne("worker.return", { assignmentId: "a_1", resultRef: "r_1", summary: "s" }).reason, "field_missing:sourceVersion");
+
+  // Und die alten, lockereren Felder gibt es nicht mehr.
+  assert.equal(ohne("worker.assign", { assignmentId: "a_1", workerKind: "claude", contextRef: "c_1" }).ok, false);
 });

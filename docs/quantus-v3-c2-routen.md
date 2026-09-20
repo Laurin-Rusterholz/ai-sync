@@ -9,6 +9,26 @@ einen instanzübergreifenden Ratenzähler.
 > zum All-Writer-Cutover und T01–T40. Ein Integrationsstub ist keine fertige
 > Funktion.
 
+## 0. Stand der Prüfung
+
+| Fassung | Stand |
+| --- | --- |
+| `39728bc` | erste C2-Fassung, unabhängig geprüft — 48/48 eigene Tests, aber **elf Gegenbeispiele in neun Gruppen** |
+| diese Fassung | C2-01 … C2-09 korrigiert, je als Test in `tests/quantus-v3-c2-gegenbeispiele.test.mjs`; zusätzlich alle 22 Verben positiv und negativ geprüft |
+
+| # | Befund (39728bc) | Jetzt |
+| --- | --- | --- |
+| C2-01 | Nur der **Scope** wurde autorisiert — ein fremder Eintrag in einer erlaubten Seite ging mit 200 hinaus | **Jeder** gelieferte Eintrag wird frisch geprüft (Mandant, Eigentum/Auftrag, Kategorie) **und** auf seine Scope-Beziehung; ein Verstoss ist 403 ohne Daten, keine stille Auslassung |
+| C2-02 | Fehlendes `hasMore` wurde zu `false` und damit zu „vollständig" | Nur ein echtes Boolesches zählt; sonst `aborted`. Ein `hasMore: true` braucht einen **belastbaren** Weiterzeiger (gültige Id, letzter Eintrag, nicht derselbe wie zuvor) |
+| C2-03 | `pageSize=1`, zwei Einträge geliefert ⇒ beide ausgeliefert, `complete: true` | Übervolle Seite ⇒ 503 `page_overfull`, keine Daten |
+| C2-04 | Im Trockenlauf wurde eine fehlende `dataRevision` zu 0 erfunden | `assertCoreSnapshot` gilt auf **jedem** Weg — Lesen, Prüfen, Schreiben |
+| C2-05 | Ausgeschaltetes Schreiben antwortete 200 mit quittungsähnlichen Feldern | **503 `api_writes_disabled`**, ohne ein einziges Quittungsfeld. Prüfen ohne Schreiben gibt es nur **ausdrücklich** über `X-Quantus-Validate-Only`, mit `domainConditionsEvaluated: false` |
+| C2-06 | Der Ratenzähler schrieb auch ohne echten ETag (`null`, `""`, `*`) | Ohne echten, nicht-Wildcard-Stempel: **kein** Schreibvorgang, Fehler ⇒ 503 |
+| C2-07 | Ein Stand von `-1000` wurde zu `-999` fortgeschrieben | Nicht negative sichere Ganzzahl, passendes Fenster, Overflow-Prüfung; ein kaputter Zähler wird **nicht repariert**, sondern gemeldet. Zeitmarke steht ausserhalb der Wiederholungen. Zusätzlich ein **Gesamtbudget je Principal**, nicht nur je Verb |
+| C2-08 | Die Lease wurde gegen eine **vor** `store.mutate` gemerkte Zeit geprüft | Bindung **und** Zeit je CAS-Versuch frisch, auch bei Wiederholung. Die Bindung kommt aus dem Fachadapter (E1: gemeinsame Leitungs-Lease bzw. aktuelle Auftragszuweisung) — C2 erfindet keine eigenen Lease-Felder |
+| C2-09 | Anlegen scheiterte an `data_category_not_allowed_for_role`, `run.ensure` war unmöglich | **Ressource und Anker sind getrennt**: die Kategorie prüft die Ressource, die Bindung den Anker. `run.ensure` darf einen fehlenden Lauf anlegen |
+| Körper | `req.text()` las unbegrenzt vor der 64-KiB-Prüfung | `readBoundedBody` bricht beim Lesen ab; eine zu grosse `Content-Length` genügt schon vorher |
+
 ## 1. Dateien
 
 | Datei | Inhalt |
@@ -22,7 +42,7 @@ einen instanzübergreifenden Ratenzähler.
 | `netlify/lib/quantus-v3-read-helpers.mjs` | sichtbare Felder, Seitengrösse, Entitätsversionen |
 | `netlify/lib/quantus-v3-rate-limiter.mjs` | CAS-Schutzzähler (RTDB), atomar und geteilt |
 | `netlify/lib/quantus-v3-runtime.mjs` | Verdrahtung der Routen, Adapter über `import()` |
-| `tests/quantus-v3-c2-*.test.mjs` | 48 Tests an der echten Kette |
+| `tests/quantus-v3-c2-*.test.mjs` | 64 Tests an der echten Kette, darunter alle 22 Verben positiv und negativ |
 
 Die vier Routendateien sind Hüllen von je unter zwölf Codezeilen; ein Test
 misst das und lässt nur zwei Importe zu.
@@ -56,9 +76,21 @@ Idempotency-Key: <Schlüssel>
 * **64 KiB**, gemessen am bereinigten Befehl.
 * Der **Idempotenz-Schlüssel kommt aus der Kopfzeile**, nie aus dem Körper.
 
-Die Fachverben sind dieselben wie in der C1-Matrix (ohne das Leseverb);
-`COMMAND_VERBS` nennt für jedes zusätzlich das **Ziel**: welches Objekt frisch
-geladen und autorisiert wird.
+Die Fachverben sind dieselben wie in der C1-Matrix (ohne das Leseverb).
+`COMMAND_VERBS` nennt für jedes zwei Dinge getrennt:
+
+* **resource** — worauf das Verb wirkt; daraus folgt die Datenkategorie der
+  Rechteprüfung. `creates` = wird angelegt, `fromJob` = der Lauf aus `jobId`,
+  `ensure` = darf anlegen, wenn er fehlt.
+* **anchor** — woran die Bindung hängt (Mandant, Eigentum, Auftrag, Zuweisung);
+  `self` = die Ressource selbst.
+
+Die Nutzinhalte sind mit dem Kernvertrag abgeglichen: `lead.schedule` verlangt
+Gegenpartei, nächste Handlung und Belege (Nachfasszeitpunkt optional),
+`document.register` Anhang, SHA-256-Inhaltsabdruck und Herkunft, `worker.assign`
+Ausführer, Quellversion und die erlaubten Kontext-Ids, `worker.return` die
+Quellversion. Fehlt eines dieser Felder, wird **nichts erfunden** — der Befehl
+wird abgewiesen.
 
 ## 3. Die Kette (Befehlsweg)
 
@@ -108,7 +140,7 @@ Beim Schreiben:
 | 413 | über 64 KiB |
 | 415 | falscher Content-Type |
 | 429 | Ratenbegrenzung, mit `Retry-After` |
-| 503 | `auth_not_configured`, fehlender Adapter, untauglicher Ratenzähler, CAS erschöpft (8 Konflikte), unklarer Schreibausgang, Kern nicht lesbar |
+| 503 | `api_writes_disabled` (Schreiben aus), `auth_not_configured`, fehlender Adapter, untauglicher Ratenzähler, CAS erschöpft (8 Konflikte), unklarer Schreibausgang, Kern nicht lesbar oder ohne brauchbare Revision, Vertragsbruch der Seite (`page_overfull`, `page_cursor_unusable`) |
 | 500 | Vertragsbruch eines Adapters — Körper ohne Details |
 
 Jede Antwort trägt `requestId`; erfolgreiche Antworten zusätzlich `serverNow`,
@@ -148,7 +180,13 @@ Principal noch Mandant im Klartext. Das ist ein **Schutzzähler**, keine
 Fachdatenbank, und liegt nicht im Kerndatensatz.
 
 Grenzwerte je Rolle und Minute: `user` 60, `lead_agent` 120, Spezialisten je 60,
-`scheduler` 120, `backend_checker` 120.
+`scheduler` 120, `backend_checker` 120 — **je Verb und als Gesamtbudget des
+Principals**; beide Zähler müssen halten.
+
+Der Stand im Knoten wird streng gelesen: nicht negative sichere Ganzzahl,
+passendes Zeitfenster, Overflow geprüft. Ein kaputter Stand wird nicht auf 0
+„repariert", und ohne echten ETag (kein `null`, `""` oder `*`) findet kein
+Schreibvorgang statt.
 
 ## 7. Konfiguration (zusätzlich zu C1)
 
@@ -165,18 +203,25 @@ zu anderen Paketen und bleiben ebenfalls aus.
 | Port | Erwartet | Fehlt er |
 | --- | --- | --- |
 | `domain.loadObject/applyVerb/listPage` | Fachadapter (eigenes Paket) | 503 `domain_adapter_not_available` |
-| `idempotency.prepare/apply` | `netlify/lib/quantus-v3-idempotency.mjs` des Integrationsstandes (4d68070) | 503 `idempotency_adapter_not_available` |
+| `domain.resolveTarget` | Ressource und Anker aus dem autoritativen Bestand | 503 `domain_adapter_not_available` |
+| `domain.assertActiveBinding` | aktive Leitungs-Lease bzw. Auftragszuweisung (Paket E1) | 503 `domain_adapter_not_available` |
+| `idempotency.prepare/apply` | `netlify/lib/quantus-v3-idempotency.mjs` des Integrationsstandes | 503 `idempotency_adapter_not_available` |
 | `store.readSnapshot/mutate` | `readAppDataDocument` / `mutateAppData` | 503 `store_adapter_not_available` |
 | Zugriffstoken für `accounts:lookup` | eigener Anbieter | 503 `user_lookup_missing` — ein ID-Token ohne Widerrufsprüfung wird nicht akzeptiert |
 
-C2 bringt **keine** zweite Ledgerlogik und **keine** Fachlogik mit. In diesem
-Zweig liegt das Idempotenzmodul nicht; die Tests fahren dann gegen eine
-vertragstreue Nachbildung und sagen das im Testlauf (`# Hinweis: … Nachbildung
-verwendet`). Liegt das echte Modul im Checkout, laufen dieselben Tests dagegen.
+C2 bringt **keine** zweite Ledgerlogik und **keine** Fachlogik mit. Das
+Idempotenzmodul liegt nicht in diesem Zweig; die Tests laden deshalb den
+geprüften Integrationsstand **kontrolliert** aus dem Git-Objektspeicher
+(`git show 40a448c:netlify/lib/quantus-v3-idempotency.mjs` in ein temporäres
+Verzeichnis — kein Kopieren ins Paket) und fahren die Kette dagegen. Welche
+Fassung lief, schreibt der Testlauf: `# Idempotenz-Fassung im Lauf: git:40a448c`.
+Ist der Stand nicht erreichbar, tritt eine vertragstreue Nachbildung an seine
+Stelle — und der Lauf sagt ausdrücklich, dass dann **kein Integrationsnachweis**
+vorliegt.
 
 ## 9. Tests
 
-`npm run test:quantus-v3-c2` (Teil von `npm test`): 48 Fälle an der **echten**
+`npm run test:quantus-v3-c2` (Teil von `npm test`): 64 Fälle an der **echten**
 Kette — echt signierte Token, ein Speicher mit CAS-Verhalten (Konflikte,
 Erschöpfung, unklarer Ausgang), Cursor über mehrere Seiten, Ratenzähler mit
 eingespeistem Verkehr, und die vier Routen als echte `Request`/`Response`.
@@ -184,12 +229,13 @@ Kein Netz, kein Anbieteraufruf, keine Produktivkonfiguration.
 
 ## 10. Offene Punkte
 
-1. **Fachadapter fehlt** — ohne ihn ist keine Wirkung nachweisbar; die
-   Verbziele (welches Objekt ein Verb autorisiert) sind hier gesetzt und in C2
-   dokumentiert, die Domänenbedingungen (erlaubte Übergänge, Pflichtfelder,
-   Wartelogik) fehlen.
-2. **Idempotenzmodul** liegt in diesem Zweig nicht; die Kette ist gegen den
-   Vertrag gebaut und gegen eine Nachbildung geprüft.
+1. **Fachadapter fehlt** — ohne ihn ist keine Wirkung nachweisbar. Ressource
+   und Anker je Verb sind hier gesetzt und dokumentiert; die Domänenbedingungen
+   (erlaubte Übergänge, Wartelogik, Beleganforderungen) gehören zu B, die
+   aktive Bindung zu E1. Beide sind hier nur als Port vorhanden.
+2. **Idempotenzmodul** liegt nicht im Zweig; die Tests laden den Stand
+   `40a448c` kontrolliert und fahren die Kette dagegen (Commit und Wiederholung
+   ergeben genau einen Effekt).
 3. **Widerrufsprüfung** braucht einen Zugriffstoken-Anbieter; solange er fehlt,
    sind Nutzer-Token nicht verifizierbar (503).
 4. **Ratenzähler** ist gegen eingespeisten Verkehr geprüft, nicht gegen echtes

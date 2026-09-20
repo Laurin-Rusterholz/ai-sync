@@ -38,39 +38,78 @@ export function rateNodePath(key, windowStartMs) {
  * `set(path, value, { ifMatch })` → { ok } | { conflict: true } | { ok: false }
  * Beides genau die Form, die firebase-admin.mjs bereits liefert.
  */
+/* Ein Versionsstempel, der wirklich einer ist.
+ *
+ * BEFUND (Review 33a4b3d): `ifMatch: aktuell?.serverEtag ?? null` schrieb auch
+ * dann, wenn der Speicher gar keinen Stempel lieferte (null, "" oder das
+ * Wildcard "*"). Damit war der Schreibvorgang unbedingt — also kein CAS.
+ * Fehlt ein echter Stempel, wird NICHT geschrieben. Auch ein fehlender
+ * Datensatz braucht einen: den Stempel des leeren Knotens. */
+function istEchterEtag(wert) {
+  return typeof wert === "string" && wert.length > 0 && wert !== "*" && wert.trim() !== "";
+}
+
 export function createCasRateLimiter({ getWithEtag, set, attempts = DEFAULT_ATTEMPTS, now = () => Date.now() } = {}) {
   if (typeof getWithEtag !== "function" || typeof set !== "function") {
     throw new Error("createCasRateLimiter: getWithEtag und set sind Pflicht");
   }
+  const nichtVerfuegbar = (grund) => Object.assign(new Error(grund), { code: "rate_limiter_unavailable" });
+
   return {
     atomic: true,
     scope: "shared",
     multiInstanceSafe: true,
     async increment({ key, windowStartMs, windowMs }) {
-      const path = rateNodePath(key, windowStartMs);
-      let letzterKonflikt = null;
+      const fenster = Number(windowStartMs);
+      if (!Number.isSafeInteger(fenster) || fenster < 0) throw nichtVerfuegbar("rate_window_invalid");
+      const path = rateNodePath(key, fenster);
+      // Die Zeitmarke steht EINMAL fest, ausserhalb der Wiederholungen — ein
+      // wiederholter Versuch soll denselben Datensatz schreiben, nicht einen
+      // leicht anderen.
+      const updatedAt = new Date(now()).toISOString();
+
       for (let versuch = 0; versuch < attempts; versuch++) {
         const aktuell = await getWithEtag(path);
-        const stand = aktuell?.value;
-        // Ein Stand aus einem ALTEN Fenster zählt nicht mit: der Knotenname
-        // enthält das Fenster, aber ein Rest aus einem früheren Lauf könnte
-        // hier liegen. Nur was zum Fenster passt, wird fortgeschrieben.
-        const zaehler = (stand && Number(stand.windowStartMs) === Number(windowStartMs) && Number.isFinite(Number(stand.count)))
-          ? Number(stand.count) : 0;
+        if (!istEchterEtag(aktuell?.serverEtag)) throw nichtVerfuegbar("rate_etag_missing");
+
+        const stand = aktuell.value;
+        let zaehler = 0;
+        if (stand != null) {
+          if (typeof stand !== "object" || Array.isArray(stand)) throw nichtVerfuegbar("rate_counter_invalid");
+          const gespeichertesFenster = Number(stand.windowStartMs);
+          if (Number.isSafeInteger(gespeichertesFenster) && gespeichertesFenster === fenster) {
+            // Derselbe Zeitraum: der Stand zählt — aber nur, wenn er brauchbar
+            // ist. Ein kaputter Zähler (negativ, gebrochen, riesig) wird NICHT
+            // stillschweigend auf 0 „repariert"; das wäre ein Freibrief.
+            const gespeichert = stand.count;
+            if (typeof gespeichert !== "number" || !Number.isSafeInteger(gespeichert) || gespeichert < 0) {
+              throw nichtVerfuegbar("rate_counter_invalid");
+            }
+            zaehler = gespeichert;
+          } else if (!Number.isSafeInteger(gespeichertesFenster)) {
+            // Ein Datensatz ohne brauchbares Fenster ist unbrauchbar.
+            throw nichtVerfuegbar("rate_counter_invalid");
+          }
+          // Ein Stand aus einem ANDEREN Fenster zählt nicht mit (Rest eines
+          // früheren Laufs unter demselben Knotennamen).
+        }
+
         const naechster = zaehler + 1;
-        const neu = {
+        if (!Number.isSafeInteger(naechster)) throw nichtVerfuegbar("rate_counter_overflow");
+
+        const ergebnis = await set(path, {
           count: naechster,
-          windowStartMs: Number(windowStartMs),
-          windowMs: Number(windowMs) || 60_000,
-          updatedAt: new Date(now()).toISOString(),
-        };
-        const ergebnis = await set(path, neu, { ifMatch: aktuell?.serverEtag ?? null });
+          windowStartMs: fenster,
+          windowMs: Number.isSafeInteger(Number(windowMs)) ? Number(windowMs) : 60_000,
+          updatedAt,
+        }, { ifMatch: aktuell.serverEtag });
+
         if (ergebnis?.ok) return { count: naechster };
-        if (ergebnis?.conflict) { letzterKonflikt = "conflict"; continue; }
+        if (ergebnis?.conflict) continue;
         // Unklarer Ausgang: NICHT so tun, als wäre gezählt worden.
-        throw Object.assign(new Error("rate_counter_unavailable"), { code: "rate_limiter_unavailable" });
+        throw nichtVerfuegbar("rate_counter_unavailable");
       }
-      throw Object.assign(new Error(letzterKonflikt || "rate_counter_exhausted"), { code: "rate_limiter_unavailable" });
+      throw nichtVerfuegbar("rate_counter_exhausted");
     },
   };
 }

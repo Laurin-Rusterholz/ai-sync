@@ -46,6 +46,30 @@ const NESTED_FIELDS = Object.freeze({
   "policy.limits": Object.freeze(["maxLeads", "maxTasks", "maxTokens"]),
 });
 
+/*
+ * Welcher Eintrag zu welchem Scope gehört.
+ *
+ * BEFUND (Review 33a4b3d): Autorisiert wurde nur der SCOPE. Lieferte der
+ * Fachadapter in einer erlaubten Seite einen fremden Eintrag (anderer Mandant,
+ * fremder Eigentümer, fremder Lead), ging er mit 200 hinaus. Die Beziehung
+ * zwischen Eintrag und Scope ist deshalb jetzt Teil der Prüfung — zusätzlich
+ * zur vollen Rechteprüfung jedes einzelnen Eintrags im Dienst.
+ */
+export const SCOPE_RELATION = Object.freeze({
+  "run.context": (item, scopeId) => String(item.runId || item.jobId || "") === scopeId,
+  "lead.context": (item, scopeId) => String(item.id || "") === scopeId,
+  "notes.recent": (item, scopeId) => String(item.leadId || "") === scopeId,
+  "run.queue": (item) => Boolean(item.id),
+  "run.status": (item) => Boolean(item.id),
+  "policy.current": (item) => Boolean(item.id),
+});
+
+export function belongsToScope(query, item, scopeId) {
+  const regel = Object.prototype.hasOwnProperty.call(SCOPE_RELATION, query) ? SCOPE_RELATION[query] : null;
+  if (!regel || !item || typeof item !== "object") return false;
+  try { return regel(item, String(scopeId)) === true; } catch { return false; }
+}
+
 export const MAX_PAGE_SIZE = 100;
 export const DEFAULT_PAGE_SIZE = 25;
 
@@ -136,4 +160,4 @@ export function entityVersionsOf(items) {
   return out;
 }
 
-export default { VISIBLE_FIELDS, projectItem, projectPage, pageSizeFor, entityVersionsOf, MAX_PAGE_SIZE, DEFAULT_PAGE_SIZE };
+export default { VISIBLE_FIELDS, projectItem, projectPage, pageSizeFor, entityVersionsOf, belongsToScope, SCOPE_RELATION, MAX_PAGE_SIZE, DEFAULT_PAGE_SIZE };

@@ -519,7 +519,7 @@ function failConfig(reason) {
  * entschieden — das ist kein Randfall, sondern der Normalfall eines halb
  * ausgerollten Systems.
  * ------------------------------------------------------------------------ */
-export function authorize({ principal, verb, dataCategory, object, policyVersion, config } = {}) {
+export function authorize({ principal, verb, dataCategory, object, anchor = null, policyVersion, config } = {}) {
   // (a) Ohne geprüfte Serverkonfiguration gibt es keine Entscheidung.
   if (!config || typeof config !== "object" || !config.policyVersion) {
     return authError("auth_not_configured", "config_missing");
@@ -548,9 +548,9 @@ export function authorize({ principal, verb, dataCategory, object, policyVersion
   if (!allowedCategories) return authError("forbidden", "verb_not_allowed_for_role");
   if (!allowedCategories.includes(dataCategory)) return authError("forbidden", "data_category_not_allowed_for_role");
 
-  // (d) Das Objekt. Die Kategorie wird aus seiner ART abgeleitet — was der
-  // Aufrufer behauptet, muss dazu passen, sonst liesse sich ein
-  // Policy-Datensatz als „task" lesen.
+  // (d) Die RESSOURCE: das Objekt, auf das das Verb wirkt. Ihre Kategorie
+  // wird aus der ART abgeleitet — was der Aufrufer behauptet, muss dazu
+  // passen, sonst liesse sich ein Policy-Datensatz als „task" lesen.
   if (!object || typeof object !== "object") return authError("forbidden", "object_missing");
   const objectCategory = dataCategoryForObjectKind(object.kind);
   if (!objectCategory) return authError("forbidden", "object_kind_unknown");
@@ -561,10 +561,31 @@ export function authorize({ principal, verb, dataCategory, object, policyVersion
   if (!objectTenant) return authError("forbidden", "tenant_missing");
   if (principalTenant !== objectTenant) return authError("forbidden", "tenant_mismatch");
 
-  // (e) Bindung.
+  /* (e) Der ANKER: das Objekt, an dem die Bindung hängt.
+   *
+   * BEFUND (Review 33a4b3d): Ressource und Anker waren dasselbe. Für
+   * `intake.create` ist die Ressource aber der neue Eingang, der Anker dagegen
+   * der Lauf — und die Prüfung „Kategorie des Ankers = Kategorie des Verbs"
+   * liess deshalb jeden Anlegevorgang scheitern. Die Gegenrichtung wäre noch
+   * schlimmer: den Anker einfach mitzuerlauben hätte die Rechte verbreitert.
+   *
+   * Also getrennt: die Kategorie prüft die RESSOURCE, Eigentum, Mandant,
+   * Auftrags- und Zuweisungsbindung prüft der ANKER. Fehlt ein Anker, ist die
+   * Ressource selbst der Anker (der bisherige Normalfall).
+   */
+  const bindung = anchor && typeof anchor === "object" ? anchor : object;
+  if (!dataCategoryForObjectKind(bindung.kind)) return authError("forbidden", "anchor_kind_unknown");
+  const anchorId = String(bindung.id || "");
+  if (!anchorId) return authError("forbidden", "anchor_id_missing");
+  const anchorTenant = String(bindung.tenant || "");
+  if (!anchorTenant) return authError("forbidden", "tenant_missing");
+  if (anchorTenant !== principalTenant || anchorTenant !== objectTenant) {
+    return authError("forbidden", "tenant_mismatch");
+  }
+
   switch (policy.binding) {
     case "own": {
-      const owner = String(object.ownerId || "");
+      const owner = String(bindung.ownerId || "");
       if (!owner) return authError("forbidden", "object_owner_missing");
       if (owner !== principalId) return authError("forbidden", "object_not_owned");
       break;
@@ -572,15 +593,15 @@ export function authorize({ principal, verb, dataCategory, object, policyVersion
     case "job": {
       const boundJob = String(principal.jobId || "");
       if (!boundJob) return authError("forbidden", "job_binding_missing");
-      const objectJob = String(object.jobId || "");
+      const objectJob = String(bindung.jobId || "");
       if (!objectJob) return authError("forbidden", "object_job_missing");
       if (objectJob !== boundJob) return authError("forbidden", "object_foreign_job");
       break;
     }
     case "assigned": {
       const assigned = Array.isArray(principal.assignedJobIds) ? principal.assignedJobIds.map(String) : [];
-      const objectJob = String(object.jobId || "");
-      const assignedTo = String(object.assignedTo || "");
+      const objectJob = String(bindung.jobId || "");
+      const assignedTo = String(bindung.assignedTo || "");
       const okByJob = objectJob && assigned.includes(objectJob);
       const okByAssignment = assignedTo && assignedTo === principalId;
       if (!okByJob && !okByAssignment) return authError("forbidden", "object_not_assigned");
@@ -592,7 +613,7 @@ export function authorize({ principal, verb, dataCategory, object, policyVersion
       return authError("forbidden", "unknown_binding");
   }
 
-  return authOk({ role, verb, dataCategory, objectId });
+  return authOk({ role, verb, dataCategory, objectId, anchorId });
 }
 
 /* ── Identität darf nie aus dem Inhalt kommen ──────────────────────────── */

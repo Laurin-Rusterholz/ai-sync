@@ -50,7 +50,7 @@ import {
 } from "./quantus-v3-auth.mjs";
 import { parseCommandEnvelope, parseIdempotencyKey } from "./quantus-v3-command-envelope.mjs";
 import { resolveCursorConfig, signCursor, verifyCursor, describePage, isDataRevision, NAMED_QUERIES, SCOPE_OBJECT_KINDS } from "./quantus-v3-cursor.mjs";
-import { projectPage, pageSizeFor, entityVersionsOf } from "./quantus-v3-read-helpers.mjs";
+import { projectPage, pageSizeFor, entityVersionsOf, belongsToScope } from "./quantus-v3-read-helpers.mjs";
 
 export const CORE_KEY = "app-data.json";
 
@@ -85,6 +85,7 @@ const STATUS_BY_CODE = Object.freeze({
   payload_too_large: 413,
   rate_limited: 429,
   rate_limiter_not_configured: 503,
+  api_writes_disabled: 503,
   stale_entity_version: 409,
   idempotency_conflict: 409,
   replay_too_old: 409,
@@ -178,46 +179,73 @@ export async function authenticate({ rawCredential, config, route, jobId = null,
   return verifyServiceCredential(rawCredential, { config, now: deps.now });
 }
 
-/* ── Ratenbegrenzung: atomar, geteilt, pro Principal ─────────────────────── */
+/* ── Ratenbegrenzung: atomar, geteilt, pro Principal ─────────────────────
+ *
+ * BEFUND (Review 33a4b3d): Gezählt wurde nur je VERB. Wer zwanzig Verben
+ * benutzt, hatte zwanzig Budgets. Jetzt gibt es zwei Zähler: das Gesamtbudget
+ * des Principals und zusätzlich eines je Verb — beide müssen halten.
+ * ----------------------------------------------------------------------- */
 async function enforceRateLimit({ principal, verb, deps }) {
   const geprueft = requireHandlerRateLimiter(deps.rateLimiter);
   if (!geprueft.ok) return geprueft;
-  const key = rateLimitKey({ principal, verb });
-  if (!key) return authError("forbidden", "principal_incomplete");
+  const gesamtKey = rateLimitKey({ principal, verb: "*" });
+  const verbKey = rateLimitKey({ principal, verb });
+  if (!gesamtKey || !verbKey) return authError("forbidden", "principal_incomplete");
   const limit = RATE_LIMITS_PER_MINUTE[principal.role];
   if (!limit) return authError("forbidden", "unknown_role");
 
   const nowMs = deps.now();
   const windowStartMs = Math.floor(nowMs / RATE_WINDOW_MS) * RATE_WINDOW_MS;
-  let count;
-  try {
+  const zaehle = async (key) => {
     const ergebnis = await geprueft.store.increment({ key, windowStartMs, windowMs: RATE_WINDOW_MS });
-    count = Number(ergebnis?.count);
+    const count = Number(ergebnis?.count);
+    if (!Number.isFinite(count) || !Number.isSafeInteger(count) || count < 1) throw new Error("rate_limiter_unavailable");
+    return count;
+  };
+
+  let gesamt;
+  let proVerb;
+  try {
+    gesamt = await zaehle(gesamtKey);
+    proVerb = await zaehle(verbKey);
   } catch {
-    // Ein ausgefallener Zähler ist kein Freibrief.
+    // Ein ausgefallener oder unbrauchbarer Zähler ist kein Freibrief.
     return serviceDenial("rate_limiter_not_configured", "rate_limiter_unavailable");
   }
-  if (!Number.isFinite(count)) return serviceDenial("rate_limiter_not_configured", "rate_limiter_unavailable");
-  if (count > limit) {
+  if (gesamt > limit || proVerb > limit) {
     const retryAfter = Math.max(1, Math.ceil((windowStartMs + RATE_WINDOW_MS - nowMs) / 1000));
     return { ...serviceDenial("rate_limited", "rate_limit_exceeded"), retryAfter };
   }
-  return authOk({ count, limit });
+  return authOk({ count: proVerb, total: gesamt, limit });
 }
 
-/* ── Adapter: vorhanden oder 503. Kein halber Betrieb. ───────────────────── */
+/* ── Adapter: vorhanden oder 503. Kein halber Betrieb. ───────────────────
+ *
+ * Der Fachadapter bringt drei Dinge mit, die C2 NICHT selbst erfindet:
+ *   resolveTarget       welches Objekt ein Verb betrifft (Ressource) und
+ *                       woran seine Bindung hängt (Anker) — aus dem
+ *                       autoritativen Bestand, nie aus dem Request.
+ *   assertActiveBinding ob die Bindung JETZT trägt: die gemeinsame aktive
+ *                       Leitungs-Lease (Paket E1) bzw. die aktuelle
+ *                       Auftragszuweisung eines Spezialisten. C2 erfindet
+ *                       dafür keine eigenen Lease-Felder.
+ *   applyVerb           die Wirkung.
+ * Fehlt eines davon, antwortet die Kette 503.
+ * ----------------------------------------------------------------------- */
 function requireAdapters(deps, { write }) {
-  if (!deps.domain || typeof deps.domain.loadObject !== "function") {
-    return authError("auth_not_configured", "domain_adapter_not_available");
-  }
+  if (!deps.domain) return authError("auth_not_configured", "domain_adapter_not_available");
   if (write) {
-    if (typeof deps.domain.applyVerb !== "function") return authError("auth_not_configured", "domain_adapter_not_available");
+    for (const name of ["resolveTarget", "assertActiveBinding", "applyVerb"]) {
+      if (typeof deps.domain[name] !== "function") return authError("auth_not_configured", "domain_adapter_not_available");
+    }
     if (!deps.idempotency || typeof deps.idempotency.prepare !== "function" || typeof deps.idempotency.apply !== "function") {
       return authError("auth_not_configured", "idempotency_adapter_not_available");
     }
     if (!deps.store || typeof deps.store.mutate !== "function") return authError("auth_not_configured", "store_adapter_not_available");
   } else {
-    if (typeof deps.domain.listPage !== "function") return authError("auth_not_configured", "domain_adapter_not_available");
+    for (const name of ["loadObject", "listPage"]) {
+      if (typeof deps.domain[name] !== "function") return authError("auth_not_configured", "domain_adapter_not_available");
+    }
     if (!deps.store || typeof deps.store.readSnapshot !== "function") return authError("auth_not_configured", "store_adapter_not_available");
   }
   return authOk();
@@ -228,6 +256,65 @@ function requireAdapters(deps, { write }) {
 export function writesEnabled(config, read = envRead) {
   const flag = String(read("QUANTUS_V3_API_WRITES") || "").trim().toLowerCase();
   return flag === "enabled" && config.mode === "enforce";
+}
+
+/* ── Der Kern, streng geprüft ────────────────────────────────────────────
+ *
+ * BEFUND (Review 33a4b3d): Im Trockenlauf wurde eine fehlende
+ * `automation.dataRevision` zu einer erfundenen 0. Jetzt gilt auf JEDEM Weg
+ * dieselbe Prüfung — auch ohne Schreiben. */
+export function assertCoreSnapshot(snapshot) {
+  const istRecord = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+  if (!istRecord(snapshot) || !istRecord(snapshot.entities)) return authError("auth_not_configured", "core_invalid");
+  const automation = snapshot.automation;
+  if (!istRecord(automation) || automation.schemaVersion !== 3
+    || !istRecord(automation.idempotencyByKey)
+    || !isDataRevision(automation.dataRevision)) {
+    return authError("auth_not_configured", "core_invalid");
+  }
+  return authOk({ dataRevision: automation.dataRevision });
+}
+
+/* ── Der Körper, begrenzt gelesen ────────────────────────────────────────
+ *
+ * BEFUND (Review 33a4b3d): `req.text()` las erst alles und prüfte dann die
+ * 64 KiB — ein Aufrufer ohne Ausweis konnte also beliebig viel Speicher
+ * belegen. Jetzt wird der Strom gelesen und beim Überschreiten ABGEBROCHEN;
+ * eine zu grosse `Content-Length` genügt schon vorher. */
+export async function readBoundedBody(req, maxBytes = COMMAND_MAX_BYTES) {
+  const angekuendigt = Number(req?.headers?.get?.("content-length"));
+  if (Number.isFinite(angekuendigt) && angekuendigt > maxBytes) {
+    return serviceDenial("payload_too_large", "command_too_large");
+  }
+
+  const koerper = req?.body;
+  if (koerper && typeof koerper.getReader === "function") {
+    const leser = koerper.getReader();
+    const teile = [];
+    let bytes = 0;
+    try {
+      for (;;) {
+        const { done, value } = await leser.read();
+        if (done) break;
+        bytes += value?.byteLength || 0;
+        if (bytes > maxBytes) {
+          try { await leser.cancel(); } catch { /* der Strom ist ohnehin zu Ende */ }
+          return serviceDenial("payload_too_large", "command_too_large");
+        }
+        teile.push(value);
+      }
+    } catch {
+      return serviceDenial("invalid_request", "body_unreadable");
+    }
+    return authOk({ text: Buffer.concat(teile.map((t) => Buffer.from(t))).toString("utf8"), bytes });
+  }
+
+  // Kein Strom (etwa in Tests): dann wenigstens nach dem Lesen messen.
+  let text = "";
+  try { text = await req.text(); } catch { return serviceDenial("invalid_request", "body_unreadable"); }
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes > maxBytes) return serviceDenial("payload_too_large", "command_too_large");
+  return authOk({ text, bytes });
 }
 
 /* ══ Der Befehlsweg ══════════════════════════════════════════════════════ */
@@ -244,7 +331,6 @@ export async function handleCommandRequest(req, deps = {}) {
   if (!cfg.ok) return jsonResponse({ ok: false, error: cfg.error, reason: cfg.reason, missing: cfg.missing, requestId }, { status: cfg.status });
   const config = cfg.config;
 
-  // Methode
   if (req.method === "OPTIONS") {
     const vor = evaluateOrigin({ origin: header("origin"), principalKind: "user", config });
     if (!vor.ok) return denial(vor, { requestId });
@@ -256,12 +342,10 @@ export async function handleCommandRequest(req, deps = {}) {
   const tls = enforceTls(req);
   if (!tls.ok) return denial(tls, { requestId });
 
-  // 3./5a. Körper lesen — vor dem Ausweis brauchen wir die jobId für die
-  // Auftragsbindung des Job-Tokens. Gelesen wird dabei NUR die Anfrage,
-  // nicht der Kern: ein ungeprüftes Token sieht keine Daten.
-  let rohkoerper = "";
-  try { rohkoerper = await req.text(); } catch { return denial(authError("invalid_request", "body_unreadable"), { requestId }); }
-  const koerper = enforceJsonCommand({ contentType: header("content-type"), rawBody: rohkoerper, maxBytes: COMMAND_MAX_BYTES });
+  // 3. Der Körper — BEGRENZT gelesen, bevor irgendetwas davon geglaubt wird.
+  const roh = await readBoundedBody(req, COMMAND_MAX_BYTES);
+  if (!roh.ok) return denial(roh, { requestId });
+  const koerper = enforceJsonCommand({ contentType: header("content-type"), rawBody: roh.text, maxBytes: COMMAND_MAX_BYTES });
   if (!koerper.ok) return denial(koerper, { requestId });
 
   const identitaet = rejectIdentityInPayload(koerper.value);
@@ -282,7 +366,7 @@ export async function handleCommandRequest(req, deps = {}) {
   if (!ausweis.ok) return denial(ausweis, { requestId });
   const principal = ausweis.principal;
 
-  // 5b. Herkunft — erst jetzt, weil die Art des Principals sie bestimmt.
+  // 5. Herkunft — erst jetzt, weil die Art des Principals sie bestimmt.
   const herkunft = evaluateOrigin({ origin: header("origin"), principalKind: principal.kind, config });
   if (!herkunft.ok) return denial(herkunft, { requestId });
   const cors = herkunft.corsHeaders;
@@ -294,45 +378,110 @@ export async function handleCommandRequest(req, deps = {}) {
     return denial(rate, { requestId, corsHeaders: cors, extraHeaders: extra });
   }
 
-  // 7. Adapter
+  /*
+   * 7. Schreibfreigabe.
+   *
+   * BEFUND (Review 33a4b3d): Ohne Freigabe antwortete der Dienst 200 mit
+   * `ok:true`, `serverNow`, `replayed` und einer Revision — das sieht aus wie
+   * eine Commit-Quittung, und ein Client legte es als bestätigt ab, obwohl
+   * nichts geschrieben wurde. Ein ausgeschalteter Schreibweg antwortet jetzt
+   * 503 `api_writes_disabled`, ohne jedes Quittungsfeld.
+   *
+   * Prüfen ohne Schreiben gibt es weiterhin — aber nur AUSDRÜCKLICH, über die
+   * Kopfzeile `X-Quantus-Validate-Only`, und die Antwort trägt kein einziges
+   * Feld einer Quittung. Sie sagt ausserdem, was sie NICHT geprüft hat:
+   * die Fachbedingungen, denn `applyVerb` lief nicht.
+   */
+  const nurPruefen = /^(1|true|yes)$/i.test(String(header("x-quantus-validate-only") || "").trim());
+  const darfSchreiben = writesEnabled(config, deps.env || envRead);
+  if (!darfSchreiben && !nurPruefen) {
+    return denial(serviceDenial("api_writes_disabled", "api_writes_disabled"), { requestId, corsHeaders: cors });
+  }
+
+  // 8. Adapter
   const adapter = requireAdapters(deps, { write: true });
   if (!adapter.ok) return denial(adapter, { requestId, corsHeaders: cors });
+  if (nurPruefen && typeof deps.store?.readSnapshot !== "function") {
+    return denial(authError("auth_not_configured", "store_adapter_not_available"), { requestId, corsHeaders: cors });
+  }
 
-  const nowMs = deps.now();
-  const serverNow = new Date(nowMs).toISOString();
+  // Die DOKUMENTZEIT steht einmal fest (sie landet im Beleg). Die
+  // GÜLTIGKEITSPRÜFUNG benutzt sie NICHT — die fragt bei jedem Versuch neu.
+  const serverNow = new Date(deps.now()).toISOString();
 
-  /* Die Autorisierung gegen einen konkreten Schnappschuss. Sie läuft in JEDEM
-     CAS-Versuch und auch bei einer Wiederholung — nie gegen einen vorher
-     gelesenen Stand. */
+  /*
+   * Die Autorisierung gegen einen konkreten Schnappschuss. Sie läuft in JEDEM
+   * CAS-Versuch und auch vor einer Wiederholung — mit der Zeit DIESES
+   * Versuchs, nicht mit einer vorher gemerkten.
+   */
   const autorisiereGegen = (snapshot, { pruefeVersion = true } = {}) => {
-    const lauf = deps.domain.loadObject(snapshot, { kind: "run", id: command.jobId });
-    if (!lauf) throw fail("forbidden", "run_not_found");
+    const kern = assertCoreSnapshot(snapshot);
+    if (!kern.ok) throw fail("core_invalid", "core_invalid");
 
-    const zielId = descriptor.idField ? command.payload[descriptor.idField] : command.jobId;
-    const ziel = descriptor.idField
-      ? deps.domain.loadObject(snapshot, { kind: descriptor.kind, id: zielId, runId: command.jobId })
-      : lauf;
-    if (!ziel) throw fail("forbidden", "object_not_found");
-    if (String(ziel.kind || "") !== descriptor.kind) throw fail("forbidden", "object_kind_mismatch");
+    const jetztMs = deps.now();          // frisch, je Versuch
+    const aufloesung = deps.domain.resolveTarget(snapshot, {
+      verb: command.verb, command, principal, descriptor, nowMs: jetztMs,
+    });
+    if (!aufloesung || typeof aufloesung !== "object" || !aufloesung.resource) {
+      throw fail("forbidden", "object_not_found");
+    }
+    const ressource = aufloesung.resource;
+    const anker = aufloesung.anchor && typeof aufloesung.anchor === "object" ? aufloesung.anchor : ressource;
 
-    const kategorie = dataCategoryForObjectKind(ziel.kind);
+    // Was der Adapter geliefert hat, muss zum Umschlag passen — sonst hätte
+    // ein Fachadapter die Rechteprüfung im Griff statt umgekehrt.
+    if (String(ressource.kind || "") !== descriptor.resource.kind) throw fail("forbidden", "resource_kind_mismatch");
+    const erwarteteAnkerArt = descriptor.anchor.self ? descriptor.resource.kind : descriptor.anchor.kind;
+    if (String(anker.kind || "") !== erwarteteAnkerArt) throw fail("forbidden", "anchor_kind_mismatch");
+    if (descriptor.resource.idField) {
+      if (String(ressource.id || "") !== String(command.payload[descriptor.resource.idField] || "")) {
+        throw fail("forbidden", "resource_id_mismatch");
+      }
+    }
+    // Anlegen, Lauf-aus-jobId oder Sicherstellen — der Umschlag sagt es, und
+    // der Adapter muss sich daran halten.
+    if (descriptor.resource.creates === true && ressource.isNew !== true) throw fail("forbidden", "resource_not_new");
+    if (descriptor.resource.fromJob === true) {
+      if (ressource.isNew === true) throw fail("forbidden", "run_not_found");
+      if (String(ressource.id || "") !== command.jobId) throw fail("forbidden", "resource_id_mismatch");
+    }
+    if (descriptor.resource.ensure === true && String(ressource.id || "") !== command.jobId) {
+      throw fail("forbidden", "resource_id_mismatch");
+    }
+    if (!descriptor.anchor.self) {
+      const erwarteteAnkerId = descriptor.anchor.idField
+        ? String(command.payload[descriptor.anchor.idField] || "")
+        : command.jobId;
+      if (String(anker.id || "") !== erwarteteAnkerId) throw fail("forbidden", "anchor_id_mismatch");
+    }
+
+    const kategorie = dataCategoryForObjectKind(ressource.kind);
     if (!kategorie) throw fail("forbidden", "object_kind_unknown");
 
     const erlaubt = authorize({
-      principal, verb: command.verb, dataCategory: kategorie, object: ziel,
+      principal, verb: command.verb, dataCategory: kategorie,
+      object: ressource, anchor: anker,
       policyVersion: config.policyVersion, config,
     });
     if (!erlaubt.ok) throw fail(erlaubt.error, erlaubt.reason);
 
-    // Auftragsbindung: ein Job-Token gilt für seinen Lauf, nicht für einen
-    // anderen — auch wenn die Rolle das Verb grundsätzlich darf.
-    if (principal.issuedBy === ISSUERS.jobToken) {
-      if (String(principal.jobId || "") !== command.jobId) throw fail("forbidden", "job_mismatch");
-      // Lease: wer im Auftrag schreibt, muss ihn halten.
-      const halter = String(lauf.leaseOwner || "");
-      const bis = Date.parse(String(lauf.leaseExpiresAt || ""));
-      if (!halter || halter !== String(principal.id)) throw fail("forbidden", "lease_not_held");
-      if (!Number.isFinite(bis) || bis <= nowMs) throw fail("forbidden", "lease_expired");
+    // Auftragsbindung des Tokens — unabhängig davon, was der Adapter sagt.
+    if (principal.issuedBy === ISSUERS.jobToken && String(principal.jobId || "") !== command.jobId) {
+      throw fail("forbidden", "job_mismatch");
+    }
+
+    /*
+     * Die AKTIVE Bindung: gemeinsame Leitungs-Lease bzw. aktuelle
+     * Auftragszuweisung. Sie kommt aus dem Fachadapter (Paket E1) — C2
+     * erfindet dafür keine eigenen Felder — und wird mit der Zeit DIESES
+     * Versuchs geprüft, auch bei einer Wiederholung.
+     */
+    const bindung = deps.domain.assertActiveBinding({
+      snapshot, principal, resource: ressource, anchor: anker,
+      verb: command.verb, jobId: command.jobId, nowMs: jetztMs,
+    });
+    if (!bindung || bindung.ok !== true) {
+      throw fail("forbidden", String(bindung?.reason || "binding_not_active"));
     }
 
     // Erwartete Entitätsversion — gemessen am FRISCHEN Objekt.
@@ -340,38 +489,47 @@ export async function handleCommandRequest(req, deps = {}) {
     // Ausnahme, und nur diese eine: eine WIEDERHOLUNG. Der erste Anlauf hat
     // die Version bereits erhöht; verlangte man sie erneut, könnte eine
     // Netzwiederholung nie ihre Quittung abholen. Die RECHTE werden trotzdem
-    // frisch geprüft — die Ausnahme gilt der Vorbedingung, nicht der
-    // Autorisierung.
-    const version = ziel.entityVersion;
-    if (!Number.isInteger(version)) throw fail("core_invalid", "entity_version_missing");
-    if (pruefeVersion && version !== command.expectedEntityVersion) throw fail("stale_entity_version", "entity_version_stale");
+    // frisch geprüft.
+    const neu = ressource.isNew === true;
+    const version = neu ? 0 : ressource.entityVersion;
+    if (!Number.isInteger(version) || version < 0) throw fail("core_invalid", "entity_version_missing");
+    if (pruefeVersion && version !== command.expectedEntityVersion) {
+      throw fail("stale_entity_version", "entity_version_stale");
+    }
 
-    return { run: lauf, target: ziel, dataCategory: kategorie };
+    return { resource: ressource, anchor: anker, dataCategory: kategorie, isNew: neu, version };
   };
 
-  // 8. Trockenlauf: alles prüfen, nichts schreiben.
-  if (!writesEnabled(config, deps.env || envRead)) {
+  // 9. Nur prüfen (ausdrücklich verlangt): keine Wirkung, KEINE Quittung.
+  if (nurPruefen) {
     let snapshot;
     try {
       snapshot = await deps.store.readSnapshot();
-    } catch (err) {
+    } catch {
       return denial(authError("auth_not_configured", "core_unavailable"), { requestId, corsHeaders: cors });
     }
+    const kern = assertCoreSnapshot(snapshot);
+    if (!kern.ok) return denial(kern, { requestId, corsHeaders: cors });
     try {
       const ziel = autorisiereGegen(snapshot);
       return jsonResponse({
-        ok: true, applied: false, dryRun: true, replayed: false,
-        serverNow, requestId,
-        dataRevision: isDataRevision(snapshot?.automation?.dataRevision) ? snapshot.automation.dataRevision : 0,
-        entityVersions: { [String(ziel.target.id)]: ziel.target.entityVersion },
+        validated: true,
+        applied: false,
+        stored: false,
+        domainConditionsEvaluated: false,
         verb: command.verb,
-      }, { corsHeaders: cors });
+        observedEntityVersion: ziel.version,
+        resourceIsNew: ziel.isNew,
+        checkedAt: serverNow,
+        requestId,
+        note: "Nur geprüft: Umschlag, Ausweis, Rechte, Bindung und Version. Nichts gespeichert, Fachbedingungen nicht ausgewertet.",
+      }, { corsHeaders: cors, extraHeaders: { "X-Quantus-Applied": "false" } });
     } catch (err) {
       return fehlerAntwort(err, { requestId, corsHeaders: cors });
     }
   }
 
-  // 9. Schreiben: prepare EINMAL, ausserhalb der CAS-Schleife.
+  // 10. Schreiben: prepare EINMAL, ausserhalb der CAS-Schleife.
   let prepared;
   try {
     prepared = deps.idempotency.prepare({
@@ -397,7 +555,8 @@ export async function handleCommandRequest(req, deps = {}) {
       const ziel = autorisiereGegen(current, { pruefeVersion: !istWiederholung });
       return deps.idempotency.apply(current, prepared, (snapshot, befehl, kontext) => {
         const ergebnis = deps.domain.applyVerb(snapshot, befehl, kontext, {
-          principal, target: ziel.target, run: ziel.run, dataCategory: ziel.dataCategory,
+          principal, resource: ziel.resource, anchor: ziel.anchor,
+          dataCategory: ziel.dataCategory, isNew: ziel.isNew,
         });
         if (!ergebnis || typeof ergebnis !== "object" || !ergebnis.data || !ergebnis.result) {
           throw fail("core_invalid", "domain_result_invalid");
@@ -498,10 +657,10 @@ export async function handleReadRequest(req, deps = {}, { route } = {}) {
   } catch {
     return denial(authError("auth_not_configured", "core_unavailable"), { requestId, corsHeaders: cors });
   }
-  // Die Revision kommt aus dem Kern und wird nicht zurechtgebogen: ein
-  // Bestand ohne brauchbare Revision ist kein Lesegrund (0 ist brauchbar).
-  const dataRevision = snapshot?.automation?.dataRevision;
-  if (!isDataRevision(dataRevision)) return denial(authError("auth_not_configured", "core_invalid"), { requestId, corsHeaders: cors });
+  // Dieselbe strenge Kernprüfung wie auf dem Befehlsweg.
+  const kern = assertCoreSnapshot(snapshot);
+  if (!kern.ok) return denial(kern, { requestId, corsHeaders: cors });
+  const dataRevision = kern.dataRevision;
 
   // Das Scope-Objekt kommt frisch aus dem autoritativen Bestand.
   const scopeObject = deps.domain.loadObject(snapshot, {
@@ -543,21 +702,77 @@ export async function handleReadRequest(req, deps = {}, { route } = {}) {
     return denial(authError("auth_not_configured", "domain_adapter_failed"), { requestId, corsHeaders: cors });
   }
 
-  const beschnitten = projectPage(query, rohdaten?.items);
+  const eintraege = rohdaten?.items;
+  if (!Array.isArray(eintraege)) return denial(authError("invalid_request", "items_not_a_list"), { requestId, corsHeaders: cors });
+
+  /*
+   * Eine übervolle Seite ist ein Vertragsbruch des Fachadapters: sie einfach
+   * zu beschneiden wäre eine heimliche Auslassung, sie auszuliefern eine
+   * Überschreitung. Also gar nichts — und sagen, dass es der Server war.
+   */
+  if (eintraege.length > page.pageSize) {
+    return denial(serviceDenial("auth_not_configured", "page_overfull"), { requestId, corsHeaders: cors });
+  }
+
+  /*
+   * JEDER Eintrag wird frisch autorisiert — Mandant, Eigentum bzw.
+   * Auftragsbindung, erlaubte Kategorie — und muss zum Scope gehören. Ein
+   * fremder Eintrag in einer erlaubten Seite wird NICHT still weggelassen
+   * (das wäre eine Seite, die sich vollständig nennt, ohne es zu sein):
+   * die Antwort ist 403, ohne Daten.
+   */
+  for (const eintrag of eintraege) {
+    if (!eintrag || typeof eintrag !== "object") {
+      return denial(authError("invalid_request", "items_not_a_list"), { requestId, corsHeaders: cors });
+    }
+    const kategorie = dataCategoryForObjectKind(eintrag.kind);
+    if (!kategorie || kategorie !== named.itemCategory) {
+      return denial(authError("forbidden", "item_kind_mismatch"), { requestId, corsHeaders: cors });
+    }
+    const erlaubt = authorize({
+      principal, verb: named.verb, dataCategory: kategorie,
+      object: eintrag, anchor: eintrag,
+      policyVersion: config.policyVersion, config,
+    });
+    if (!erlaubt.ok) return denial(authError("forbidden", "item_not_authorized"), { requestId, corsHeaders: cors });
+    if (String(eintrag.tenant || "") !== String(scopeObject.tenant || "")) {
+      return denial(authError("forbidden", "item_not_authorized"), { requestId, corsHeaders: cors });
+    }
+    if (!belongsToScope(query, eintrag, scopeId)) {
+      return denial(authError("forbidden", "item_outside_scope"), { requestId, corsHeaders: cors });
+    }
+  }
+
+  const beschnitten = projectPage(query, eintraege);
   if (!beschnitten.ok) return denial(beschnitten, { requestId, corsHeaders: cors });
 
-  let naechster = null;
-  const weiter = rohdaten?.hasMore === true;
+  /*
+   * `hasMore` muss ein echtes Boolesches sein — fehlend, null oder eine
+   * Zeichenkette werden NICHT zu „false" umgedeutet (Review 33a4b3d).
+   * `describePage` entscheidet daraus; hier wird nur durchgereicht.
+   */
+  const weiter = rohdaten?.hasMore;
   const abgebrochen = rohdaten?.aborted === true || beschnitten.usable === false;
-  if (weiter && !abgebrochen) {
-    const neu = await signCursor({
+
+  let naechster = null;
+  if (weiter === true && !abgebrochen) {
+    // Ein Weiterzeiger muss WEITER zeigen: gültige Id, nicht dieselbe wie
+    // zuvor, und der letzte gelieferte Eintrag. Sonst stünde die Seite still
+    // oder übersprünge etwas.
+    const zeiger = rohdaten?.nextAfterId;
+    const letzter = String(eintraege[eintraege.length - 1]?.id || "");
+    const gueltig = typeof zeiger === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(zeiger) && !zeiger.includes("__");
+    if (!gueltig || zeiger === String(page.afterId || "") || zeiger !== letzter || !eintraege.length) {
+      return denial(serviceDenial("auth_not_configured", "page_cursor_unusable"), { requestId, corsHeaders: cors });
+    }
+    const neuerCursor = await signCursor({
       config: cursorCfg.config, principal, query, scopeId,
       dataRevision, policyVersion: config.policyVersion,
       pageSize: page.pageSize, pageIndex: page.pageIndex + 1,
-      afterId: rohdaten?.nextAfterId ?? null, now: deps.now,
+      afterId: zeiger, now: deps.now,
     });
-    if (!neu.ok) return denial(neu, { requestId, corsHeaders: cors });
-    naechster = neu.cursor;
+    if (!neuerCursor.ok) return denial(neuerCursor, { requestId, corsHeaders: cors });
+    naechster = neuerCursor.cursor;
   }
 
   const ergebnis = describePage({

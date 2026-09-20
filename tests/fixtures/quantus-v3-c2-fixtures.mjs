@@ -5,22 +5,25 @@
  * das Original verhalten:
  *
  *  • `makeStore()` bildet `mutateAppData` nach: synchroner Mutator, bis zu
- *    acht CAS-Versuche, Konflikte, unklarer Ausgang, `unchanged`. Damit lässt
- *    sich ein 409/503 aus dem Speicherweg erzeugen, ohne Firebase.
- *  • `idempotencyPort()` nimmt das ECHTE Modul des Integrationsstandes, wenn
- *    es im Checkout liegt (`netlify/lib/quantus-v3-idempotency.mjs`). Fehlt es
- *    — wie in diesem Paketzweig —, tritt eine Nachbildung an seine Stelle, die
- *    denselben Vertrag erfüllt: ein Beleg je (Mandant, Principal, Schlüssel),
- *    Wiederholung nur bei gleichem Anfrage-Hash, sonst 409, und die
- *    Revision wird zusammen mit dem Beleg fortgeschrieben.
- *    Welche Fassung lief, sagt `idempotencyPort().source`.
- *  • `makeDomain()` ist ein Fachadapter-Ersatz für Tests. Der echte gehört in
- *    ein anderes Paket; ohne ihn antwortet die Kette 503 — auch das wird
- *    geprüft.
+ *    acht CAS-Versuche, Konflikte, unklarer Ausgang, `unchanged`.
+ *  • `idempotencyPort()` nimmt das ECHTE Modul des Integrationsstandes. Liegt
+ *    es nicht im Checkout, wird der Stand `40a448c` KONTROLLIERT aus dem
+ *    Git-Objektspeicher in ein temporäres Verzeichnis gelegt und von dort
+ *    geladen — kein Kopieren ins Paket, keine zweite Ledgerlogik. Erst wenn
+ *    auch das nicht geht, tritt eine vertragstreue Nachbildung an seine
+ *    Stelle. Welche Fassung lief, sagt `idempotencyPort().source`; die Tests
+ *    schreiben es in den Lauf.
+ *  • `makeDomain()` ist der Fachadapter-Ersatz. Er liefert die drei Ports, die
+ *    C2 verlangt: `resolveTarget` (Ressource und Anker aus dem autoritativen
+ *    Bestand), `assertActiveBinding` (die aktive Leitungs-Lease bzw. die
+ *    aktuelle Auftragszuweisung — im echten Betrieb Paket E1) und `applyVerb`.
  *
  * Alle Schlüssel entstehen zur Laufzeit; kein Netz, kein Anbieteraufruf.
  */
 import { createHash, randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { TENANT, POLICY_VERSION } from "./quantus-v3-auth-fixtures.mjs";
@@ -29,46 +32,59 @@ const root = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.ur
 
 export const RUN_ID = "job_20260920_42";
 export const LEAD_ID = "lead_123";
+export const OWNER = "uid-laurin";
+export const INTEGRATION_COMMIT = "40a448c";
 
 /* ── Ein Kerndatensatz in der Form, die die Kette erwartet ──────────────── */
-export function makeCoreSnapshot({ dataRevision = 7, leaseOwner = null, leaseExpiresAt = null, leadOwner = "uid-laurin" } = {}) {
-  return {
+export function makeCoreSnapshot({
+  dataRevision = 7, leaseOwner = null, leaseExpiresAt = null,
+  leadOwner = OWNER, ohneRun = false,
+} = {}) {
+  const basis = (kind, id, over = {}) => ({
+    kind, id, tenant: TENANT, ownerId: OWNER, jobId: RUN_ID, entityVersion: 1, ...over,
+  });
+  const snapshot = {
     entities: {
       leads: {
-        [LEAD_ID]: {
-          kind: "lead", id: LEAD_ID, tenant: TENANT, ownerId: leadOwner,
-          jobId: RUN_ID, assignedTo: null, entityVersion: 17,
-          title: "Offerte Muster AG", state: "open", updatedAt: "2026-09-19T09:00:00Z",
+        [LEAD_ID]: basis("lead", LEAD_ID, {
+          ownerId: leadOwner, entityVersion: 17, title: "Offerte Muster AG",
+          state: "open", updatedAt: "2026-09-19T09:00:00Z",
           // Ein Feld, das NIE nach aussen darf:
           internalMailBody: "Sehr geehrte Frau Muster, anbei die Offerte …",
-        },
-        lead_fremd: {
-          kind: "lead", id: "lead_fremd", tenant: TENANT, ownerId: "uid-fremd",
-          jobId: RUN_ID, entityVersion: 3, title: "Fremd", state: "open",
-        },
+        }),
+        lead_fremd: basis("lead", "lead_fremd", { ownerId: "uid-fremd", entityVersion: 3, title: "Fremd", state: "open" }),
       },
-      runs: {
-        [RUN_ID]: {
-          kind: "run", id: RUN_ID, tenant: TENANT, ownerId: "uid-laurin",
-          jobId: RUN_ID, entityVersion: 5, slot: "09:00", date: "2026-09-20",
-          state: "running", leaseOwner, leaseExpiresAt,
-        },
-      },
+      runs: {},
       notes: {
-        note_1: { kind: "note", id: "note_1", tenant: TENANT, ownerId: "uid-laurin", jobId: RUN_ID, leadId: LEAD_ID, entityVersion: 2, text: "Notiz", createdAt: "2026-09-19T08:00:00Z" },
-        note_2: { kind: "note", id: "note_2", tenant: TENANT, ownerId: "uid-laurin", jobId: RUN_ID, leadId: LEAD_ID, entityVersion: 1, text: "Zweite Notiz", createdAt: "2026-09-19T08:05:00Z" },
-        note_3: { kind: "note", id: "note_3", tenant: TENANT, ownerId: "uid-laurin", jobId: RUN_ID, leadId: LEAD_ID, entityVersion: 1, text: "Dritte Notiz", createdAt: "2026-09-19T08:10:00Z" },
+        note_1: basis("note", "note_1", { leadId: LEAD_ID, entityVersion: 2, text: "Notiz", createdAt: "2026-09-19T08:00:00Z" }),
+        note_2: basis("note", "note_2", { leadId: LEAD_ID, entityVersion: 1, text: "Zweite Notiz", createdAt: "2026-09-19T08:05:00Z" }),
+        note_3: basis("note", "note_3", { leadId: LEAD_ID, entityVersion: 1, text: "Dritte Notiz", createdAt: "2026-09-19T08:10:00Z" }),
       },
+      intakes: { intake_1: basis("intake", "intake_1", { entityVersion: 4, source: "mail", title: "Eingang", state: "open" }) },
+      tasks: { task_1: basis("task", "task_1", { leadId: LEAD_ID, entityVersion: 2, title: "Aufgabe", state: "open" }) },
+      questions: { question_1: basis("question", "question_1", { leadId: LEAD_ID, entityVersion: 2, text: "Frage?", state: "open" }) },
+      briefings: { briefing_1: basis("briefing", "briefing_1", { entityVersion: 6, date: "2026-09-20", state: "open" }) },
+      briefingAnswers: { answer_1: basis("briefing_answer", "answer_1", { briefingId: "briefing_1", questionId: "question_1", entityVersion: 2, state: "open" }) },
+      documents: { document_1: basis("document", "document_1", { entityVersion: 3, title: "Vertrag", state: "registered" }) },
+      assignments: { assignment_1: basis("assignment", "assignment_1", { runId: RUN_ID, entityVersion: 2, executor: "claude", state: "open", assignedTo: "claude-spezialist" }) },
+      workerResults: { result_1: basis("worker_result", "result_1", { assignmentId: "assignment_1", entityVersion: 2, state: "returned", summary: "fertig" }) },
+      runStatus: { status_1: basis("run_status", "status_1", { runId: RUN_ID, entityVersion: 1, state: "running", stage: "lesen" }) },
+      policies: { policy_1: basis("policy", "policy_1", { entityVersion: 1, policyVersion: POLICY_VERSION, mode: "dry_run" }) },
     },
     automation: { schemaVersion: 3, dataRevision, idempotencyByKey: {} },
   };
+  if (!ohneRun) {
+    snapshot.entities.runs[RUN_ID] = basis("run", RUN_ID, {
+      entityVersion: 5, slot: "09:00", date: "2026-09-20", state: "running",
+      // Die aktive Bindung gehört dem Fachadapter (E1) — hier als Testdatum.
+      activeLease: leaseOwner ? { holder: leaseOwner, expiresAt: leaseExpiresAt } : null,
+    });
+  }
+  return snapshot;
 }
 
 /*
- * Ein Speicher mit CAS-Verhalten wie `mutateAppData`:
- *   conflictsBefore  so viele Versuche kollidieren, bevor einer gelingt
- *   alwaysConflict   jeder Versuch kollidiert ⇒ nach acht Versuchen 503
- *   unknownOutcome   der Schreibvorgang endet unklar ⇒ 503, nichts gilt
+ * Ein Speicher mit CAS-Verhalten wie `mutateAppData`.
  */
 export function makeStore({ snapshot = makeCoreSnapshot(), conflictsBefore = 0, alwaysConflict = false, unknownOutcome = false, attempts = 8 } = {}) {
   const spur = { reads: 0, mutates: 0, mutatorCalls: 0 };
@@ -98,17 +114,41 @@ export function makeStore({ snapshot = makeCoreSnapshot(), conflictsBefore = 0, 
   };
 }
 
-/* ── Idempotenz: echtes Modul, sonst vertragstreue Nachbildung ──────────── */
+/* ── Idempotenz: echtes Modul, kontrolliert geladener Stand, sonst Nachbau ─ */
+let geladen = null;
 export async function idempotencyPort() {
+  if (geladen) return geladen;
+
+  // (a) Liegt das Modul im Checkout (Integrationszweig)?
   try {
     const echt = await import(path.join(root, "netlify/lib/quantus-v3-idempotency.mjs"));
     if (echt?.prepareIdempotentCommand && echt?.applyIdempotentCommand) {
-      return { source: "integration", prepare: echt.prepareIdempotentCommand, apply: echt.applyIdempotentCommand };
+      geladen = { source: "checkout", prepare: echt.prepareIdempotentCommand, apply: echt.applyIdempotentCommand };
+      return geladen;
     }
-  } catch {
-    // In diesem Paketzweig liegt das Modul nicht — Nachbildung.
-  }
-  return { source: "stand-in", prepare: nachbauPrepare, apply: nachbauApply };
+  } catch { /* nicht vorhanden — weiter */ }
+
+  // (b) Kontrolliert aus dem Git-Objektspeicher: genau der geprüfte Stand,
+  //     in ein temporäres Verzeichnis, nicht ins Paket.
+  try {
+    const quelle = execFileSync("git", ["show", `${INTEGRATION_COMMIT}:netlify/lib/quantus-v3-idempotency.mjs`],
+      { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    if (quelle && quelle.includes("applyIdempotentCommand")) {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qv3-idem-"));
+      const datei = path.join(dir, "quantus-v3-idempotency.mjs");
+      fs.writeFileSync(datei, quelle);
+      const echt = await import(datei);
+      if (echt?.prepareIdempotentCommand && echt?.applyIdempotentCommand) {
+        geladen = { source: `git:${INTEGRATION_COMMIT}`, prepare: echt.prepareIdempotentCommand, apply: echt.applyIdempotentCommand };
+        return geladen;
+      }
+    }
+  } catch { /* kein git, kein Objekt — weiter */ }
+
+  // (c) Nachbildung. Sie erfüllt denselben Vertrag, ist aber KEIN
+  //     Integrationsnachweis — die Tests sagen das ausdrücklich.
+  geladen = { source: "stand-in", prepare: nachbauPrepare, apply: nachbauApply };
+  return geladen;
 }
 
 const vorbereitet = new WeakSet();
@@ -168,29 +208,109 @@ function nachbauApply(current, prepared, applyCommand) {
 }
 
 /* ── Fachadapter-Ersatz ─────────────────────────────────────────────────── */
-export function makeDomain({ listResult = null } = {}) {
-  const spur = { loads: [], applies: 0, pages: 0 };
-  const sammlung = (kind) => ({ lead: "leads", run: "runs", note: "notes", run_context: "runs" }[kind] || null);
+const SAMMLUNG = Object.freeze({
+  lead: "leads", run: "runs", note: "notes", intake: "intakes", task: "tasks",
+  question: "questions", briefing: "briefings", briefing_answer: "briefingAnswers",
+  document: "documents", assignment: "assignments", worker_result: "workerResults",
+  run_status: "runStatus", policy: "policies", run_context: "runs",
+});
+
+/* Welches Payload-Feld die Id einer NEUEN Ressource trägt (sonst wird eine
+   vergeben). Der Adapter bestimmt das, nicht der Umschlag. */
+const NEUE_ID_FELD = Object.freeze({
+  "note.append": "noteId", "document.register": "documentId",
+  "worker.assign": "assignmentId", "worker.return": "resultRef",
+});
+
+export function makeDomain({ listResult = null, binding = null, fehlendeRun = false } = {}) {
+  const spur = { loads: [], resolves: 0, bindings: 0, applies: 0, pages: 0, bindingZeiten: [] };
+
+  const laden = (snapshot, kind, id) => {
+    const name = SAMMLUNG[kind];
+    if (!name || !id) return null;
+    const eintrag = snapshot?.entities?.[name]?.[id] || null;
+    if (!eintrag) return null;
+    return kind === "run_context" ? { ...eintrag, kind: "run_context" } : eintrag;
+  };
+
   return {
     spur,
     loadObject(snapshot, { kind, id }) {
       spur.loads.push({ kind, id });
-      const name = sammlung(kind);
-      if (!name) return null;
-      const eintrag = snapshot?.entities?.[name]?.[id] || null;
-      if (!eintrag) return null;
-      if (kind === "run_context") return { ...eintrag, kind: "run_context" };
-      return eintrag;
+      return laden(snapshot, kind, id);
     },
-    applyVerb(snapshot, command, ctx, { target }) {
+
+    resolveTarget(snapshot, { verb, command, principal, descriptor }) {
+      spur.resolves++;
+      const p = command.payload;
+      const res = descriptor.resource;
+      const neu = (kind, id) => ({
+        kind, id, tenant: principal.tenant, ownerId: principal.id,
+        jobId: command.jobId, runId: command.jobId, leadId: p.leadId || null,
+        assignedTo: principal.id, isNew: true, entityVersion: 0,
+      });
+
+      let ressource = null;
+      if (res.idField) {
+        ressource = laden(snapshot, res.kind, p[res.idField]);
+      } else if (res.creates) {
+        const feld = NEUE_ID_FELD[verb];
+        ressource = neu(res.kind, feld ? p[feld] : `${res.kind}_neu`);
+      } else if (res.ensure) {
+        ressource = laden(snapshot, "run", command.jobId) || neu("run", command.jobId);
+      } else {
+        ressource = laden(snapshot, "run", command.jobId);
+      }
+      if (!ressource) return null;
+
+      let anker = ressource;
+      if (!descriptor.anchor.self) {
+        anker = descriptor.anchor.idField
+          ? laden(snapshot, descriptor.anchor.kind, p[descriptor.anchor.idField])
+          : laden(snapshot, descriptor.anchor.kind, command.jobId);
+      }
+      if (!anker) return null;
+      return { resource: ressource, anchor: anker };
+    },
+
+    /* Die aktive Bindung. Im echten Betrieb ist das die gemeinsame
+       Leitungs-Lease (E1) bzw. die aktuelle Auftragszuweisung des
+       Spezialisten; hier eine Attrappe, die mit `nowMs` rechnet. */
+    assertActiveBinding({ snapshot, principal, jobId, nowMs, resource }) {
+      spur.bindings++;
+      spur.bindingZeiten.push(nowMs);
+      if (typeof binding === "function") return binding({ snapshot, principal, jobId, nowMs, resource });
+      if (principal.issuedBy !== "job_token") return { ok: true };
+      const lauf = laden(snapshot, "run", jobId);
+      if (!lauf) return { ok: false, reason: "run_not_found" };
+      if (principal.role === "lead_agent") {
+        const lease = lauf.activeLease;
+        if (!lease || String(lease.holder || "") !== String(principal.id)) return { ok: false, reason: "lease_not_held" };
+        const bis = Date.parse(String(lease.expiresAt || ""));
+        if (!Number.isFinite(bis) || bis <= nowMs) return { ok: false, reason: "lease_expired" };
+        return { ok: true };
+      }
+      // Spezialisten hängen nicht an der Leitungs-Lease, sondern an ihrer
+      // aktuellen Zuweisung.
+      const zuweisung = Object.values(snapshot?.entities?.assignments || {})
+        .find((a) => String(a.assignedTo || "") === String(principal.id) && String(a.runId || "") === String(jobId));
+      if (!zuweisung || zuweisung.state !== "open") return { ok: false, reason: "assignment_not_active" };
+      return { ok: true };
+    },
+
+    applyVerb(snapshot, command, ctx, { resource }) {
       spur.applies++;
-      const name = sammlung(target.kind);
+      const name = SAMMLUNG[resource.kind];
       const kopie = structuredClone(snapshot);
-      const eintrag = kopie.entities[name][target.id];
-      eintrag.entityVersion += 1;
+      kopie.entities[name] = kopie.entities[name] || {};
+      const vorhanden = kopie.entities[name][resource.id];
+      const eintrag = vorhanden || { ...resource, isNew: undefined, entityVersion: 0 };
+      eintrag.entityVersion = (Number(eintrag.entityVersion) || 0) + 1;
       eintrag.updatedAt = ctx.now;
-      return { data: kopie, result: { entityVersions: { [target.id]: eintrag.entityVersion }, verb: command.verb } };
+      kopie.entities[name][resource.id] = eintrag;
+      return { data: kopie, result: { entityVersions: { [resource.id]: eintrag.entityVersion }, verb: command.verb } };
     },
+
     listPage(snapshot, { query, scopeId, pageSize, afterId }) {
       spur.pages++;
       if (listResult) return typeof listResult === "function" ? listResult({ query, scopeId, pageSize, afterId }) : listResult;
@@ -241,13 +361,14 @@ export function commandBody({ verb = "lead.comment", jobId = RUN_ID, expectedEnt
   };
 }
 
-export function commandHeaders({ token, idempotencyKey = null, contentType = "application/json", origin = null } = {}) {
+export function commandHeaders({ token, idempotencyKey = null, contentType = "application/json", origin = null, validateOnly = false } = {}) {
   const kopf = {
     authorization: `Bearer ${token}`,
     "content-type": contentType,
     "idempotency-key": idempotencyKey || `test-${randomUUID()}`,
   };
   if (origin) kopf.origin = origin;
+  if (validateOnly) kopf["x-quantus-validate-only"] = "1";
   return kopf;
 }
 

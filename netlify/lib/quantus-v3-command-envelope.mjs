@@ -77,6 +77,7 @@ const enumOf = (values, { optional = false } = {}) => ({ kind: "enum", values, o
 const iso = ({ optional = false } = {}) => ({ kind: "iso", optional });
 const day = ({ optional = false } = {}) => ({ kind: "day", optional });
 const int = (min, max, { optional = false } = {}) => ({ kind: "int", min, max, optional });
+const hash = ({ optional = false } = {}) => ({ kind: "hash", optional });
 
 /*
  * Die Fachverben. Für jedes:
@@ -87,97 +88,158 @@ const int = (min, max, { optional = false } = {}) => ({ kind: "int", min, max, o
  * Die Verben sind dieselben wie in der C1-Matrix; `context.read` fehlt hier,
  * weil Lesen über benannte Abfragen läuft, nicht über den Befehlsweg.
  */
+/*
+ * Die 22 Fachverben.
+ *
+ * Für jedes stehen drei Dinge fest:
+ *   fields    geschlossenes Schema des Nutzinhalts
+ *   resource  worauf das Verb WIRKT (bestimmt die Datenkategorie der
+ *             Rechteprüfung). `idField: null` heisst: die Ressource entsteht
+ *             erst — ein Anlegevorgang.
+ *   anchor    woran die BINDUNG hängt (Mandant, Eigentum, Auftrag,
+ *             Zuweisung). `{ self: true }` = die Ressource selbst,
+ *             `idField: null` = der Lauf aus `jobId`.
+ *
+ * BEFUND (Review 33a4b3d): Beides war dasselbe Feld. Dadurch scheiterte jeder
+ * Anlegevorgang („intake.create" prüfte die Kategorie des LAUFS gegen die
+ * Rechte für „intake"), und die naheliegende Abhilfe — den Anker einfach
+ * miterlauben — hätte die Rechte verbreitert. Jetzt sind es zwei Angaben.
+ *
+ * Die Nutzinhalte sind mit dem Kernvertrag abgeglichen: `lead.schedule` trägt
+ * Gegenpartei, nächste Handlung, Nachfasszeitpunkt und Belege;
+ * `document.register` Anhang, Inhaltsabdruck und Herkunft; die Worker-Verben
+ * Quellversion, Ausführer und die erlaubten Kontext-Ids. Fehlt eines dieser
+ * Felder, wird NICHTS erfunden — der Befehl wird abgewiesen.
+ */
 export const COMMAND_VERBS = Object.freeze({
   "intake.create": {
-    target: { kind: "run", idField: null },
+    resource: { kind: "intake", idField: null , creates: true},
+    anchor: { kind: "run", idField: null },
     fields: { source: enumOf(["mail", "manual", "document", "system"]), title: text(200), text: text(8000, { optional: true }), evidenceRefs: ids(20, { optional: true }) },
   },
   "intake.accept": {
-    target: { kind: "intake", idField: "intakeId" },
+    resource: { kind: "intake", idField: "intakeId" },
+    anchor: { self: true },
     fields: { intakeId: id(), leadId: id({ optional: true }) },
   },
   "task.create": {
-    target: { kind: "lead", idField: "leadId" },
+    resource: { kind: "task", idField: null , creates: true},
+    anchor: { kind: "lead", idField: "leadId" },
     fields: { leadId: id(), title: text(200), dueAt: iso({ optional: true }), notes: text(2000, { optional: true }) },
   },
   "lead.comment": {
-    target: { kind: "lead", idField: "leadId" },
+    resource: { kind: "lead", idField: "leadId" },
+    anchor: { self: true },
     fields: { leadId: id(), text: text(8000), evidenceRefs: ids(20, { optional: true }) },
   },
   "lead.transition": {
-    target: { kind: "lead", idField: "leadId" },
+    resource: { kind: "lead", idField: "leadId" },
+    anchor: { self: true },
     fields: { leadId: id(), toState: text(64), reason: text(1000, { optional: true }), evidenceRefs: ids(20, { optional: true }) },
   },
   "lead.schedule": {
-    target: { kind: "lead", idField: "leadId" },
-    fields: { leadId: id(), waitUntil: iso(), reason: text(1000, { optional: true }) },
+    resource: { kind: "lead", idField: "leadId" },
+    anchor: { self: true },
+    // Warten heisst: auf WEN, mit WELCHEM nächsten Schritt, bis WANN, belegt
+    // WOMIT. Ohne diese vier gibt es kein Warten (Kernvertrag Paket B).
+    fields: {
+      leadId: id(), waitUntil: iso(), counterparty: text(200), nextAction: text(500),
+      evidenceRefs: ids(20), followUpAt: iso({ optional: true }), reason: text(1000, { optional: true }),
+    },
   },
   "briefing.answer": {
-    target: { kind: "briefing", idField: "briefingId" },
+    resource: { kind: "briefing_answer", idField: null , creates: true},
+    anchor: { kind: "briefing", idField: "briefingId" },
     fields: { briefingId: id(), questionId: id(), answer: text(8000), decision: enumOf(["yes", "no", "later", "custom"], { optional: true }) },
   },
   "briefing.consumeAnswer": {
-    target: { kind: "briefing_answer", idField: "answerId" },
+    resource: { kind: "briefing_answer", idField: "answerId" },
+    anchor: { self: true },
     fields: { briefingId: id(), answerId: id() },
   },
   "question.create": {
-    target: { kind: "lead", idField: "leadId" },
+    resource: { kind: "question", idField: null , creates: true},
+    anchor: { kind: "lead", idField: "leadId" },
     fields: { leadId: id(), text: text(2000), options: list(8, text(200), { optional: true }) },
   },
   "question.resolve": {
-    target: { kind: "question", idField: "questionId" },
+    resource: { kind: "question", idField: "questionId" },
+    anchor: { self: true },
     fields: { questionId: id(), answer: text(2000) },
   },
   "document.register": {
-    target: { kind: "document", idField: "documentId" },
-    fields: { documentId: id(), title: text(200), sourceRef: id({ optional: true }) },
+    resource: { kind: "document", idField: null , creates: true},
+    anchor: { kind: "run", idField: null },
+    // Ein Dokument ohne geprüften Anhang, Abdruck und Herkunft ist eine
+    // Behauptung, kein Beleg.
+    fields: {
+      documentId: id(), title: text(200), attachmentRef: id(), contentHash: hash(),
+      origin: enumOf(["mail", "upload", "scan", "external"]),
+      linkedLeadIds: ids(20, { optional: true }), sourceRef: id({ optional: true }),
+    },
   },
   "document.processed": {
-    target: { kind: "document", idField: "documentId" },
-    fields: { documentId: id(), extractionRef: id(), summary: text(4000, { optional: true }) },
+    resource: { kind: "document", idField: "documentId" },
+    anchor: { self: true },
+    fields: { documentId: id(), extractionRef: id(), contentHash: hash(), summary: text(4000, { optional: true }) },
   },
   "worker.assign": {
-    target: { kind: "run", idField: null },
-    // `workerKind` ist die Art des Spezialisten, KEINE Rollenbehauptung: die
+    resource: { kind: "assignment", idField: null , creates: true},
+    anchor: { kind: "run", idField: null },
+    // `executor` ist die Art des Spezialisten, KEINE Rollenbehauptung: die
     // Rechte des Aufrufers hängen weiter ausschliesslich an seinem Ausweis.
-    fields: { assignmentId: id(), workerKind: enumOf(["claude", "gemini"]), contextRef: id(), dueAt: iso({ optional: true }) },
+    // `sourceVersion` bindet den Auftrag an den Stand, auf dem er beruht,
+    // `allowedContextIds` an genau die Kontexte, die er lesen darf.
+    fields: {
+      assignmentId: id(), executor: enumOf(["claude", "gemini"]), sourceVersion: int(0, Number.MAX_SAFE_INTEGER),
+      allowedContextIds: ids(20), dueAt: iso({ optional: true }),
+    },
   },
   "worker.return": {
-    target: { kind: "assignment", idField: "assignmentId" },
-    fields: { assignmentId: id(), resultRef: id(), summary: text(8000), evidenceRefs: ids(20, { optional: true }) },
+    resource: { kind: "worker_result", idField: null , creates: true},
+    anchor: { kind: "assignment", idField: "assignmentId" },
+    fields: {
+      assignmentId: id(), resultRef: id(), summary: text(8000),
+      sourceVersion: int(0, Number.MAX_SAFE_INTEGER), evidenceRefs: ids(20, { optional: true }),
+    },
   },
   "worker.review": {
-    target: { kind: "worker_result", idField: "resultId" },
+    resource: { kind: "worker_result", idField: "resultId" },
+    anchor: { self: true },
     fields: { resultId: id(), verdict: enumOf(["accepted", "rejected", "revise"]), notes: text(4000, { optional: true }) },
   },
   "run.ensure": {
-    target: { kind: "run", idField: null },
+    // Der Lauf entsteht hier — deshalb ist er RESSOURCE und Anker zugleich,
+    // und deshalb darf er beim Anlegen noch fehlen.
+    resource: { kind: "run", idField: null , ensure: true},
+    anchor: { self: true },
     fields: { slot: enumOf(["04:00", "09:00", "14:00", "23:00"]), date: day() },
   },
   "run.claim": {
-    target: { kind: "run", idField: null },
+    resource: { kind: "run", idField: null , fromJob: true}, anchor: { self: true },
     fields: { leaseSeconds: int(1, 900) },
   },
   "run.renew": {
-    target: { kind: "run", idField: null },
+    resource: { kind: "run", idField: null , fromJob: true}, anchor: { self: true },
     fields: { leaseSeconds: int(1, 900) },
   },
   "run.checkpoint": {
-    target: { kind: "run", idField: null },
+    resource: { kind: "run", idField: null , fromJob: true}, anchor: { self: true },
     fields: { stage: text(64), note: text(2000, { optional: true }) },
   },
   "run.finalize": {
-    target: { kind: "run", idField: null },
+    resource: { kind: "run", idField: null , fromJob: true}, anchor: { self: true },
     fields: { outcome: enumOf(["complete", "partial", "failed"]), summaryRef: id({ optional: true }) },
   },
   "note.append": {
-    target: { kind: "run", idField: null },
+    resource: { kind: "note", idField: null , creates: true},
+    anchor: { kind: "run", idField: null },
     // `noteScope` heisst bewusst nicht `scope`: `scope` ist ein Feldname, mit
     // dem sonst Rechte behauptet werden, und wird deshalb generell abgewiesen.
     fields: { noteId: id(), text: text(8000), noteScope: enumOf(["run", "lead"]), leadId: id({ optional: true }) },
   },
   "run.log": {
-    target: { kind: "run", idField: null },
+    resource: { kind: "run", idField: null , fromJob: true}, anchor: { self: true },
     fields: { event: text(64), detail: text(2000, { optional: true }) },
   },
 });
@@ -228,6 +290,10 @@ function checkField(spec, value, feld) {
       return null;
     case "int":
       if (typeof value !== "number" || !Number.isInteger(value) || value < spec.min || value > spec.max) return `field_invalid:${feld}`;
+      return null;
+    case "hash":
+      // Ein Inhaltsabdruck ist ein SHA-256 in Hex — nichts anderes.
+      if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value)) return `field_invalid:${feld}`;
       return null;
     default:
       return `field_invalid:${feld}`;
@@ -299,7 +365,14 @@ export function parseCommandEnvelope(value, { maxBytes = COMMAND_MAX_BYTES } = {
   const bytes = Buffer.byteLength(JSON.stringify(command), "utf8");
   if (bytes > maxBytes) return authError("payload_too_large", "command_too_large");
 
-  return authOk({ command, descriptor: Object.freeze({ ...descriptor.target, verb }) });
+  return authOk({
+    command,
+    descriptor: Object.freeze({
+      verb,
+      resource: Object.freeze({ ...descriptor.resource }),
+      anchor: Object.freeze({ ...descriptor.anchor }),
+    }),
+  });
 }
 
 /* Verschachtelte Suche nach verbotenen Feldnamen und zu tiefen Strukturen.
