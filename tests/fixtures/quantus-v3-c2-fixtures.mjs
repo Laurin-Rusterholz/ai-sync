@@ -7,7 +7,7 @@
  *  • `makeStore()` bildet `mutateAppData` nach: synchroner Mutator, bis zu
  *    acht CAS-Versuche, Konflikte, unklarer Ausgang, `unchanged`.
  *  • `idempotencyPort()` nimmt das ECHTE Modul des Integrationsstandes. Liegt
- *    es nicht im Checkout, wird der Stand `40a448c` KONTROLLIERT aus dem
+ *    es nicht im Checkout, wird der Stand `52b0641` KONTROLLIERT aus dem
  *    Git-Objektspeicher in ein temporäres Verzeichnis gelegt und von dort
  *    geladen — kein Kopieren ins Paket, keine zweite Ledgerlogik. Erst wenn
  *    auch das nicht geht, tritt eine vertragstreue Nachbildung an seine
@@ -33,7 +33,7 @@ const root = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.ur
 export const RUN_ID = "job_20260920_42";
 export const LEAD_ID = "lead_123";
 export const OWNER = "uid-laurin";
-export const INTEGRATION_COMMIT = "40a448c";
+export const INTEGRATION_COMMIT = "52b0641";
 
 /* ── Ein Kerndatensatz in der Form, die die Kette erwartet ──────────────── */
 export function makeCoreSnapshot({
