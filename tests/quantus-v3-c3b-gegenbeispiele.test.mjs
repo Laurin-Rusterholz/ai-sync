@@ -27,7 +27,9 @@ import {
   identityAccessCacheStats, IDENTITY_SCOPE, EXPIRY_MARGIN_MS, MAX_CACHE_ENTRIES,
   IDENTITY_ACCESS_ERRORS, FIREBASE_TOKEN_EXPORT,
 } from "../netlify/lib/quantus-v3-identity-access.mjs";
-import { buildRuntimeDeps, resetRuntimeCachesForTests } from "../netlify/lib/quantus-v3-runtime.mjs";
+import {
+  buildRuntimeDeps, resetRuntimeCachesForTests, buildDomainAdapter, DOMAIN_FACTORY_REASONS,
+} from "../netlify/lib/quantus-v3-runtime.mjs";
 
 const PROJEKT = "quantus-test-projekt";
 const MANDANT = "quantus-haushalt";
@@ -327,4 +329,145 @@ test("G-7/8: ein werfender Port verlässt das Modul nur als feste Kennung", asyn
   await assert.rejects(() => nachFehler(), (err) => err.code === "identity_token_failed");
   assert.equal(await nachFehler(), "SYNTHETIC");
   assert.equal(versuche, 2);
+});
+
+/* ══ C3B-07 (Release-Review 4379061): die Grenze gilt auch unter Last ═════
+ *
+ * Befund: 16 gleichzeitige, verschiedene synthetische Quellen ergaben 16
+ * Cache-Einträge bei MAX_CACHE_ENTRIES 8 — während des Abrufs und, weil
+ * niemand nachträglich begrenzte, auch nach dem Abschluss. Die Verdrängung
+ * übersprang jeden Eintrag mit laufendem Abruf.
+ * ─────────────────────────────────────────────────────────────────────── */
+test("C3B-07: sechzehn gleichzeitige Quellen sprengen die Grenze nicht", async () => {
+  resetIdentityAccessCacheForTests();
+
+  // Kein Versprechen darf unbehandelt liegenbleiben — auch keine Ablehnung.
+  const verloren = [];
+  const wache = (grund) => verloren.push(grund);
+  process.on("unhandledRejection", wache);
+
+  let oeffne;
+  const gate = new Promise((r) => { oeffne = r; });
+  const quellen = [];
+  for (let i = 0; i < 16; i++) {
+    // Jede Quelle ist eine EIGENE Funktion ⇒ eigener Cache-Schlüssel.
+    quellen.push(createAccessTokenProvider({
+      read: projektgleich(), firebaseModule: {}, now: () => T,
+      obtainAccessToken: async () => {
+        await gate;
+        return { token: `SYNTH-${i}`, scope: IDENTITY_SCOPE, expiresAt: T + 3_600_000 };
+      },
+    }));
+  }
+  assert.equal(quellen.filter((p) => typeof p === "function").length, 16);
+
+  const laeufe = quellen.map((p) => p().then(
+    (token) => ({ ok: true, token }),
+    (err) => ({ ok: false, code: err.code }),
+  ));
+
+  // WÄHREND alle warten: die Grenze hält — inklusive der laufenden Abrufe.
+  const waehrend = identityAccessCacheStats(() => T);
+  assert.ok(waehrend.entries <= MAX_CACHE_ENTRIES,
+    `während des Abrufs lagen ${waehrend.entries} Einträge bei Grenze ${MAX_CACHE_ENTRIES}`);
+  assert.equal(waehrend.inFlight, MAX_CACHE_ENTRIES);
+
+  oeffne();
+  const ergebnisse = await Promise.all(laeufe);
+
+  // NACH dem Abschluss ebenfalls — und ohne nachträgliche Verdrängung.
+  const nachher = identityAccessCacheStats(() => T);
+  assert.ok(nachher.entries <= MAX_CACHE_ENTRIES,
+    `nach dem Abschluss lagen ${nachher.entries} Einträge bei Grenze ${MAX_CACHE_ENTRIES}`);
+  assert.equal(nachher.inFlight, 0);
+
+  // Was keinen Platz bekam, wurde KONTROLLIERT abgelehnt — kein Token ohne
+  // Platz, keine stille Überschreitung.
+  const erfolge = ergebnisse.filter((r) => r.ok);
+  const abgelehnt = ergebnisse.filter((r) => !r.ok);
+  assert.equal(erfolge.length, MAX_CACHE_ENTRIES);
+  assert.equal(abgelehnt.length, 16 - MAX_CACHE_ENTRIES);
+  assert.ok(abgelehnt.every((r) => r.code === "identity_access_busy"), "fremde Kennung in der Ablehnung");
+  assert.ok(IDENTITY_ACCESS_ERRORS.includes("identity_access_busy"));
+  assert.equal(nachher.rejected, 16 - MAX_CACHE_ENTRIES);
+
+  // Nach dem Abschluss ist wieder Platz: eine neue Quelle wird aufgenommen,
+  // indem ein untätiger Eintrag verdrängt wird — und die Grenze hält.
+  const neu = createAccessTokenProvider({
+    read: projektgleich(), firebaseModule: {}, now: () => T,
+    obtainAccessToken: async () => ({ token: "SYNTH-NEU", scope: IDENTITY_SCOPE, expiresAt: T + 3_600_000 }),
+  });
+  assert.equal(await neu(), "SYNTH-NEU");
+  assert.ok(identityAccessCacheStats(() => T).entries <= MAX_CACHE_ENTRIES);
+
+  process.off("unhandledRejection", wache);
+  assert.deepEqual(verloren, [], "es blieb ein Versprechen unbehandelt");
+});
+
+test("C3B-07: die Bündelung DERSELBEN Quelle bleibt unberührt", async () => {
+  resetIdentityAccessCacheForTests();
+  let oeffne;
+  const gate = new Promise((r) => { oeffne = r; });
+  let erwerbe = 0;
+  const eineQuelle = async () => {
+    erwerbe++;
+    await gate;
+    return { token: "SYNTH-EINE", scope: IDENTITY_SCOPE, expiresAt: T + 3_600_000 };
+  };
+  const provider = createAccessTokenProvider({
+    read: projektgleich(), firebaseModule: {}, now: () => T, obtainAccessToken: eineQuelle,
+  });
+
+  // Sechzehn gleichzeitige Anfragen an dieselbe Quelle: ein Eintrag, ein
+  // Erwerb, keine Ablehnung — die Grenze darf die Bündelung nicht bestrafen.
+  const laeufe = Array.from({ length: 16 }, () => provider());
+  const waehrend = identityAccessCacheStats(() => T);
+  assert.equal(waehrend.entries, 1);
+  assert.equal(waehrend.inFlight, 1);
+  oeffne();
+  const ergebnisse = await Promise.all(laeufe);
+  assert.deepEqual(ergebnisse, Array(16).fill("SYNTH-EINE"));
+  assert.equal(erwerbe, 1, `dieselbe Quelle wurde ${erwerbe}-mal erworben`);
+  assert.equal(identityAccessCacheStats(() => T).rejected, 0, "die Bündelung wurde abgelehnt");
+
+  // Auch viele Provider-Objekte über DERSELBEN Quellfunktion teilen den Platz.
+  resetIdentityAccessCacheForTests();
+  const viele = Array.from({ length: 16 }, () => createAccessTokenProvider({
+    read: projektgleich(), firebaseModule: {}, now: () => T, obtainAccessToken: eineQuelle,
+  }));
+  const zweiteRunde = await Promise.all(viele.map((p) => p()));
+  assert.deepEqual(zweiteRunde, Array(16).fill("SYNTH-EINE"));
+  assert.equal(identityAccessCacheStats(() => T).entries, 1);
+  assert.equal(identityAccessCacheStats(() => T).rejected, 0);
+});
+
+/* ══ Fachadapter-Gründe: nur die Liste, nie ein fremder Fehler ═══════════ */
+test("der Grund eines Fachadapter-Ports kommt aus der Allowlist", () => {
+  const politik = { policyVersion: "v", tenantId: null, mode: "enforce" };
+  const geheim = "FREMDER-TEXT-MIT-SYNTHETIC-SECRET";
+
+  const werfend = buildDomainAdapter({
+    factory: () => {
+      const err = new Error(geheim);
+      err.code = geheim;
+      err.reason = geheim;
+      throw err;
+    },
+    policy: politik, now: () => T,
+  });
+  assert.equal(werfend.ok, false);
+  assert.equal(werfend.reason, "domain_factory_failed");
+  assert.ok(DOMAIN_FACTORY_REASONS.includes(werfend.reason));
+  assert.ok(!JSON.stringify(werfend).includes("SYNTHETIC"), "fremder Text im Grund");
+
+  // Auch eine Fabrik, die selbst einen „Grund" behauptet, bestimmt ihn nicht.
+  const behauptet = buildDomainAdapter({
+    factory: () => ({ reason: geheim, resolveTarget() {} }), policy: politik, now: () => T,
+  });
+  assert.equal(behauptet.reason, "domain_adapter_incomplete");
+
+  for (const grund of DOMAIN_FACTORY_REASONS) {
+    assert.match(grund, /^domain_(factory|adapter)_[a-z_]+$/);
+  }
+  assert.equal(DOMAIN_FACTORY_REASONS.length, 3);
 });

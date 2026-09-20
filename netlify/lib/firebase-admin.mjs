@@ -113,27 +113,36 @@ function base64url(value) {
   return buffer.toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
-async function getAdminAccessToken() {
-  if (cachedAccessToken && Date.now() < cachedAccessTokenExpiry - 60_000) return cachedAccessToken;
+/* ── EIN Tokentausch, zwei Verwendungen ───────────────────────────────────
+ * Herausgezogen aus `getAdminAccessToken`, damit es nur EINE Zugangs- und
+ * Signaturlogik gibt. Der Admin-Weg verhaelt sich unveraendert: er nennt beim
+ * Refresh-Tausch KEINEN Scope (ein Scope-Parameter kann nur einschraenken und
+ * haette den bestehenden Zugang veraendern) und signiert das Dienstkonto-JWT
+ * weiterhin mit ADMIN_SCOPES.
+ * --------------------------------------------------------------------- */
+async function exchangeAccessToken({ scope, sendScope = false }) {
   const userOAuth = userRefreshTokenFromEnv();
   if (userOAuth) {
+    const form = {
+      grant_type: "refresh_token",
+      refresh_token: userOAuth.refreshToken,
+      client_id: userOAuth.clientId,
+      client_secret: userOAuth.clientSecret,
+    };
+    // Nur der ausdruecklich scope-gebundene Weg nennt den Scope. Google kann
+    // damit nur EINSCHRAENKEN, nie hinzufuegen — deshalb wird die Antwort
+    // geprueft (siehe getIdentityAccessToken).
+    if (sendScope && scope) form.scope = scope;
     const response = await fetch(TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: userOAuth.refreshToken,
-        client_id: userOAuth.clientId,
-        client_secret: userOAuth.clientSecret,
-      }),
+      body: new URLSearchParams(form),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.access_token) {
       throw new Error("Firebase OAuth-Refresh fehlgeschlagen: " + (data.error_description || data.error || response.status));
     }
-    cachedAccessToken = data.access_token;
-    cachedAccessTokenExpiry = Date.now() + Number(data.expires_in || 3600) * 1000;
-    return cachedAccessToken;
+    return { token: data.access_token, expiresIn: data.expires_in, grantedScope: data.scope ?? null, source: "oauth_refresh" };
   }
   const account = serviceAccountFromEnv();
   const now = Math.floor(Date.now() / 1000);
@@ -144,7 +153,7 @@ async function getAdminAccessToken() {
     aud: TOKEN_URL,
     iat: now,
     exp: now + 3600,
-    scope: ADMIN_SCOPES,
+    scope,
   }));
   const unsigned = `${header}.${claim}`;
   const signer = createSign("RSA-SHA256");
@@ -164,9 +173,114 @@ async function getAdminAccessToken() {
   if (!response.ok || !data.access_token) {
     throw new Error("Firebase Admin OAuth fehlgeschlagen: " + (data.error_description || data.error || response.status));
   }
-  cachedAccessToken = data.access_token;
-  cachedAccessTokenExpiry = Date.now() + Number(data.expires_in || 3600) * 1000;
+  return { token: data.access_token, expiresIn: data.expires_in, grantedScope: data.scope ?? null, source: "service_account" };
+}
+
+async function getAdminAccessToken() {
+  if (cachedAccessToken && Date.now() < cachedAccessTokenExpiry - 60_000) return cachedAccessToken;
+  const erworben = await exchangeAccessToken({ scope: ADMIN_SCOPES, sendScope: false });
+  cachedAccessToken = erworben.token;
+  cachedAccessTokenExpiry = Date.now() + Number(erworben.expiresIn || 3600) * 1000;
   return cachedAccessToken;
+}
+
+/* ══ Ein SCOPE-GEBUNDENER Token — nur fuer accounts:lookup (Gate G1) ══════
+ *
+ * WOZU: Die serverseitige Widerrufs- und Sperrpruefung (Firebase
+ * „Manage user sessions") laeuft ueber `accounts:lookup` der Identity
+ * Toolkit API. Der Admin-Token oben kann das NICHT autorisieren: seine
+ * Scopes sind `firebase.database`, `userinfo.email` und
+ * `devstorage.full_control`. Ein ID-Token ohne Widerrufspruefung darf nie
+ * gelten — also braucht es genau diesen zweiten, eng gebundenen Token.
+ *
+ * REGELN
+ *  • KEINE neuen Zugangsdaten. Es gilt dieselbe Aufloesung wie oben
+ *    (`userRefreshTokenFromEnv` bzw. `serviceAccountFromEnv`) und derselbe
+ *    Tausch. Diese Funktion liest keine eigene Variable und legt keine an.
+ *  • ECHTE SCOPE-PRUEFUNG. Google nennt die gewaehrten Scopes. Traegt die
+ *    Antwort den noetigen nicht (auch nicht ueber `cloud-platform`), gilt der
+ *    Token nicht — ein zu enger Token erzeugte sonst bei jedem Lookup 403.
+ *    Der Refresh-Weg kann Scopes nur einschraenken; fehlt die Zustimmung,
+ *    scheitert der Aufruf hier und nicht erst beim Nutzer.
+ *  • ECHTE PROJEKTPRUEFUNG. Wer ein anderes Projekt verlangt als das
+ *    konfigurierte, bekommt keinen Token: im falschen Verzeichnis
+ *    nachzusehen hiesse, jeden fuer ungesperrt zu halten.
+ *  • EXPLIZITE FRIST. `expires_in` wird nicht geraten; fehlt sie oder ist sie
+ *    unbrauchbar, gibt es keinen Token.
+ *  • KEIN CACHE HIER. Der Aufrufer
+ *    (`netlify/lib/quantus-v3-identity-access.mjs`) haelt einen begrenzten,
+ *    an Projekt/Mandant/Scope/Zugang gebundenen Speicher mit Ablaufmarge.
+ *    Ein zweiter Cache an dieser Stelle koennte nur veralten.
+ *  • KEIN WERT IN FEHLERN. Nur Namen, Scopes und HTTP-Status.
+ * ═══════════════════════════════════════════════════════════════════════ */
+export const IDENTITY_TOOLKIT_SCOPE = "https://www.googleapis.com/auth/identitytoolkit";
+export const CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
+
+function scopeGranted(grantedScope, requiredScope) {
+  const teile = String(grantedScope || "").split(/\s+/).filter(Boolean);
+  return teile.includes(requiredScope) || teile.includes(CLOUD_PLATFORM_SCOPE);
+}
+
+/* Welches Projekt ist konfiguriert? Dieselben Quellen wie der Admin-Weg —
+   ohne den privaten Schluessel anzufassen. */
+export function firebaseConfiguredProjectId() {
+  const direkt = String(env("FIREBASE_PROJECT_ID") || "").trim();
+  if (direkt) return direkt;
+  const rohJson = env("FIREBASE_SERVICE_ACCOUNT_JSON");
+  if (rohJson) {
+    try {
+      const { project_id: projekt } = JSON.parse(String(rohJson));
+      if (projekt) return String(projekt).trim();
+    } catch {
+      // Ein unlesbares Dienstkonto beantwortet die Frage nicht.
+    }
+  }
+  return DEFAULT_PROJECT_ID;
+}
+
+/* Gibt es ueberhaupt eine Zugangsaufloesung? Fuer Aufrufer, die sonst einen
+   Weg verdrahten wuerden, der bei jedem Aufruf nur scheitern kann. Ein halbes
+   OAuth-Paar gilt als NICHT konfiguriert (fail closed). */
+export function firebaseAccessCredentialsConfigured() {
+  try {
+    if (userRefreshTokenFromEnv()) return true;
+  } catch {
+    return false;
+  }
+  if (env("FIREBASE_SERVICE_ACCOUNT_JSON")) return true;
+  return Boolean(env("FIREBASE_CLIENT_EMAIL") && env("FIREBASE_PRIVATE_KEY"));
+}
+
+export async function getIdentityAccessToken({ scope = IDENTITY_TOOLKIT_SCOPE, projectId = null } = {}) {
+  const verlangt = String(scope || "").trim() || IDENTITY_TOOLKIT_SCOPE;
+  if (verlangt !== IDENTITY_TOOLKIT_SCOPE && verlangt !== CLOUD_PLATFORM_SCOPE) {
+    // Diese Funktion ist fuer EINEN Zweck da. Sie ist keine allgemeine
+    // Tokenausgabe, mit der sich beliebige Rechte holen liessen.
+    throw Object.assign(new Error("Nicht unterstuetzter Scope fuer getIdentityAccessToken."), { code: "scope_not_supported" });
+  }
+  const eigenes = firebaseConfiguredProjectId();
+  if (projectId && String(projectId).trim() !== eigenes) {
+    throw Object.assign(new Error("Projektbindung verletzt: verlangt wurde ein anderes Projekt als das konfigurierte."), { code: "project_mismatch" });
+  }
+  if (!firebaseAccessCredentialsConfigured()) {
+    throw Object.assign(new Error("Firebase-Zugangsdaten sind nicht konfiguriert."), { code: "credentials_missing" });
+  }
+
+  const erworben = await exchangeAccessToken({ scope: verlangt, sendScope: true });
+  if (erworben.grantedScope != null && !scopeGranted(erworben.grantedScope, verlangt)) {
+    throw Object.assign(new Error("Der erteilte Token traegt den noetigen Scope nicht."), { code: "scope_missing" });
+  }
+  const lebt = typeof erworben.expiresIn === "number" ? erworben.expiresIn : Number(erworben.expiresIn);
+  if (!Number.isFinite(lebt) || lebt <= 0) {
+    throw Object.assign(new Error("Der Token nennt keine brauchbare Laufzeit."), { code: "lifetime_invalid" });
+  }
+  return {
+    token: erworben.token,
+    expiresAt: Date.now() + lebt * 1000,
+    scope: erworben.grantedScope || verlangt,
+    projectId: eigenes,
+    source: erworben.source,
+  };
 }
 
 async function adminFetch(url, init = {}) {

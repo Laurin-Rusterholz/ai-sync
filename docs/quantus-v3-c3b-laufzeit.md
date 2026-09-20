@@ -16,7 +16,8 @@ fehlt, antwortet der Dienst **503**, ohne etwas zu tun.
 | --- | --- |
 | `1a8d08c` | C2 unabhängig geprüft (64 eigene Tests, 13 unabhängige Gegenprüfungen). Befund: die Verdrahtung selbst war **nicht** belastbar |
 | `a422670` | C3b-01 … C3b-03 behoben, 16 eigene Tests. Unabhängig geprüft: Positivfall bestanden, aber **acht Gegenproben** am Zugriffstoken fehlgeschlagen |
-| diese Fassung | G-1 … G-8 behoben, je als Fall in `tests/quantus-v3-c3b-gegenbeispiele.test.mjs`; 22 eigene Tests |
+| `4379061` | G-1 … G-8 behoben, 22 eigene Tests. Release-Review (`48dc1fe`): alle 22 plus neun frühere Prüfungen grün, **eine neue Gegenprobe** (C3B-07) fehlgeschlagen |
+| diese Fassung | C3B-07 behoben (strenge Admission), Gate G1 im Code geschlossen (scope-gebundener Export in firebase-admin, mit Regressionsprüfung), Fachadapter-Gründe auf eine Allowlist; 33 eigene Tests |
 
 | # | Befund (`1a8d08c`) | Jetzt |
 | --- | --- | --- |
@@ -37,10 +38,19 @@ den alten Stand nachgestellt und schlägt dort fehl.
 | G-6 | Zwei echte `buildRuntimeDeps` für **dieselbe** Konfiguration ergaben bei parallelem `userLookup` **zwei** Tokenabrufe: der Cache lag im Provider-Abschluss, die Handler bauen ihre Abhängigkeiten aber **pro Request** | Der Speicher liegt im Modul und wirkt über Requests. Gebunden an Projekt, Mandant, Scope, Tokenquelle (Portidentität), Verkehr und die **aktuelle** Zugangskonfiguration (als Hash — die Werte werden nicht gespeichert und nirgends zurückgegeben). Begrenzt auf `MAX_CACHE_ENTRIES` (8), ausdrücklich verwerfbar über `invalidateIdentityAccessCache()`. Jeder Wechsel von Projekt, Mandant, Scope, Quelle oder Zugangsdaten ergibt einen anderen Schlüssel. Der **Widerrufslookup** selbst wird **nie** gecacht |
 | G-7..8 | Ein werfender Port (oder `getIdentityAccessToken`) wurde mit Originalfehler weitergereicht — Nachricht, `body` und `cause` konnten ein Zugangsdatum tragen | An der Modulgrenze wird **jeder** Fehler in einen neuen übersetzt: `message` = Kennung, ein einziges eigenes Feld (`code`), kein `cause`, kein `body`, kein Tokenwert. Das ist ein Grenznachweis am Modul — keine Aussage über eine HTTP-Antwort |
 
+### Runde 3 — C3B-07, Gate G1, Allowlist (Release-Review `48dc1fe`)
+
+| # | Befund | Jetzt |
+| --- | --- | --- |
+| C3B-07 | Die angekündigte Speichergrenze galt unter Last **nicht**: `eintragFuer` legte den Eintrag bedingungslos an, und die Verdrängung übersprang jeden Eintrag mit laufendem Abruf. 16 gleichzeitige, verschiedene Quellen ergaben 16 Einträge bei `MAX_CACHE_ENTRIES` 8 — während des Abrufs **und** nach dem Abschluss, da niemand nachträglich begrenzte | **Strenge Admission vor dem Anlegen.** Ist der Eintrag schon da, ändert sich nichts (die Bündelung derselben Quelle bleibt unberührt und kostet keinen Platz). Sonst: freier Platz ⇒ anlegen; kein freier Platz ⇒ erst unbrauchbare, dann die ältesten Einträge **ohne** laufenden Abruf verdrängen; bleibt alles in Arbeit ⇒ **kontrollierte Ablehnung** `identity_access_busy`. Damit gilt `entries <= 8` zu jedem Zeitpunkt. Ein fehlgeschlagener Erwerb gibt seinen Platz zurück. Jedes Versprechen wird zurückgegeben — der Test prüft auf `unhandledRejection` |
+| G1 | Der scope-gebundene Token existierte nur als **dokumentiertes Gate**: firebase-admin exportierte keine solche Funktion, und die Admin-Scopes tragen kein `identitytoolkit`. Damit blieb jeder Nutzer-Ausweis 503 | `netlify/lib/firebase-admin.mjs` exportiert jetzt `getIdentityAccessToken({ scope, projectId })` — **dieselbe** Zugangsauflösung, **derselbe** Tausch, nur mit anderem Scope (siehe §3a). Die Laufzeit nimmt ihn automatisch (`identityAccessSource: firebase:getIdentityAccessToken`) |
+| Gründe | `domainReason` war zwar bereits eine feste Zeichenkette, aber ohne Schranke: ein künftiger Zweig hätte einen fremden Fehlercode durchreichen können | `DOMAIN_FACTORY_REASONS` ist die **Allowlist**; alles andere wird zu `domain_factory_failed`. Der Fehler der Fabrik wird nicht gelesen — keine Nachricht, kein Code, kein `cause`. Auch eine Fabrik, die selbst einen „Grund" behauptet, bestimmt ihn nicht |
+
 Die Kennungen, die das Modul nach aussen gibt (`IDENTITY_ACCESS_ERRORS`):
 `identity_access_not_configured`, `identity_project_mismatch`,
 `identity_token_failed`, `identity_scope_missing`,
-`identity_token_lifetime_invalid`, `identity_token_expired`. C1 übersetzt einen
+`identity_token_lifetime_invalid`, `identity_token_expired`,
+`identity_access_busy`. C1 übersetzt einen
 gescheiterten Lookup wie bisher zu 401 `user_lookup_failed`; ein fehlender
 Lookup bleibt 503 `user_lookup_missing`.
 
@@ -51,12 +61,16 @@ Lookup bleibt 503 `user_lookup_missing`.
 | `netlify/lib/quantus-v3-runtime.mjs` | die Verdrahtung: Ports, Diagnose, `toResponse` |
 | `netlify/lib/quantus-v3-identity-access.mjs` | das Zugriffstoken für `accounts:lookup` — und nur dieses |
 | `tests/quantus-v3-c3b-identity-access.test.mjs` | 6 Tests: Reihenfolge, Scope, Projektbindung, Cache, Bündelung, Fehlerformen |
-| `tests/quantus-v3-c3b-gegenbeispiele.test.mjs` | 6 Tests mit den acht Gegenproben G-1 … G-8 |
+| `tests/quantus-v3-c3b-gegenbeispiele.test.mjs` | 9 Tests: die acht Gegenproben G-1 … G-8, C3B-07 (Last und Bündelung), die Gründe-Allowlist |
+| `tests/quantus-v3-c3b-firebase-export.test.mjs` | 8 Tests: der scope-gebundene Token (Scope, Projekt, Frist, Dienstkonto-Signatur, kein Cache) und die **Regression** der bestehenden Admin-Funktionen |
 | `tests/quantus-v3-c3b-runtime.test.mjs` | 10 Tests an der **gebauten** Laufzeit gegen konditionale Fake-HTTP-Transporte |
 
-Nicht angefasst: `firebase-admin.mjs`, `netlify.toml`, Umgebungsvariablen,
-Firebase-Regeln, IAM, bestehende Automationen, alles unter
-`netlify/lib/assistant-*` und die Dateien des Fachadapters (Paket C3a).
+Eng geändert: `netlify/lib/firebase-admin.mjs` — genau der Tokenbereich (§3a).
+Nicht angefasst: `netlify.toml`, Umgebungsvariablen, Secrets, Firebase-Regeln,
+IAM, Abhängigkeiten und Lockfile (das gepatchte `image-size` der Integration
+bleibt unberührt), bestehende Automationen, alles unter
+`netlify/lib/assistant-*` und die Dateien des Fachadapters (Paket C3a) sowie
+B/C2-Fachlogik und die Cloud-Laufzeit (E2).
 
 ## 2. Die Ports — der Übergangsvertrag für C3a
 
@@ -148,6 +162,38 @@ Regeln:
   Kein Tokenwert erscheint in Log, Antwort oder Diagnose; der Zugangs-Abdruck
   verlässt das Modul nicht.
 
+## 3a. Die enge Änderung an `firebase-admin.mjs`
+
+Zwei Dinge, beide im Tokenbereich:
+
+1. **Ein gemeinsamer Tausch.** `getAdminAccessToken` wurde in
+   `exchangeAccessToken({ scope, sendScope })` zerlegt, damit es weiterhin nur
+   **eine** Zugangs- und Signaturlogik gibt. Der Admin-Weg verhält sich
+   unverändert: beim Refresh-Tausch nennt er **keinen** Scope (ein
+   Scope-Parameter kann nur einschränken und hätte den bestehenden Zugang
+   verändert), das Dienstkonto-JWT trägt weiterhin genau `ADMIN_SCOPES`, Cache,
+   401-Räumung und Fehlermeldungen sind dieselben. Genau das prüft die zweite
+   Hälfte von `tests/quantus-v3-c3b-firebase-export.test.mjs` nach.
+2. **Der scope-gebundene Export** `getIdentityAccessToken({ scope, projectId })`:
+   * nur `identitytoolkit` oder `cloud-platform` — keine allgemeine
+     Tokenausgabe (`scope_not_supported`),
+   * **echte Projektprüfung** gegen `firebaseConfiguredProjectId()`
+     (`project_mismatch`) — im falschen Verzeichnis nachzusehen hiesse, jeden
+     für ungesperrt zu halten,
+   * **echte Scope-Prüfung** der Antwort, auch über `cloud-platform`
+     (`scope_missing`),
+   * **explizite Frist** aus `expires_in`, nichts geraten (`lifetime_invalid`),
+   * ohne Zugangsdaten gar kein Versuch (`credentials_missing`),
+   * **kein eigener Cache** — den hält der Aufrufer, begrenzt und mit Marge.
+     Ein zweiter Cache könnte nur veralten.
+   Dazu `firebaseAccessCredentialsConfigured()`: damit die Laufzeit einen Weg,
+   der nur scheitern kann, gar nicht verdrahtet (ehrliche 503 statt 401).
+
+Keine neuen Variablen, keine neuen Secrets, keine IAM-Änderung, kein
+Deployment. Gegen den Integrationsstand `48dc1fe` ist die Änderung
+konfliktfrei (`git merge-file` exit 0; der zusammengeführte Stand trägt
+sowohl `getIdentityAccessToken` als auch die dortige `unchanged`-Prüfung).
+
 ## 4. Diagnose — Namen und Gründe, nie Werte
 
 `buildRuntimeDeps().wiring`:
@@ -169,7 +215,8 @@ C3b nimmt sie ausdrücklich nicht selbst vor.
 
 | # | Gate | Warum | Wer |
 | --- | --- | --- | --- |
-| G1 | **Ein scope-gebundenes Zugriffstoken.** Entweder eine Zeile Export in `firebase-admin.mjs` (`getIdentityAccessToken({ scope })`), oder eine OAuth-Zustimmung, die `https://www.googleapis.com/auth/identitytoolkit` einschliesst | Die vorhandenen Admin-Scopes sind `firebase.database`, `userinfo.email`, `devstorage.full_control` — **kein** `identitytoolkit`; und ein Refresh-Tausch kann Scopes nur **einschränken**, nicht hinzufügen. Ohne G1 gilt **kein** Nutzer-ID-Token (503 `user_lookup_missing`) | Eigentümer von `firebase-admin.mjs` bzw. der Google-Zustimmung |
+| ~~G1~~ | **Der Code-Teil ist geschlossen:** `getIdentityAccessToken` ist implementiert, scope-, projekt- und fristgeprüft, die Laufzeit nimmt ihn, und 8 Tests belegen es (synthetisch). | — | erledigt in dieser Fassung |
+| G1-B | **Die Zustimmung bzw. die Berechtigung selbst.** Der Refresh-Token braucht eine OAuth-Zustimmung, die `identitytoolkit` einschliesst, **oder** es braucht ein Dienstkonto mit der passenden Rolle. Ein Refresh-Tausch kann Scopes nur **einschränken**, nicht hinzufügen | Das ist **Betrieb**, nicht Programmierung: niemand kann sie im Repository herstellen. Fehlt sie, scheitert der Erwerb fail closed (`scope_missing` ⇒ 401), statt einen Token zu benutzen, der bei jedem Lookup 403 erzeugte | Betreiber (Google-Zustimmung bzw. IAM) |
 | G2 | **Serverkonfiguration** `QUANTUS_V3_FIREBASE_PROJECT_ID`, `QUANTUS_V3_POLICY_VERSION`, `QUANTUS_V3_ALLOWED_ORIGINS`, `QUANTUS_V3_SERVICE_CREDENTIALS`, `QUANTUS_V3_WORKER_TOKEN_KEYS`, `QUANTUS_V3_CURSOR_KEYS`, optional `QUANTUS_V3_FIREBASE_TENANT` | fail closed: fehlt eine, antwortet jede Route 503 und nennt nur den **Namen** | Betreiber (keine Werte in diesem Repo, keine im Test) |
 | G3 | **Projektgleichheit** `FIREBASE_PROJECT_ID` = `QUANTUS_V3_FIREBASE_PROJECT_ID` | sonst `identity_project_mismatch` | Betreiber |
 | G4 | **Fachadapter C3a** liefert `createQuantusV3DomainAdapter` mit den fünf Methoden | sonst 503 `domain_adapter_not_available` | Paket C3a |
@@ -180,7 +227,7 @@ C3b nimmt sie ausdrücklich nicht selbst vor.
 ## 6. Tests
 
 ```
-npm run test:quantus-v3-c3b     # 22 Tests
+npm run test:quantus-v3-c3b     # 33 Tests
 ```
 
 Der Laufzeittest baut die Abhängigkeiten **wirklich** über `buildRuntimeDeps`
@@ -211,7 +258,9 @@ Die C2-Tests laden den Idempotenz-Ledger aus demselben Stand `52b0641`
 ## 7. Was C3b NICHT tut
 
 * Keine Auslieferung, kein Deployment, keine Änderung an `netlify.toml`,
-  Umgebung, Secrets, IAM oder Firebase-Regeln.
+  Umgebung, Secrets, IAM, Firebase-Regeln, Abhängigkeiten oder Lockfile.
+* Keine Aussage darüber, welche Scopes die **echte** Zustimmung trägt: das
+  prüft erst der Betrieb, und der Code scheitert dabei fail closed (G1-B).
 * Keine zweite Credentiallogik: kein Dienstkonto-JWT aus diesen Dateien, kein
   Client-Schlüssel, kein Browser-Weg.
 * Kein neues MCP-Protokoll. Die vier Werkzeuge

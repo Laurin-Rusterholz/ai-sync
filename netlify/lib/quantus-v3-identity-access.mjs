@@ -112,6 +112,7 @@ export const IDENTITY_ACCESS_ERRORS = Object.freeze([
   "identity_scope_missing",           // der Token trägt den nötigen Scope nicht
   "identity_token_lifetime_invalid",  // Frist fehlt, ist negativ oder nicht endlich
   "identity_token_expired",           // Frist liegt (fast) in der Vergangenheit
+  "identity_access_busy",             // Ressourcengrenze erreicht (Admission, siehe unten)
 ]);
 const EIGENE_KENNUNGEN = new Set(IDENTITY_ACCESS_ERRORS);
 
@@ -180,25 +181,51 @@ function zugangsAbdruck(firebaseModule) {
   return digest(["refresh", zugang.source, zugang.clientId, zugang.clientSecret, zugang.refreshToken]);
 }
 
-function eintragFuer(abdruck) {
-  let eintrag = tokenCache.get(abdruck);
-  if (!eintrag) {
-    eintrag = { token: null, expiresAt: 0, inFlight: null };
-    tokenCache.set(abdruck, eintrag);
-    begrenze(abdruck);
-  }
-  return eintrag;
-}
+/* ══ STRENGE ADMISSION — die Grenze gilt auch für laufende Abrufe ═════════
+ *
+ * BEFUND (Release-Review 4379061, C3B-07): `eintragFuer` legte den Eintrag
+ * BEDINGUNGSLOS an, und die Verdrängung übersprang jeden Eintrag mit
+ * laufendem Abruf. Sechzehn gleichzeitige, verschiedene Quellen ergaben
+ * deshalb 16 Einträge bei einer angekündigten Grenze von 8 — während des
+ * Abrufs und, weil niemand nachträglich begrenzte, auch danach.
+ *
+ * Jetzt entscheidet eine Admission VOR dem Anlegen:
+ *   1. Gibt es den Eintrag schon? Dann ist nichts anzulegen — die Bündelung
+ *      derselben Quelle bleibt unberührt (kein Platzbedarf, keine Ablehnung).
+ *   2. Ist Platz frei? Anlegen.
+ *   3. Sonst: erst unbrauchbare, dann die ältesten Einträge OHNE laufenden
+ *      Abruf verdrängen (ein laufender Abruf wird nie weggeworfen — der
+ *      Aufrufer wartet darauf).
+ *   4. Bleibt kein Platz, weil alle Plätze in Arbeit sind: KONTROLLIERTE
+ *      ABLEHNUNG mit `identity_access_busy`. Kein Eintrag, kein Token, keine
+ *      stille Überschreitung. Fail closed — der Aufrufer bekommt keinen
+ *      Ausweis, nicht einen ungeprüften.
+ *
+ * Damit gilt `tokenCache.size <= MAX_CACHE_ENTRIES` zu JEDEM Zeitpunkt, nicht
+ * erst nach dem Abschluss.
+ * ─────────────────────────────────────────────────────────────────────── */
+let abgewiesen = 0;
 
-/* Begrenzt: ein Speicher ohne Obergrenze ist ein Leck. Verdrängt werden
-   zuerst die ältesten Einträge ohne laufenden Abruf. */
-function begrenze(schutz) {
-  if (tokenCache.size <= MAX_CACHE_ENTRIES) return;
-  for (const [schluessel, eintrag] of tokenCache) {
-    if (tokenCache.size <= MAX_CACHE_ENTRIES) break;
-    if (schluessel === schutz || eintrag.inFlight) continue;
-    tokenCache.delete(schluessel);
+function platzSchaffen(abdruck, jetzt) {
+  if (tokenCache.has(abdruck)) return true;                  // Bündelung, kein neuer Platz
+  if (tokenCache.size < MAX_CACHE_ENTRIES) return true;
+
+  // (a) Was nichts mehr taugt, geht zuerst.
+  for (const [schluessel, eintrag] of [...tokenCache]) {
+    if (eintrag.inFlight) continue;
+    if (!eintrag.token || !nochBrauchbar(eintrag.expiresAt, jetzt)) tokenCache.delete(schluessel);
+    if (tokenCache.size < MAX_CACHE_ENTRIES) return true;
   }
+  // (b) Dann der älteste brauchbare Eintrag ohne laufenden Abruf
+  //     (Map hält die Einfügereihenfolge).
+  for (const [schluessel, eintrag] of [...tokenCache]) {
+    if (eintrag.inFlight) continue;
+    tokenCache.delete(schluessel);
+    if (tokenCache.size < MAX_CACHE_ENTRIES) return true;
+  }
+  // (c) Alle Plätze sind in Arbeit: ablehnen, nicht überschreiten.
+  abgewiesen++;
+  return false;
 }
 
 /* Dieselbe Schranke für jedes Token — Cache oder frisch erworben. */
@@ -215,6 +242,7 @@ export function invalidateIdentityAccessCache() {
 /* Nur für Tests — damit ein Lauf nicht den Speicher des vorigen erbt. */
 export function resetIdentityAccessCacheForTests() {
   tokenCache.clear();
+  abgewiesen = 0;
 }
 
 /* Diagnose ohne Werte: wie viele Einträge liegen da, und wie viele leben. */
@@ -226,7 +254,10 @@ export function identityAccessCacheStats(now = () => Date.now()) {
     if (eintrag.token && nochBrauchbar(eintrag.expiresAt, jetzt)) brauchbar++;
     if (eintrag.inFlight) laufend++;
   }
-  return { entries: tokenCache.size, usable: brauchbar, inFlight: laufend, limit: MAX_CACHE_ENTRIES };
+  return {
+    entries: tokenCache.size, usable: brauchbar, inFlight: laufend,
+    limit: MAX_CACHE_ENTRIES, rejected: abgewiesen,
+  };
 }
 
 /*
@@ -389,27 +420,39 @@ export function createAccessTokenProvider({
   }
 
   const provider = async function getAccessToken() {
-    const eintrag = eintragFuer(abdruck);
-    if (eintrag.token && nochBrauchbar(eintrag.expiresAt, now())) return eintrag.token;
-    // Ein abgelaufener Stand wird NICHT weiterbenutzt, auch nicht „nur diesmal".
-    if (!eintrag.inFlight) {
-      eintrag.token = null;
-      eintrag.expiresAt = 0;
+    const jetzt = now();
+    let eintrag = tokenCache.get(abdruck);
+    if (eintrag) {
+      if (eintrag.token && nochBrauchbar(eintrag.expiresAt, jetzt)) return eintrag.token;
       // Parallele Anfragen — auch aus verschiedenen Requests — teilen EINEN
-      // Abruf. Der Fehlerfall wird nicht gecacht.
-      eintrag.inFlight = holeGeprueft().then(
-        (frisch) => {
-          eintrag.token = frisch.token;
-          eintrag.expiresAt = frisch.expiresAt;
-          eintrag.inFlight = null;
-          return frisch.token;
-        },
-        (err) => {
-          eintrag.inFlight = null;
-          throw sichererFehler(err);
-        },
-      );
+      // Abruf. Das ist die Bündelung, und sie braucht keinen neuen Platz.
+      if (eintrag.inFlight) return eintrag.inFlight;
+    } else {
+      // Erst die Grenze, dann der Eintrag. Nie umgekehrt.
+      if (!platzSchaffen(abdruck, jetzt)) throw fehler("identity_access_busy");
+      eintrag = { token: null, expiresAt: 0, inFlight: null };
+      tokenCache.set(abdruck, eintrag);
     }
+
+    // Ein abgelaufener Stand wird NICHT weiterbenutzt, auch nicht „nur diesmal".
+    eintrag.token = null;
+    eintrag.expiresAt = 0;
+    eintrag.inFlight = holeGeprueft().then(
+      (frisch) => {
+        eintrag.token = frisch.token;
+        eintrag.expiresAt = frisch.expiresAt;
+        eintrag.inFlight = null;
+        return frisch.token;
+      },
+      (err) => {
+        // Der Fehlerfall wird nicht gecacht — und er gibt seinen Platz zurück,
+        // statt einen leeren Eintrag zu behalten.
+        eintrag.inFlight = null;
+        if (tokenCache.get(abdruck) === eintrag) tokenCache.delete(abdruck);
+        throw sichererFehler(err);
+      },
+    );
+    // Das Versprechen wird zurückgegeben — es bleibt nie unbehandelt liegen.
     return eintrag.inFlight;
   };
 
@@ -432,7 +475,20 @@ export function identityAccessAvailability({ read = envRead, firebaseModule = nu
   if (!config.ok) return { available: false, reason: config.reason };
   if (typeof obtainAccessToken === "function") return { available: true, source: "injected", ...config };
   if (typeof firebaseModule?.[FIREBASE_TOKEN_EXPORT] === "function") {
-    return { available: true, source: `firebase:${FIREBASE_TOKEN_EXPORT}`, ...config };
+    /* Der Export allein ist kein Weg: ohne Zugangsauflösung könnte er bei
+       jedem Aufruf nur scheitern, und C1 soll dann ehrlich 503 antworten,
+       statt 401 aus einem Erwerb, der nie klappen kann. Nennt firebase-admin
+       eine Prüfung (`firebaseAccessCredentialsConfigured`), gilt sie. */
+    const pruefung = firebaseModule.firebaseAccessCredentialsConfigured;
+    let zugangsdaten = true;
+    if (typeof pruefung === "function") {
+      try {
+        zugangsdaten = pruefung() === true;
+      } catch {
+        zugangsdaten = false;
+      }
+    }
+    if (zugangsdaten) return { available: true, source: `firebase:${FIREBASE_TOKEN_EXPORT}`, ...config };
   }
   let zugang = null;
   try {

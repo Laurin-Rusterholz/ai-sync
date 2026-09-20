@@ -41,6 +41,23 @@ import {
 /* Der Fachadapter-Port. C3a liefert genau diese Fabrik; C2 verlangt genau
    diese Methoden. Beides steht hier zusammen, damit niemand raten muss. */
 export const DOMAIN_FACTORY_EXPORT = "createQuantusV3DomainAdapter";
+/* Die EINZIGEN Gründe, die ein Fachadapter-Port nach aussen nennen darf.
+   BEFUND (Release-Review): ein Grund, der aus einem fremden Fehler stammt,
+   wäre ein Kanal für fremden Text in unsere Diagnose. Was nicht auf dieser
+   Liste steht, wird zu `domain_factory_failed` — die Fabrik hat nicht
+   geliefert, und mehr sagt niemand. */
+export const DOMAIN_FACTORY_REASONS = Object.freeze([
+  "domain_factory_missing",      // keine benannte Fabrik verdrahtet
+  "domain_factory_failed",       // die Fabrik hat nicht geliefert (auch: sie warf)
+  "domain_adapter_incomplete",   // geliefert, aber nicht alle Methoden
+]);
+const ERLAUBTE_DOMAIN_GRUENDE = new Set(DOMAIN_FACTORY_REASONS);
+
+/* Kein fremder Text, keine fremde Kennung — nur die Liste oben. */
+function domainGrund(kandidat) {
+  return ERLAUBTE_DOMAIN_GRUENDE.has(kandidat) ? kandidat : "domain_factory_failed";
+}
+
 export const DOMAIN_ADAPTER_METHODS = Object.freeze([
   "resolveTarget",        // Ressource + Anker aus dem autoritativen Bestand
   "assertActiveBinding",  // aktive Leitungs-Lease bzw. Auftragszuweisung (E1)
@@ -106,7 +123,7 @@ export function createCoreStore(firebase, { write = false } = {}) {
  * und der E1-Bindung. Was sie liefert, wird auf Vollständigkeit geprüft.
  */
 export function buildDomainAdapter({ factory, policy, now }) {
-  if (typeof factory !== "function") return { ok: false, reason: "domain_factory_missing" };
+  if (typeof factory !== "function") return { ok: false, reason: domainGrund("domain_factory_missing") };
   let adapter = null;
   try {
     adapter = factory({
@@ -116,9 +133,11 @@ export function buildDomainAdapter({ factory, policy, now }) {
       now,
     });
   } catch {
-    return { ok: false, reason: "domain_factory_failed" };
+    // Der Fehler der Fabrik wird NICHT gelesen: keine Nachricht, kein Code,
+    // kein `cause`. Er könnte alles enthalten.
+    return { ok: false, reason: domainGrund("domain_factory_failed") };
   }
-  if (!hatFunktionen(adapter, DOMAIN_ADAPTER_METHODS)) return { ok: false, reason: "domain_adapter_incomplete" };
+  if (!hatFunktionen(adapter, DOMAIN_ADAPTER_METHODS)) return { ok: false, reason: domainGrund("domain_adapter_incomplete") };
   return { ok: true, adapter };
 }
 
@@ -210,7 +229,7 @@ export async function buildRuntimeDeps({
       store: Boolean(createCoreStore(firebase, { write })),
       idempotency: hatFunktionen(idempotenz, ["prepareIdempotentCommand", "applyIdempotentCommand"]),
       domain: domaene.ok,
-      domainReason: domaene.ok ? null : domaene.reason,
+      domainReason: domaene.ok ? null : domainGrund(domaene.reason),
       rateLimiter: Boolean(rateLimiter),
       identityAccess: zugang.available,
       identityAccessReason: zugang.available ? null : zugang.reason,
@@ -236,4 +255,7 @@ export function resetRuntimeCachesForTests() {
   resetIdentityAccessCacheForTests();
 }
 
-export default { buildRuntimeDeps, toResponse, createCoreStore, buildDomainAdapter, DOMAIN_FACTORY_EXPORT, DOMAIN_ADAPTER_METHODS };
+export default {
+  buildRuntimeDeps, toResponse, createCoreStore, buildDomainAdapter,
+  DOMAIN_FACTORY_EXPORT, DOMAIN_ADAPTER_METHODS, DOMAIN_FACTORY_REASONS,
+};
