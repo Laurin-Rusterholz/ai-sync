@@ -707,7 +707,10 @@ export async function handleReadRequest(req, deps = {}, { route } = {}) {
     rohdaten = deps.domain.listPage(snapshot, {
       query, scopeId, pageSize: page.pageSize, afterId: page.afterId, principal,
     });
-  } catch {
+  } catch (err) {
+    // Ein Fachadapter, der mit bekanntem Code ablehnt (z. B. forbidden: kein
+    // aktiver Auftrag), antwortet mit dessen Status; alles andere ist 503.
+    if (err && err.code && Object.prototype.hasOwnProperty.call(STATUS_BY_CODE, err.code)) return fehlerAntwort(err, { requestId, corsHeaders: cors });
     return denial(authError("auth_not_configured", "domain_adapter_failed"), { requestId, corsHeaders: cors });
   }
 
