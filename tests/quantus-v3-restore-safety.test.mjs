@@ -136,6 +136,26 @@ for (const partial of [
   });
 }
 
+for (const field of [
+  "intakeById", "questionsById", "answersById", "documentsById", "jobsById",
+  "outboxById", "evidenceById", "progressById", "waitingById", "sourceCursors",
+  "policyRef", "runtime",
+]) {
+  for (const side of ["backup", "current"]) {
+    test(`partial ${field} in ${side} refuses the whole restore before confirmation`, async (t) => {
+      // A missing schema marker does not make surviving v3 evidence disposable.
+      const partial = { ...legacy(), automation: { [field]: null } };
+      const h = await run(t, { [side]: partial });
+      assert.equal(h.result.code, "v3_restore_requires_reconciliation");
+      assert.equal(h.result.ok, false);
+      assert.equal(h.confirmations, 0);
+      assert.equal(h.attempts.length, 0);
+      assert.deepEqual(h.files, []);
+      assert.deepEqual(JSON.parse(h.stored.data), side === "current" ? partial : legacy());
+    });
+  }
+}
+
 test("an existing unreadable wrapper is not treated as an absent core", async (t) => {
   const h = await run(t, { malformedDocument: { exists: false, data: null, parsed: null,
     wrap: { malformed: true }, serverEtag: '"srv"' } });

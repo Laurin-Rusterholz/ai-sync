@@ -10,6 +10,9 @@ is safe.
 
 - Refuse a v3 or partially migrated backup before acquiring a target lock.
 - Refuse a legacy backup against a v3 or partially migrated current core.
+- Recognize the actual `*ById` maps, cursor/policy markers and runtime ledger
+  even without `schemaVersion` or `dataRevision`. A present but null map is
+  evidence of a damaged v3 snapshot, not permission to replace it.
 - Treat a nonempty unreadable wrapper as corrupt, not as a missing document.
 - Retain the Firebase server ETag from the actual read, including an absent node.
 - Require that exact non-wildcard ETag on the single restore write. The local
@@ -37,6 +40,6 @@ durable intent. Dry-run inspection still performs no remote write.
    recovery epoch, and retain all unreconciled jobs, answers and questions.
 6. Prove safe read-only rollback and explicitly approve resuming low-risk work.
 
-The 27 local behavior tests and 218 existing restore-contract checks establish
+The 51 local behavior tests and 218 existing restore-contract checks establish
 the legacy boundary only. They do not satisfy the entire T40 acceptance test,
 constitute an operational backup, or count as a day of the required real trial.

@@ -35,10 +35,10 @@ checkouts. No production data was read or modified for the initial code work.
 | Package | Scope | Current evidence |
 | --- | --- | --- |
 | A | Writer, automation, schema and regression inventory | Initial source inventory below; deployed service inventory still open |
-| B | Canonical states, migration, server traffic lights, closure | 590dc78 independently reviewed: 11 failing counterexamples; corrections delegated; not accepted |
-| C | Auth, four strict APIs, idempotency, entity versions, CAS | CAS/idempotency tested; C1 auth 5ac0bf7 rejected after independent review, corrections delegated; HTTP integration open |
-| D | Desktop/tablet/mobile command writers, offline queue, old-client gate | Open; do not enable API-only writes yet |
-| E | Cloud runtime, slots, leases, fencing, retry, checkpoints, cost ledger | E1 pure runtime/state package delegated; cloud integration and deployment open |
+| B | Canonical states, migration, server traffic lights, closure | Second review of 6e829d5: nine failures; correction c4f8ac4 under independent review, not accepted |
+| C | Auth, four strict APIs, idempotency, entity versions, CAS | CAS/idempotency tested; C1 9ff3423: five new independent failures, fixes delegated; C2 39728bc not yet reviewed |
+| D | Desktop/tablet/mobile command writers, offline queue, old-client gate | Disabled transport/IndexedDB component tested, including real Chrome recovery; no app wired yet |
+| E | Cloud runtime, slots, leases, fencing, retry, checkpoints, cost ledger | E1 022e844: nine independent failures, fixes delegated; E2 source package underway, no deployment |
 | F | Authorized source adapters, mail ledger, document extraction, live UI | Open |
 | G | Job-scoped Claude/Gemini providers, review and untrusted-input isolation | Open |
 | H | T01-T40, production gates, cutover, 14-day trial and final acceptance | Open |
@@ -126,11 +126,14 @@ the all-writer gate passed. Do not infer production rules from checked-in rules.
   `npm audit` now reports zero vulnerabilities. Earlier audit flagged
   [ICNS parser DoS](https://github.com/advisories/GHSA-w3rx-r6r6-pgpr) and
   [JXL/HEIF parser DoS](https://github.com/advisories/GHSA-5p2g-fcmc-qvqq).
-- Legacy privileged restore: 27 new behavior tests pass, including a real call
+- Legacy privileged restore: 51 behavior tests pass, including a real call
   through the restore orchestration with conditional in-memory storage and
   on-disk audit writes. Concurrent changes or migration during confirmation are
   not overwritten; missing/wildcard preconditions fail closed. Existing restore
-  contract: 218 checks pass. No actual target database was restored.
+  contract: 218 checks pass. Partial states containing only an actual `*ById`
+  map, source cursor, policy marker or runtime ledger also refuse restoration
+  before confirmation, even without a schema/revision marker. No actual target
+  database was restored.
 
 These are local tests. No live acceptance, provider dispatch or trial day is
 implied. A test of the transaction helper does not prove all HTTP entry points.
@@ -152,6 +155,14 @@ counterexamples: corrupt map/revision green results, stale cache validation,
 lost waiting proof and reopened project deadline not invalidating closure,
 notes in the wrong original store, and untrusted command time overriding the
 prepared server time. Sent to Claude for correction; not integrated or released.
+
+The next B correction `c4f8ac4` is being reviewed independently; its own passing
+tests are not acceptance. C1 `9ff3423` has 79 passing own tests but five failing
+independent security regressions (key-source failure cooldown, malformed
+revocation timestamp, zero/invalid cursor revisions and nested secret scanning).
+E1 `022e844` has 95 passing own tests but nine independent runtime/cost regressions.
+Both sets were sent for correction. C2 `39728bc` has not yet been independently
+reviewed with the real idempotency helper. None of these packages is integrated.
 
 ## Existing schedule snapshot (not changed)
 
