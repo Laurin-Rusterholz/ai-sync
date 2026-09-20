@@ -646,7 +646,9 @@ test("R7: Dokument braucht bestaetigte Attachment-Id, Hash, Typ, Groesse, Herkun
   // parsed mit unbelegtem textRef → abgewiesen; von einem Agenten → abgewiesen.
   assert.equal(run(data, "recordDocumentParse", { documentId: "doc1", outcome: "parsed", textRef: "unverified-text", extractHash: H64 }, now, ADAPTER).error, "PARSE_TEXTREF_INVALID");
   assert.equal(run(data, "recordDocumentParse", { documentId: "doc1", outcome: "parsed", textRef: ATT("vertrag.txt") }, now, ADAPTER).error, "PARSE_EXTRACT_HASH_INVALID");
-  assert.equal(run(data, "recordDocumentParse", { documentId: "doc1", outcome: "parsed", textRef: ATT("vertrag.txt"), extractHash: H64 }, now, AGENT).error, "ACTOR_REJECTED");
+  // Erweiterung C3a: die Leitung (agent) und das System buchen Parse-Ergebnisse (C1-Verb document.processed); Worker und Nutzer weiterhin nicht.
+  assert.equal(run(data, "recordDocumentParse", { documentId: "doc1", outcome: "parsed", textRef: ATT("vertrag.txt"), extractHash: H64 }, now, WORKER).error, "ACTOR_REJECTED");
+  assert.equal(run(data, "recordDocumentParse", { documentId: "doc1", outcome: "parsed", textRef: ATT("vertrag.txt"), extractHash: H64 }, now, USER).error, "ACTOR_REJECTED");
   // unlesbar → bleibt offen, done unmoeglich.
   data = mussOk(run(data, "recordDocumentParse", { documentId: "doc1", outcome: "unreadable", error: "verschluesseltes PDF" }, now + MIN, ADAPTER), "parse");
   assert.equal(data.automation.documentsById.doc1.status, "open"); assert.equal(data.automation.documentsById.doc1.handledAt, null);

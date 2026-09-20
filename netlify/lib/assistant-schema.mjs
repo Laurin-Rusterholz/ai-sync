@@ -333,14 +333,20 @@ export const COMMAND_SCHEMAS = Object.freeze({
   recordAnswer:         Object.freeze({ required: ["answerId", "questionId", "text"], optional: [], actors: ["user"] }),
   consumeAnswer:        Object.freeze({ required: ["answerId", "consumer"], optional: [], actors: ["agent", "system"] }),
   registerEvidence:     Object.freeze({ required: ["evidenceId", "kind", "ref", "sourceType", "sourceId", "origin", "observedAt", "fingerprint"], optional: ["summary"], actors: ["adapter"] }),
-  registerDocument:     Object.freeze({ required: ["documentId", "attachmentId", "name", "hash", "mime", "size", "origin", "linkedTo"], optional: [], actors: ["adapter"] }),
-  recordDocumentParse:  Object.freeze({ required: ["documentId", "outcome"], optional: ["error", "textRef", "extractHash"], actors: ["adapter"] }),
+  registerDocument:     Object.freeze({ required: ["documentId", "attachmentId", "name", "hash", "mime", "size", "origin", "linkedTo"], optional: [], actors: ["adapter", "user"] }),
+  recordDocumentParse:  Object.freeze({ required: ["documentId", "outcome"], optional: ["error", "textRef", "extractHash"], actors: ["adapter", "agent", "system"] }),
   createJob:            Object.freeze({ required: ["jobId", "kind", "purpose", "sourceType", "sourceId", "inputVersion", "executor", "contextRefs", "expiresAt"], optional: [], actors: ["agent", "system"] }),
   cancelJob:            Object.freeze({ required: ["jobId", "reason"], optional: [], actors: ["agent", "system", "user"] }),
   recordJobReturn:      Object.freeze({ required: ["jobId", "outcome"], optional: ["resultRef", "resultHash", "error"], actors: ["worker"] }),
   reviewJobResult:      Object.freeze({ required: ["jobId", "verdict", "reviewer"], optional: ["note"], actors: ["agent", "user"] }),
   closeRun:             Object.freeze({ required: ["date", "finalNoteId"], optional: [], actors: ["agent", "system"] }),
   invalidateClosure:    Object.freeze({ required: ["date", "correctionId", "reason", "contradiction"], optional: [], actors: ["agent", "system", "user"] }),
+  // ── Erweiterung C3a: was die C2-Fachverben brauchen und B bisher nicht hatte ──
+  createTask:           Object.freeze({ required: ["taskId", "title"], optional: ["dueDate", "notes", "linkedLeadId"], actors: ["user", "agent"] }),
+  addComment:           Object.freeze({ required: ["sourceType", "sourceId", "commentId", "text"], optional: [], actors: ["user", "agent"] }),
+  appendRunNote:        Object.freeze({ required: ["date", "noteId", "text"], optional: ["linkedLeadId"], actors: ["user", "agent", "system"] }),
+  recordRunEvent:       Object.freeze({ required: ["date", "eventId", "event"], optional: ["detail"], actors: ["agent", "system"] }),
+  recordRunCheckpoint:  Object.freeze({ required: ["date", "checkpointId", "stage"], optional: ["note"], actors: ["agent", "system"] }),
 });
 
 export function validateCommandShape(command) {

@@ -56,6 +56,11 @@ const HANDLER = Object.freeze({
   cancelJob: B.cancelJob,
   recordJobReturn: B.recordJobReturn,
   reviewJobResult: B.reviewJobResult,
+  createTask: B.createTask,
+  addComment: B.addComment,
+  appendRunNote: B.appendRunNote,
+  recordRunEvent: B.recordRunEvent,
+  recordRunCheckpoint: B.recordRunCheckpoint,
   closeRun,
   invalidateClosure,
 });
@@ -101,6 +106,7 @@ const KONFLIKT_CODES = new Set([
   "QUESTION_NOT_OPEN", "ANSWER_ALREADY_CONSUMED", "EVIDENCE_IMMUTABLE", "DOCUMENT_IMMUTABLE",
   "DOCUMENT_ALREADY_HANDLED", "JOB_IMMUTABLE", "JOB_ALREADY_FINISHED", "JOB_ALREADY_REVIEWED", "JOB_NOT_ACTIVE",
   "JOB_EXPIRED", "INTAKE_IMMUTABLE", "NOT_A_CONTRADICTION", "CLOSURE_BLOCKED",
+  "TASK_ID_TAKEN", "COMMENT_IMMUTABLE", "RUN_EVENT_IMMUTABLE", "CHECKPOINT_IMMUTABLE",
 ]);
 function reducerFehler(code, status, detail) {
   return Object.assign(new Error(code), { code, status, detail: detail == null ? null : detail });

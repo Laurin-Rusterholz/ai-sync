@@ -18,7 +18,7 @@
 import {
   OPERATIONAL_STATES, WARTE_ZUSTAENDE, ABGESCHLOSSENE_ZUSTAENDE, EXECUTORS, TRANSITIONS,
   QUELLEN, effektiverZustand, rollenFuer, leererRun, pruefeId, sourceKey, validatePolicy,
-  KARTEN_ZUSTAENDE, stringFingerprint,
+  KARTEN_ZUSTAENDE, stringFingerprint, STATE_MODEL_VERSION, rollenAbleiten,
 } from "./assistant-schema.mjs";
 import { klon, requireCore } from "./assistant-migration.mjs";
 import { classifyBlobKey } from "./blob-key-policy.mjs";
@@ -184,6 +184,7 @@ const NOTE_META = Object.freeze({
   assistantStart: Object.freeze({ category: "auftrag", tag: "start" }),
   assistantFinal: Object.freeze({ category: "entscheid", tag: "final" }),
   assistantCorrection: Object.freeze({ category: "entscheid", tag: "korrektur" }),
+  assistantEntry: Object.freeze({ category: "auftrag", tag: "eintrag" }),
 });
 
 export function chatgptNoteBauen(id, { title, content, kind, date, runRevision, now, supersedes = null }) {
@@ -952,6 +953,139 @@ export function reviewJobResult(input, { jobId, verdict, reviewer, note }, ctx) 
   }
   bump(data, ctx.now);
   return { ok: true, data, job: j, created: true };
+}
+
+/* ══ Erweiterung C3a ══════════════════════════════════════════════════════
+ * Fuenf Kommandos, die die C2-Fachverben brauchen und die es im Kern bisher
+ * nicht gab. Alle halten die Kern-Invarianten: Klon, Revision +1, Karten
+ * unveraendert, keine Umdeutung bestehender Eintraege (gleiche Kennung mit
+ * gleichem Inhalt ist idempotent, mit anderem Inhalt ein Konflikt). */
+
+/* Eine Aufgabe entsteht MIGRIERT: mit fuehrendem Zustand, Version 1,
+ * Quellstempel wie in der Migration und expliziten Rollen. Eine direkt
+ * geschriebene Aufgabe waere unmigriert und in der Ampel rot. */
+export function createTask(input, { taskId, title, dueDate, notes, linkedLeadId }, ctx) {
+  ctxPruefen(ctx);
+  const data = klon(requireCore(input));
+  pruefeId(taskId, "taskId");
+  const t = String(title || "").trim();
+  if (!t) return fehler("TASK_TITLE_MISSING");
+  if (dueDate !== undefined && dueDate !== null && !istLokalDatum(dueDate)) return fehler("DATE_INVALID", dueDate);
+  if (linkedLeadId !== undefined && linkedLeadId !== null && !quelleFinden(data, "chatgptLead", linkedLeadId)) return fehler("LINK_TARGET_NOT_FOUND", { sourceType: "chatgptLead", sourceId: linkedLeadId });
+  const vorhanden = data.entities.tasks[taskId];
+  if (vorhanden) {
+    if (vorhanden.title === t && (vorhanden.createdBy || null) === (ctx.actor ? ctx.actor.id : null)) return { ok: true, data, task: vorhanden, created: false };
+    return fehler("TASK_ID_TAKEN", taskId);
+  }
+  const nowIso = isoAus(ctx.now);
+  const e = {
+    id: taskId, title: t.slice(0, 200), status: "todo", dueDate: dueDate || null, notes: notes ? String(notes).slice(0, 2000) : "",
+    createdAt: nowIso, updatedAt: nowIso, createdBy: ctx.actor ? ctx.actor.id : null, comments: [],
+    linkedChatgptLeads: linkedLeadId ? [linkedLeadId] : [],
+    operationalState: "doing", operationalStateVersion: 1,
+    operationalStateSource: { model: STATE_MODEL_VERSION, legacyField: "status", legacyValue: "todo", mappedAt: nowIso, note: "createTask" },
+  };
+  e.operationalRoles = rollenAbleiten("task", e);
+  data.entities.tasks[taskId] = e;
+  bump(data, ctx.now);
+  return { ok: true, data, task: e, created: true };
+}
+
+/* Ein Kommentar an einer Quelle: Wortlaut, Zeit, Urheber — keine Zustandswirkung. */
+export function addComment(input, { sourceType, sourceId, commentId, text }, ctx) {
+  ctxPruefen(ctx);
+  const data = klon(requireCore(input));
+  if (!QUELLEN[sourceType]) return fehler("SOURCE_TYPE_NOT_STATEFUL", sourceType);
+  const e = quelleFinden(data, sourceType, sourceId);
+  if (!e) return fehler("SOURCE_NOT_FOUND", sourceType + ":" + sourceId);
+  pruefeId(commentId, "commentId");
+  const t = String(text || "").trim();
+  if (!t) return fehler("COMMENT_TEXT_MISSING");
+  if (!Array.isArray(e.comments)) e.comments = [];
+  const vorhanden = e.comments.find((c) => istKarte(c) && c.id === commentId);
+  if (vorhanden) {
+    if (vorhanden.text === t) return { ok: true, data, comment: vorhanden, created: false };
+    return fehler("COMMENT_IMMUTABLE", commentId);
+  }
+  const nowIso = isoAus(ctx.now);
+  const c = { id: commentId, text: t.slice(0, 8000), createdAt: nowIso, author: ctx.actor ? ctx.actor.id : null, authorKind: ctx.actor ? ctx.actor.kind : null };
+  e.comments.push(c);
+  e.updatedAt = nowIso;
+  bump(data, ctx.now);
+  return { ok: true, data, comment: c, created: true };
+}
+
+/* Eine freie Notiz zum Lauf (ChatGPT-Notiz, Art assistantEntry), optional an einen Lead gebunden. */
+export function appendRunNote(input, { date, noteId, text, linkedLeadId }, ctx) {
+  ctxPruefen(ctx);
+  const data = klon(requireCore(input));
+  const run = runVon(data, date);
+  if (!run) return fehler("RUN_MISSING", date);
+  pruefeId(noteId, "noteId");
+  const t = String(text || "").trim();
+  if (!t) return fehler("NOTE_TEXT_MISSING");
+  if (linkedLeadId !== undefined && linkedLeadId !== null && !quelleFinden(data, "chatgptLead", linkedLeadId)) return fehler("LINK_TARGET_NOT_FOUND", { sourceType: "chatgptLead", sourceId: linkedLeadId });
+  const vorhanden = data.entities.chatgptNotes[noteId];
+  if (vorhanden) {
+    if (vorhanden.instruction === t.slice(0, 8000) && vorhanden.assistantNote && vorhanden.assistantNote.runDate === date) return { ok: true, data, noteId, created: false };
+    return fehler("NOTE_ID_TAKEN", noteId);
+  }
+  const note = chatgptNoteBauen(noteId, { title: `Tagesbriefing ${date} — Eintrag`, content: t.slice(0, 8000), kind: "assistantEntry", date, runRevision: run.revision, now: ctx.now });
+  note.linkedChatgptLeads = linkedLeadId ? [linkedLeadId] : [];
+  note.author = ctx.actor ? ctx.actor.id : null;
+  data.entities.chatgptNotes[noteId] = note;
+  run.noteIds = [...(Array.isArray(run.noteIds) ? run.noteIds : []), noteId];
+  runAnfassen(run, ctx.now);
+  bump(data, ctx.now);
+  return { ok: true, data, noteId, created: true };
+}
+
+const RUN_EVENTS_MAX = 500;
+
+/* Ein Ereignis im Lauf: begrenztes Protokoll, keine Zustandswirkung. */
+export function recordRunEvent(input, { date, eventId, event, detail }, ctx) {
+  ctxPruefen(ctx);
+  const data = klon(requireCore(input));
+  const run = runVon(data, date);
+  if (!run) return fehler("RUN_MISSING", date);
+  pruefeId(eventId, "eventId");
+  const ev = String(event || "").trim();
+  if (!ev || ev.length > 64) return fehler("RUN_EVENT_INVALID", event);
+  if (!Array.isArray(run.events)) run.events = [];
+  const vorhanden = run.events.find((x) => istKarte(x) && x.id === eventId);
+  if (vorhanden) {
+    if (vorhanden.event === ev) return { ok: true, data, event: vorhanden, created: false };
+    return fehler("RUN_EVENT_IMMUTABLE", eventId);
+  }
+  const eintrag = { id: eventId, event: ev, detail: detail ? String(detail).slice(0, 2000) : null, at: isoAus(ctx.now), by: ctx.actor ? ctx.actor.id : null, byKind: ctx.actor ? ctx.actor.kind : null };
+  run.events = [...run.events.slice(-(RUN_EVENTS_MAX - 1)), eintrag];
+  runAnfassen(run, ctx.now);
+  bump(data, ctx.now);
+  return { ok: true, data, event: eintrag, created: true };
+}
+
+/* Ein Fortschrittsmarker der Leitung im Lauf: Stufe, Zeit, Urheber. Nicht auf einem finalen Lauf. */
+export function recordRunCheckpoint(input, { date, checkpointId, stage, note }, ctx) {
+  ctxPruefen(ctx);
+  const data = klon(requireCore(input));
+  const run = runVon(data, date);
+  if (!run) return fehler("RUN_MISSING", date);
+  if (run.phase === "final") return fehler("RUN_FINAL", date);
+  pruefeId(checkpointId, "checkpointId");
+  const st = String(stage || "").trim();
+  if (!st || st.length > 64) return fehler("CHECKPOINT_STAGE_INVALID", stage);
+  if (!Array.isArray(run.checkpoints)) run.checkpoints = [];
+  const vorhanden = run.checkpoints.find((x) => istKarte(x) && x.id === checkpointId);
+  if (vorhanden) {
+    if (vorhanden.stage === st) return { ok: true, data, checkpoint: vorhanden, created: false };
+    return fehler("CHECKPOINT_IMMUTABLE", checkpointId);
+  }
+  const eintrag = { id: checkpointId, stage: st, note: note ? String(note).slice(0, 2000) : null, at: isoAus(ctx.now), by: ctx.actor ? ctx.actor.id : null };
+  run.checkpoints = [...run.checkpoints.slice(-(RUN_EVENTS_MAX - 1)), eintrag];
+  run.lastCheckpoint = { id: eintrag.id, stage: eintrag.stage, at: eintrag.at };
+  runAnfassen(run, ctx.now);
+  bump(data, ctx.now);
+  return { ok: true, data, checkpoint: eintrag, created: true };
 }
 
 export { KARTEN_ZUSTAENDE };
