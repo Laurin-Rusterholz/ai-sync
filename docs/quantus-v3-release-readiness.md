@@ -2,7 +2,23 @@
 
 ## Decision
 
-NOT READY TO MERGE OR DEPLOY. Existing production services and schedules remain
+### Integration update, 20 September
+
+The owner now requests finalization and publication with minimal Claude use.
+C3a e783240, C3b f39cad2 and E2 e723035 are integrated locally. The
+previous two programming blockers below are fixed: 720 combined tests and
+16 independent cloud/cost/core checks pass, as does the full app regression.
+Fixture assumptions were updated for the real integrated core and identity
+provider; production protections were not relaxed. Dependency lock unchanged.
+
+This supports publishing reviewed code with v3 writes and paid execution
+disabled, NOT enabling or claiming the complete v3 service. Remaining gates:
+writer/client migration, MCP/source/provider bindings, production configuration,
+rollback rehearsal, live T01-T40 and the real 14-day trial. Cloud transport
+follow-up 2436783 is under review. The historical findings below are retained
+as evidence of what was tested and corrected, not current failing results.
+
+NOT READY FOR V3 PRODUCTION ACTIVATION. Existing production services and schedules remain
 unchanged. The owner currently requests independent work only, without new
 Claude assignments. This document prepares the next integration and acceptance
 steps; it does not authorize costs, migration, or a trial.

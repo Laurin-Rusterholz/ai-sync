@@ -39,7 +39,7 @@ import { authError, authOk, COMMAND_MAX_BYTES, IDENTITY_FIELDS } from "./quantus
 export const COMMAND_SCHEMA_VERSION = 3;
 
 /* Der Umschlag selbst — genau diese fünf Felder. */
-export const ENVELOPE_FIELDS = Object.freeze(["schemaVersion", "verb", "jobId", "expectedEntityVersion", "payload"]);
+export const ENVELOPE_FIELDS = Object.freeze(["schemaVersion", "verb", "jobId", "expectedEntityVersion", "payload", "lease"]);
 
 /* Felder, die der Server bestimmt und die im Körper nichts zu suchen haben.
    IDENTITY_FIELDS (Rolle, Mandant, Principal …) kommen aus dem Auth-Modul. */
@@ -56,7 +56,15 @@ export const FORBIDDEN_SHAPE_FIELDS = Object.freeze([
   "prototype", "constructor",
 ]);
 
-const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+/* Kennungsalphabet: wie der Kern (assistant-schema ID_MUSTER) mit
+   Doppelpunkt, damit Originalkennungen (Slot-Schluessel, Altkennungen) ohne
+   verlustbehaftete Umcodierung adressierbar sind. Der Punkt bleibt draussen:
+   eine Kennung, die wie ein Dateiname aussieht (app-data.json), soll gar
+   nicht erst entstehen. `__` bleibt verboten (siehe unten). */
+const ID_PATTERN = /^[A-Za-z0-9_:-]{1,120}$/;
+/* Anhangsschluessel der Blob-Key-Policy (attachment-text__…): die einzige
+   Stelle, an der `__` erlaubt ist — die Form prueft der Kern (classifyBlobKey). */
+const BLOB_KEY_PATTERN = /^attachment-text__[^\s/\\]{1,480}$/;
 
 /* Eine Id ist eine Id. Zusätzlich zum Alphabet fällt `__` durch: das ist der
    Segmenttrenner der Blob-Schlüssel (blob-key-policy.mjs), und eine Id, die
@@ -78,6 +86,9 @@ const iso = ({ optional = false } = {}) => ({ kind: "iso", optional });
 const day = ({ optional = false } = {}) => ({ kind: "day", optional });
 const int = (min, max, { optional = false } = {}) => ({ kind: "int", min, max, optional });
 const hash = ({ optional = false } = {}) => ({ kind: "hash", optional });
+const blobKey = ({ optional = false } = {}) => ({ kind: "blobKey", optional });
+/* Ein praesentierter Lease-Nachweis: Halter und Fence aus run.claim. */
+const LEASE_FIELDS = Object.freeze(["holder", "fence"]);
 
 /*
  * Die Fachverben. Für jedes:
@@ -115,7 +126,7 @@ export const COMMAND_VERBS = Object.freeze({
   "intake.create": {
     resource: { kind: "intake", idField: null , creates: true},
     anchor: { kind: "run", idField: null },
-    fields: { source: enumOf(["mail", "manual", "document", "system"]), title: text(200), text: text(8000, { optional: true }), evidenceRefs: ids(20, { optional: true }) },
+    fields: { source: enumOf(["mail", "manual", "document", "system"]), title: text(200), text: text(8000, { optional: true }), intakeId: id({ optional: true }) },
   },
   "intake.accept": {
     resource: { kind: "intake", idField: "intakeId" },
@@ -125,12 +136,12 @@ export const COMMAND_VERBS = Object.freeze({
   "task.create": {
     resource: { kind: "task", idField: null , creates: true},
     anchor: { kind: "lead", idField: "leadId" },
-    fields: { leadId: id(), title: text(200), dueAt: iso({ optional: true }), notes: text(2000, { optional: true }) },
+    fields: { leadId: id(), title: text(200), dueAt: iso({ optional: true }), notes: text(2000, { optional: true }), taskId: id({ optional: true }) },
   },
   "lead.comment": {
     resource: { kind: "lead", idField: "leadId" },
     anchor: { self: true },
-    fields: { leadId: id(), text: text(8000), evidenceRefs: ids(20, { optional: true }) },
+    fields: { leadId: id(), text: text(8000), evidenceRefs: ids(20, { optional: true }), commentId: id({ optional: true }) },
   },
   "lead.transition": {
     resource: { kind: "lead", idField: "leadId" },
@@ -144,13 +155,13 @@ export const COMMAND_VERBS = Object.freeze({
     // WOMIT. Ohne diese vier gibt es kein Warten (Kernvertrag Paket B).
     fields: {
       leadId: id(), waitUntil: iso(), counterparty: text(200), nextAction: text(500),
-      evidenceRefs: ids(20), followUpAt: iso({ optional: true }), reason: text(1000, { optional: true }),
+      evidenceRefs: ids(20),
     },
   },
   "briefing.answer": {
     resource: { kind: "briefing_answer", idField: null , creates: true},
     anchor: { kind: "briefing", idField: "briefingId" },
-    fields: { briefingId: id(), questionId: id(), answer: text(8000), decision: enumOf(["yes", "no", "later", "custom"], { optional: true }) },
+    fields: { briefingId: id(), questionId: id(), answer: text(8000), answerId: id({ optional: true }) },
   },
   "briefing.consumeAnswer": {
     resource: { kind: "briefing_answer", idField: "answerId" },
@@ -160,28 +171,30 @@ export const COMMAND_VERBS = Object.freeze({
   "question.create": {
     resource: { kind: "question", idField: null , creates: true},
     anchor: { kind: "lead", idField: "leadId" },
-    fields: { leadId: id(), text: text(2000), options: list(8, text(200), { optional: true }) },
+    fields: { leadId: id(), text: text(2000), options: list(8, text(200), { optional: true }), questionId: id({ optional: true }) },
   },
   "question.resolve": {
     resource: { kind: "question", idField: "questionId" },
     anchor: { self: true },
-    fields: { questionId: id(), answer: text(2000) },
+    fields: { questionId: id(), answer: text(2000), answerId: id({ optional: true }) },
   },
   "document.register": {
     resource: { kind: "document", idField: null , creates: true},
     anchor: { kind: "run", idField: null },
     // Ein Dokument ohne geprüften Anhang, Abdruck und Herkunft ist eine
     // Behauptung, kein Beleg.
+    // attachmentRef ist der Anhangsschluessel des Kerns (Blob-Key-Policy),
+    // mime/size/leadId sind Pflicht des Kerns (registerDocument).
     fields: {
-      documentId: id(), title: text(200), attachmentRef: id(), contentHash: hash(),
+      documentId: id(), title: text(200), attachmentRef: blobKey(), contentHash: hash(),
       origin: enumOf(["mail", "upload", "scan", "external"]),
-      linkedLeadIds: ids(20, { optional: true }), sourceRef: id({ optional: true }),
+      mime: text(100), size: int(1, Number.MAX_SAFE_INTEGER), leadId: id(),
     },
   },
   "document.processed": {
     resource: { kind: "document", idField: "documentId" },
     anchor: { self: true },
-    fields: { documentId: id(), extractionRef: id(), contentHash: hash(), summary: text(4000, { optional: true }) },
+    fields: { documentId: id(), extractionRef: blobKey(), contentHash: hash() },
   },
   "worker.assign": {
     resource: { kind: "assignment", idField: null , creates: true},
@@ -190,42 +203,46 @@ export const COMMAND_VERBS = Object.freeze({
     // Rechte des Aufrufers hängen weiter ausschliesslich an seinem Ausweis.
     // `sourceVersion` bindet den Auftrag an den Stand, auf dem er beruht,
     // `allowedContextIds` an genau die Kontexte, die er lesen darf.
+    // sourceType/sourceId/purpose/kind/dueAt sind Pflicht des Kerns (createJob).
     fields: {
       assignmentId: id(), executor: enumOf(["claude", "gemini"]), sourceVersion: int(0, Number.MAX_SAFE_INTEGER),
-      allowedContextIds: ids(20), dueAt: iso({ optional: true }),
+      allowedContextIds: ids(20), dueAt: iso(),
+      sourceType: enumOf(["chatgptLead", "chatgptTask", "task"]), sourceId: id(), purpose: text(1000), jobKind: text(64),
     },
   },
   "worker.return": {
     resource: { kind: "worker_result", idField: null , creates: true},
     anchor: { kind: "assignment", idField: "assignmentId" },
+    // resultHash ist Pflicht des Kerns (recordJobReturn): ohne Abdruck kein Ergebnis.
     fields: {
       assignmentId: id(), resultRef: id(), summary: text(8000),
-      sourceVersion: int(0, Number.MAX_SAFE_INTEGER), evidenceRefs: ids(20, { optional: true }),
+      sourceVersion: int(0, Number.MAX_SAFE_INTEGER), resultHash: hash(),
     },
   },
   "worker.review": {
     resource: { kind: "worker_result", idField: "resultId" },
     anchor: { self: true },
-    fields: { resultId: id(), verdict: enumOf(["accepted", "rejected", "revise"]), notes: text(4000, { optional: true }) },
+    fields: { resultId: id(), verdict: enumOf(["accepted", "rejected"]), notes: text(4000, { optional: true }) },
   },
   "run.ensure": {
     // Der Lauf entsteht hier — deshalb ist er RESSOURCE und Anker zugleich,
     // und deshalb darf er beim Anlegen noch fehlen.
     resource: { kind: "run", idField: null , ensure: true},
     anchor: { self: true },
-    fields: { slot: enumOf(["04:00", "09:00", "14:00", "23:00"]), date: day() },
+    fields: { slot: enumOf(["04:00", "09:00", "14:00", "23:00"]), date: day(), receiptId: id({ optional: true }) },
   },
   "run.claim": {
     resource: { kind: "run", idField: null , fromJob: true}, anchor: { self: true },
-    fields: { leaseSeconds: int(1, 900) },
+    // E1-Vertrag: 10 bis 120 Sekunden, nichts wird gekuerzt.
+    fields: { leaseSeconds: int(10, 120) },
   },
   "run.renew": {
     resource: { kind: "run", idField: null , fromJob: true}, anchor: { self: true },
-    fields: { leaseSeconds: int(1, 900) },
+    fields: { leaseSeconds: int(10, 120) },
   },
   "run.checkpoint": {
     resource: { kind: "run", idField: null , fromJob: true}, anchor: { self: true },
-    fields: { stage: text(64), note: text(2000, { optional: true }) },
+    fields: { stage: text(64), note: text(2000, { optional: true }), checkpointId: id({ optional: true }) },
   },
   "run.finalize": {
     resource: { kind: "run", idField: null , fromJob: true}, anchor: { self: true },
@@ -240,7 +257,13 @@ export const COMMAND_VERBS = Object.freeze({
   },
   "run.log": {
     resource: { kind: "run", idField: null , fromJob: true}, anchor: { self: true },
-    fields: { event: text(64), detail: text(2000, { optional: true }) },
+    fields: { event: text(64), detail: text(2000, { optional: true }), eventId: id({ optional: true }) },
+  },
+  "run.sourceCheck": {
+    // Quellenpruefung des Pruefers (recordSourceCheck): ohne frische Quellen
+    // schliesst der Kern keinen Lauf.
+    resource: { kind: "run", idField: null , fromJob: true}, anchor: { self: true },
+    fields: { sourceId: id(), cursor: text(200), outcome: enumOf(["ok", "partial", "auth_error", "budget_exceeded", "unreachable"]), detail: text(500, { optional: true }) },
   },
 });
 
@@ -291,6 +314,9 @@ function checkField(spec, value, feld) {
     case "int":
       if (typeof value !== "number" || !Number.isInteger(value) || value < spec.min || value > spec.max) return `field_invalid:${feld}`;
       return null;
+    case "blobKey":
+      if (typeof value !== "string" || !BLOB_KEY_PATTERN.test(value) || /[\u0000-\u001f\u007f]/.test(value)) return `field_invalid:${feld}`;
+      return null;
     case "hash":
       // Ein Inhaltsabdruck ist ein SHA-256 in Hex — nichts anderes.
       if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value)) return `field_invalid:${feld}`;
@@ -327,6 +353,15 @@ export function parseCommandEnvelope(value, { maxBytes = COMMAND_MAX_BYTES } = {
     return authError("invalid_request", "expected_entity_version_invalid");
   }
 
+  let lease = null;
+  if (value.lease !== undefined) {
+    const l = value.lease;
+    if (!isPlainObject(l) || Object.keys(l).some((k) => !LEASE_FIELDS.includes(k))) return authError("invalid_request", "lease_invalid");
+    if (!isSafeId(l.holder)) return authError("invalid_request", "lease_invalid");
+    if (typeof l.fence !== "number" || !Number.isSafeInteger(l.fence) || l.fence < 1) return authError("invalid_request", "lease_invalid");
+    lease = Object.freeze({ holder: l.holder, fence: l.fence });
+  }
+
   const payload = value.payload;
   if (!isPlainObject(payload)) return authError("invalid_request", "payload_not_an_object");
 
@@ -360,6 +395,7 @@ export function parseCommandEnvelope(value, { maxBytes = COMMAND_MAX_BYTES } = {
     jobId,
     expectedEntityVersion: expected,
     payload: Object.freeze(sauber),
+    ...(lease ? { lease } : {}),
   });
 
   const bytes = Buffer.byteLength(JSON.stringify(command), "utf8");

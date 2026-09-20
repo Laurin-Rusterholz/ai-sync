@@ -18,7 +18,7 @@
 import {
   OPERATIONAL_STATES, WARTE_ZUSTAENDE, ABGESCHLOSSENE_ZUSTAENDE, EXECUTORS, TRANSITIONS,
   QUELLEN, effektiverZustand, rollenFuer, leererRun, pruefeId, sourceKey, validatePolicy,
-  KARTEN_ZUSTAENDE, stringFingerprint,
+  KARTEN_ZUSTAENDE, stringFingerprint, STATE_MODEL_VERSION, rollenAbleiten,
 } from "./assistant-schema.mjs";
 import { klon, requireCore } from "./assistant-migration.mjs";
 import { classifyBlobKey } from "./blob-key-policy.mjs";
@@ -184,6 +184,7 @@ const NOTE_META = Object.freeze({
   assistantStart: Object.freeze({ category: "auftrag", tag: "start" }),
   assistantFinal: Object.freeze({ category: "entscheid", tag: "final" }),
   assistantCorrection: Object.freeze({ category: "entscheid", tag: "korrektur" }),
+  assistantEntry: Object.freeze({ category: "auftrag", tag: "eintrag" }),
 });
 
 export function chatgptNoteBauen(id, { title, content, kind, date, runRevision, now, supersedes = null }) {
@@ -684,7 +685,7 @@ export function registerIntake(input, { intakeId, text, channel, receivedAt, sou
  * Eine Antwort ist UNVERAENDERLICH (nur der Nutzer schreibt sie, actor
  * "user") und GENAU EINMAL konsumierbar. Eine offene Frage ist nie eine
  * Freigabe. */
-export function askQuestion(input, { questionId, sourceType, sourceId, text, date }, ctx) {
+export function askQuestion(input, { questionId, sourceType, sourceId, text, date, options }, ctx) {
   ctxPruefen(ctx);
   const data = klon(requireCore(input));
   pruefeId(questionId, "questionId");
@@ -696,12 +697,15 @@ export function askQuestion(input, { questionId, sourceType, sourceId, text, dat
   }
   const t = String(text || "").trim();
   if (!t) return fehler("QUESTION_TEXT_MISSING");
+  // Antwortoptionen (C3a): eine kurze Liste von Vorschlaegen, kein Zwang — die Antwort bleibt Freitext.
+  const opts = options === undefined || options === null ? [] : options;
+  if (!Array.isArray(opts) || opts.length > 8 || !opts.every((o) => typeof o === "string" && o.trim() && o.length <= 200)) return fehler("QUESTION_OPTIONS_INVALID");
   const vorhanden = data.automation.questionsById[questionId];
   if (vorhanden) {
     if (vorhanden.text === t && vorhanden.sourceType === sourceType && vorhanden.sourceId === sourceId) return { ok: true, data, question: vorhanden, created: false };
     return fehler("QUESTION_IMMUTABLE", questionId);
   }
-  const q = { id: questionId, sourceType, sourceId, text: t, askedAt: isoAus(ctx.now), askedBy: ctx.actor ? ctx.actor.id : null, status: "open", answerId: null, runDate: date && istLokalDatum(date) ? date : null };
+  const q = { id: questionId, sourceType, sourceId, text: t, options: opts.map((o) => o.trim()), askedAt: isoAus(ctx.now), askedBy: ctx.actor ? ctx.actor.id : null, status: "open", answerId: null, runDate: date && istLokalDatum(date) ? date : null };
   data.automation.questionsById[questionId] = q;
   bump(data, ctx.now);
   return { ok: true, data, question: q, created: true };
@@ -887,7 +891,7 @@ export function cancelJob(input, { jobId, reason }, ctx) {
   return { ok: true, data, job: j, created: true };
 }
 
-export function recordJobReturn(input, { jobId, outcome, resultRef, resultHash, error }, ctx) {
+export function recordJobReturn(input, { jobId, outcome, resultRef, resultHash, error, summary }, ctx) {
   ctxPruefen(ctx);
   const data = klon(requireCore(input));
   const j = data.automation.jobsById[jobId];
@@ -904,7 +908,7 @@ export function recordJobReturn(input, { jobId, outcome, resultRef, resultHash, 
   if (outcome === "returned") {
     if (!String(resultRef || "").trim()) return fehler("JOB_RESULT_REF_MISSING");
     if (typeof resultHash !== "string" || !HASH_HEX.test(resultHash)) return fehler("JOB_RESULT_HASH_INVALID");
-    j.result = { ref: String(resultRef).trim(), hash: resultHash, receivedAt: isoAus(ctx.now), receivedFrom: ctx.actor ? ctx.actor.id : null, stale: !z || !(j.acceptedVersions || [j.inputVersion]).includes(z.version), sourceVersionAtReturn: z ? z.version : null };
+    j.result = { ref: String(resultRef).trim(), hash: resultHash, summary: summary ? String(summary).slice(0, 8000) : null, receivedAt: isoAus(ctx.now), receivedFrom: ctx.actor ? ctx.actor.id : null, stale: !z || !(j.acceptedVersions || [j.inputVersion]).includes(z.version), sourceVersionAtReturn: z ? z.version : null };
   } else {
     j.error = String(error || "failed").slice(0, 500);
   }
@@ -952,6 +956,179 @@ export function reviewJobResult(input, { jobId, verdict, reviewer, note }, ctx) 
   }
   bump(data, ctx.now);
   return { ok: true, data, job: j, created: true };
+}
+
+/* ══ Erweiterung C3a ══════════════════════════════════════════════════════
+ * Fuenf Kommandos, die die C2-Fachverben brauchen und die es im Kern bisher
+ * nicht gab. Alle halten die Kern-Invarianten: Klon, Revision +1, Karten
+ * unveraendert, keine Umdeutung bestehender Eintraege (gleiche Kennung mit
+ * gleichem Inhalt ist idempotent, mit anderem Inhalt ein Konflikt). */
+
+/* Eine Aufgabe entsteht MIGRIERT: mit fuehrendem Zustand, Version 1,
+ * Quellstempel wie in der Migration und expliziten Rollen. Eine direkt
+ * geschriebene Aufgabe waere unmigriert und in der Ampel rot. */
+export function createTask(input, { taskId, title, dueDate, notes, linkedLeadId }, ctx) {
+  ctxPruefen(ctx);
+  const data = klon(requireCore(input));
+  pruefeId(taskId, "taskId");
+  const t = String(title || "").trim();
+  if (!t) return fehler("TASK_TITLE_MISSING");
+  if (dueDate !== undefined && dueDate !== null && !istLokalDatum(dueDate)) return fehler("DATE_INVALID", dueDate);
+  if (linkedLeadId !== undefined && linkedLeadId !== null && !quelleFinden(data, "chatgptLead", linkedLeadId)) return fehler("LINK_TARGET_NOT_FOUND", { sourceType: "chatgptLead", sourceId: linkedLeadId });
+  const vorhanden = data.entities.tasks[taskId];
+  if (vorhanden) {
+    if (vorhanden.title === t && (vorhanden.createdBy || null) === (ctx.actor ? ctx.actor.id : null)) return { ok: true, data, task: vorhanden, created: false };
+    return fehler("TASK_ID_TAKEN", taskId);
+  }
+  const nowIso = isoAus(ctx.now);
+  const e = {
+    id: taskId, title: t.slice(0, 200), status: "todo", dueDate: dueDate || null, notes: notes ? String(notes).slice(0, 2000) : "",
+    createdAt: nowIso, updatedAt: nowIso, createdBy: ctx.actor ? ctx.actor.id : null, comments: [],
+    linkedChatgptLeads: linkedLeadId ? [linkedLeadId] : [],
+    operationalState: "doing", operationalStateVersion: 1,
+    operationalStateSource: { model: STATE_MODEL_VERSION, legacyField: "status", legacyValue: "todo", mappedAt: nowIso, note: "createTask" },
+  };
+  e.operationalRoles = rollenAbleiten("task", e);
+  data.entities.tasks[taskId] = e;
+  bump(data, ctx.now);
+  return { ok: true, data, task: e, created: true };
+}
+
+/* Ein Kommentar an einer Quelle: Wortlaut, Zeit, Urheber — keine Zustandswirkung. */
+export function addComment(input, { sourceType, sourceId, commentId, text, evidenceRefs }, ctx) {
+  ctxPruefen(ctx);
+  const data = klon(requireCore(input));
+  if (!QUELLEN[sourceType]) return fehler("SOURCE_TYPE_NOT_STATEFUL", sourceType);
+  const e = quelleFinden(data, sourceType, sourceId);
+  if (!e) return fehler("SOURCE_NOT_FOUND", sourceType + ":" + sourceId);
+  pruefeId(commentId, "commentId");
+  const t = String(text || "").trim();
+  if (!t) return fehler("COMMENT_TEXT_MISSING");
+  const refs = evidenceRefs === undefined || evidenceRefs === null ? [] : evidenceRefs;
+  if (!Array.isArray(refs) || refs.length > 20) return fehler("COMMENT_EVIDENCE_INVALID");
+  for (const ref of refs) {
+    const a = data.automation;
+    const r = String(ref);
+    if (!istKarte(a.evidenceById[r]) && !istKarte(a.documentsById[r]) && !istKarte(a.jobsById[r]) && !istKarte(a.answersById[r])) return fehler("EVIDENCE_REF_UNKNOWN", r);
+  }
+  if (!Array.isArray(e.comments)) e.comments = [];
+  const vorhanden = e.comments.find((c) => istKarte(c) && c.id === commentId);
+  if (vorhanden) {
+    if (vorhanden.text === t) return { ok: true, data, comment: vorhanden, created: false };
+    return fehler("COMMENT_IMMUTABLE", commentId);
+  }
+  const nowIso = isoAus(ctx.now);
+  const c = { id: commentId, text: t.slice(0, 8000), createdAt: nowIso, author: ctx.actor ? ctx.actor.id : null, authorKind: ctx.actor ? ctx.actor.kind : null, evidenceRefs: refs.map(String) };
+  e.comments.push(c);
+  e.updatedAt = nowIso;
+  bump(data, ctx.now);
+  return { ok: true, data, comment: c, created: true };
+}
+
+/* Eine freie Notiz zum Lauf (ChatGPT-Notiz, Art assistantEntry), optional an einen Lead gebunden. */
+export function appendRunNote(input, { date, noteId, text, linkedLeadId }, ctx) {
+  ctxPruefen(ctx);
+  const data = klon(requireCore(input));
+  const run = runVon(data, date);
+  if (!run) return fehler("RUN_MISSING", date);
+  pruefeId(noteId, "noteId");
+  const t = String(text || "").trim();
+  if (!t) return fehler("NOTE_TEXT_MISSING");
+  if (linkedLeadId !== undefined && linkedLeadId !== null && !quelleFinden(data, "chatgptLead", linkedLeadId)) return fehler("LINK_TARGET_NOT_FOUND", { sourceType: "chatgptLead", sourceId: linkedLeadId });
+  const vorhanden = data.entities.chatgptNotes[noteId];
+  if (vorhanden) {
+    if (vorhanden.instruction === t.slice(0, 8000) && vorhanden.assistantNote && vorhanden.assistantNote.runDate === date) return { ok: true, data, noteId, created: false };
+    return fehler("NOTE_ID_TAKEN", noteId);
+  }
+  const note = chatgptNoteBauen(noteId, { title: `Tagesbriefing ${date} — Eintrag`, content: t.slice(0, 8000), kind: "assistantEntry", date, runRevision: run.revision, now: ctx.now });
+  note.linkedChatgptLeads = linkedLeadId ? [linkedLeadId] : [];
+  note.author = ctx.actor ? ctx.actor.id : null;
+  data.entities.chatgptNotes[noteId] = note;
+  run.noteIds = [...(Array.isArray(run.noteIds) ? run.noteIds : []), noteId];
+  runAnfassen(run, ctx.now);
+  bump(data, ctx.now);
+  return { ok: true, data, noteId, created: true };
+}
+
+const RUN_EVENTS_MAX = 500;
+
+/* Ein Ereignis im Lauf: begrenztes Protokoll, keine Zustandswirkung. */
+export function recordRunEvent(input, { date, eventId, event, detail }, ctx) {
+  ctxPruefen(ctx);
+  const data = klon(requireCore(input));
+  const run = runVon(data, date);
+  if (!run) return fehler("RUN_MISSING", date);
+  pruefeId(eventId, "eventId");
+  const ev = String(event || "").trim();
+  if (!ev || ev.length > 64) return fehler("RUN_EVENT_INVALID", event);
+  if (!Array.isArray(run.events)) run.events = [];
+  const vorhanden = run.events.find((x) => istKarte(x) && x.id === eventId);
+  if (vorhanden) {
+    if (vorhanden.event === ev) return { ok: true, data, event: vorhanden, created: false };
+    return fehler("RUN_EVENT_IMMUTABLE", eventId);
+  }
+  const eintrag = { id: eventId, event: ev, detail: detail ? String(detail).slice(0, 2000) : null, at: isoAus(ctx.now), by: ctx.actor ? ctx.actor.id : null, byKind: ctx.actor ? ctx.actor.kind : null };
+  run.events = [...run.events.slice(-(RUN_EVENTS_MAX - 1)), eintrag];
+  runAnfassen(run, ctx.now);
+  bump(data, ctx.now);
+  return { ok: true, data, event: eintrag, created: true };
+}
+
+/* Ein Fortschrittsmarker der Leitung im Lauf: Stufe, Zeit, Urheber. Nicht auf einem finalen Lauf. */
+export function recordRunCheckpoint(input, { date, checkpointId, stage, note }, ctx) {
+  ctxPruefen(ctx);
+  const data = klon(requireCore(input));
+  const run = runVon(data, date);
+  if (!run) return fehler("RUN_MISSING", date);
+  if (run.phase === "final") return fehler("RUN_FINAL", date);
+  pruefeId(checkpointId, "checkpointId");
+  const st = String(stage || "").trim();
+  if (!st || st.length > 64) return fehler("CHECKPOINT_STAGE_INVALID", stage);
+  if (!Array.isArray(run.checkpoints)) run.checkpoints = [];
+  const vorhanden = run.checkpoints.find((x) => istKarte(x) && x.id === checkpointId);
+  if (vorhanden) {
+    if (vorhanden.stage === st) return { ok: true, data, checkpoint: vorhanden, created: false };
+    return fehler("CHECKPOINT_IMMUTABLE", checkpointId);
+  }
+  const eintrag = { id: checkpointId, stage: st, note: note ? String(note).slice(0, 2000) : null, at: isoAus(ctx.now), by: ctx.actor ? ctx.actor.id : null };
+  run.checkpoints = [...run.checkpoints.slice(-(RUN_EVENTS_MAX - 1)), eintrag];
+  run.lastCheckpoint = { id: eintrag.id, stage: eintrag.stage, at: eintrag.at };
+  runAnfassen(run, ctx.now);
+  bump(data, ctx.now);
+  return { ok: true, data, checkpoint: eintrag, created: true };
+}
+
+/* Der Slot-Tick des Schedulers: Lauf anlegen, falls er fehlt, UND den Slot
+ * quittieren — in EINER Revision, weil der Transaktionsumschlag je Kommando
+ * genau eine erlaubt. Dieselben Pruefungen wie ensureRun + recordSlotReceipt. */
+export function ensureRunSlot(input, { date, slot, receiptId, note }, ctx) {
+  ctxPruefen(ctx);
+  if (!istLokalDatum(date)) return fehler("DATE_INVALID", date);
+  const p = validatePolicy(ctx.policy);
+  if (!p.ok) return fehler("POLICY_INVALID", p.errors);
+  try { slotDefinition(slot); } catch { return fehler("SLOT_UNKNOWN", slot); }
+  pruefeId(receiptId, "receiptId");
+  if (slotBeginnMs(date, slot) > ctx.now) return fehler("SLOT_NOT_STARTED", { slot, startsAt: isoAus(slotBeginnMs(date, slot)) });
+  const data = klon(requireCore(input));
+  let run = runVon(data, date);
+  let created = false;
+  if (!run) {
+    run = leererRun(date, ctx.policy.version);
+    run.createdAt = isoAus(ctx.now);
+    run.updatedAt = run.createdAt;
+    data.dailyBriefing.assistantRuns[date] = run;
+    created = true;
+  }
+  if (run.phase === "final") return fehler("RUN_FINAL", date);
+  const vorhanden = run.slotReceipts[slot];
+  if (vorhanden && vorhanden.receiptId === receiptId) return { ok: true, data, run, created, receipt: vorhanden, receiptCreated: false };
+  if (vorhanden) return fehler("SLOT_ALREADY_RECEIPTED", { slot, receiptId: vorhanden.receiptId });
+  const key = slotKey(ctx.policy.tenant, date, slot, ctx.policy.version);
+  run.slotReceipts[slot] = { receiptId, slotKey: key, at: isoAus(ctx.now), note: note ? String(note).slice(0, 500) : null };
+  if (run.phase === "created") run.phase = "active";
+  runAnfassen(run, ctx.now);
+  bump(data, ctx.now);
+  return { ok: true, data, run, created, receipt: run.slotReceipts[slot], receiptCreated: true };
 }
 
 export { KARTEN_ZUSTAENDE };

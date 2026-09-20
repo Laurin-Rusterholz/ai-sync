@@ -89,6 +89,7 @@ const STATUS_BY_CODE = Object.freeze({
   stale_entity_version: 409,
   idempotency_conflict: 409,
   replay_too_old: 409,
+  domain_conflict: 409,        // fachlicher Konflikt des Kerns (Zustand, Uebergang, Beleg); der Kern-Code steht in reason
   // aus mutateAppData / firebase-admin
   cas_exhausted: 503,
   cas_outcome_unknown: 503,
@@ -478,7 +479,7 @@ export async function handleCommandRequest(req, deps = {}) {
      */
     const bindung = deps.domain.assertActiveBinding({
       snapshot, principal, resource: ressource, anchor: anker,
-      verb: command.verb, jobId: command.jobId, nowMs: jetztMs,
+      verb: command.verb, jobId: command.jobId, command, nowMs: jetztMs,
     });
     if (!bindung || bindung.ok !== true) {
       throw fail("forbidden", String(bindung?.reason || "binding_not_active"));
@@ -617,7 +618,7 @@ export async function handleReadRequest(req, deps = {}, { route } = {}) {
   const named = NAMED_QUERIES[query];
 
   const scopeId = String(url.searchParams.get("scopeId") || "");
-  if (!/^[A-Za-z0-9_-]{1,128}$/.test(scopeId) || scopeId.includes("__")) {
+  if (!/^[A-Za-z0-9_:-]{1,120}$/.test(scopeId) || scopeId.includes("__")) {
     return denial(authError("invalid_request", "scope_id_invalid"), { requestId });
   }
   const jobId = String(url.searchParams.get("jobId") || "") || (named.scopeKind === "run" ? scopeId : "");
@@ -663,9 +664,17 @@ export async function handleReadRequest(req, deps = {}, { route } = {}) {
   const dataRevision = kern.dataRevision;
 
   // Das Scope-Objekt kommt frisch aus dem autoritativen Bestand.
-  const scopeObject = deps.domain.loadObject(snapshot, {
-    kind: SCOPE_OBJECT_KINDS[query], id: scopeId, runId: jobId || null,
-  });
+  /* Ein kaputter Kern ist kein „nicht gefunden": wirft der Fachadapter, ist
+     das eine kontrollierte 503 (bzw. der Status seines Codes), nie ein 500. */
+  let scopeObject;
+  try {
+    scopeObject = deps.domain.loadObject(snapshot, {
+      kind: SCOPE_OBJECT_KINDS[query], id: scopeId, runId: jobId || null,
+    });
+  } catch (err) {
+    if (err && err.code && Object.prototype.hasOwnProperty.call(STATUS_BY_CODE, err.code)) return fehlerAntwort(err, { requestId, corsHeaders: cors });
+    return denial(authError("auth_not_configured", "domain_adapter_failed"), { requestId, corsHeaders: cors });
+  }
   if (!scopeObject) return denial(authError("forbidden", "object_not_found"), { requestId, corsHeaders: cors });
 
   let seite;
@@ -698,7 +707,10 @@ export async function handleReadRequest(req, deps = {}, { route } = {}) {
     rohdaten = deps.domain.listPage(snapshot, {
       query, scopeId, pageSize: page.pageSize, afterId: page.afterId, principal,
     });
-  } catch {
+  } catch (err) {
+    // Ein Fachadapter, der mit bekanntem Code ablehnt (z. B. forbidden: kein
+    // aktiver Auftrag), antwortet mit dessen Status; alles andere ist 503.
+    if (err && err.code && Object.prototype.hasOwnProperty.call(STATUS_BY_CODE, err.code)) return fehlerAntwort(err, { requestId, corsHeaders: cors });
     return denial(authError("auth_not_configured", "domain_adapter_failed"), { requestId, corsHeaders: cors });
   }
 
@@ -761,7 +773,7 @@ export async function handleReadRequest(req, deps = {}, { route } = {}) {
     // oder übersprünge etwas.
     const zeiger = rohdaten?.nextAfterId;
     const letzter = String(eintraege[eintraege.length - 1]?.id || "");
-    const gueltig = typeof zeiger === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(zeiger) && !zeiger.includes("__");
+    const gueltig = typeof zeiger === "string" && /^[A-Za-z0-9_:-]{1,120}$/.test(zeiger) && !zeiger.includes("__");
     if (!gueltig || zeiger === String(page.afterId || "") || zeiger !== letzter || !eintraege.length) {
       return denial(serviceDenial("auth_not_configured", "page_cursor_unusable"), { requestId, corsHeaders: cors });
     }

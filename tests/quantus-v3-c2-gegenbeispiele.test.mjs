@@ -415,32 +415,33 @@ const NUTZER_VERBEN = [
   ["lead.schedule", { leadId: LEAD_ID, waitUntil: "2026-09-25T09:00:00Z", counterparty: "Muster AG", nextAction: "Nachfassen", evidenceRefs: ["artifact_1"] }, 17],
   ["briefing.answer", { briefingId: "briefing_1", questionId: "question_1", answer: "ja" }, 0],
   ["question.resolve", { questionId: "question_1", answer: "ja" }, 2],
-  ["document.register", { documentId: "document_2", title: "Vertrag", attachmentRef: "att_1", contentHash: "b".repeat(64), origin: "upload" }, 0],
+  ["document.register", { documentId: "document_2", title: "Vertrag", attachmentRef: "attachment-text__chatgptLead__lead_123__vertrag.pdf", contentHash: "b".repeat(64), origin: "upload", mime: "application/pdf", size: 1234, leadId: LEAD_ID }, 0],
   ["note.append", { noteId: "note_neu", text: "Notiz", noteScope: "run" }, 0],
 ];
 
 const LEITUNG_VERBEN = [
   ["question.create", { leadId: LEAD_ID, text: "Rückfrage?" }, 0],
-  ["worker.assign", { assignmentId: "assignment_2", executor: "claude", sourceVersion: 5, allowedContextIds: ["ctx_1"] }, 0],
+  ["worker.assign", { assignmentId: "assignment_2", executor: "claude", sourceVersion: 5, allowedContextIds: ["ctx_1"], dueAt: "2026-09-25T09:00:00Z", sourceType: "chatgptLead", sourceId: LEAD_ID, purpose: "Offerte pruefen", jobKind: "recherche" }, 0],
   ["worker.review", { resultId: "result_1", verdict: "accepted" }, 2],
-  ["document.processed", { documentId: "document_1", extractionRef: "extract_1", contentHash: "c".repeat(64) }, 3],
+  ["document.processed", { documentId: "document_1", extractionRef: "attachment-text__chatgptLead__lead_123__vertrag.pdf", contentHash: "c".repeat(64) }, 3],
   ["run.checkpoint", { stage: "lesen" }, 5],
   ["run.log", { event: "tick" }, 5],
 ];
 
 const SCHEDULER_VERBEN = [
   ["run.ensure", { slot: "09:00", date: "2026-09-20" }, 5],
-  ["run.claim", { leaseSeconds: 300 }, 5],
-  ["run.renew", { leaseSeconds: 300 }, 5],
+  ["run.claim", { leaseSeconds: 120 }, 5],
+  ["run.renew", { leaseSeconds: 120 }, 5],
 ];
 
 const BACKEND_VERBEN = [
   ["run.finalize", { outcome: "complete" }, 5],
   ["briefing.consumeAnswer", { briefingId: "briefing_1", answerId: "answer_1" }, 2],
+  ["run.sourceCheck", { sourceId: "gmail-inbox", cursor: "c1", outcome: "ok" }, 5],
 ];
 
 const SPEZIALIST_VERBEN = [
-  ["worker.return", { assignmentId: "assignment_1", resultRef: "ergebnis_1", summary: "fertig", sourceVersion: 2 }, 0],
+  ["worker.return", { assignmentId: "assignment_1", resultRef: "ergebnis_1", summary: "fertig", sourceVersion: 2, resultHash: "d".repeat(64) }, 0],
 ];
 
 async function sendeAls({ token, verb, payload, version, env, store, domain, now = () => JETZT, origin = null }) {
@@ -450,7 +451,7 @@ async function sendeAls({ token, verb, payload, version, env, store, domain, now
   }), deps({ env, store, domain, now }));
 }
 
-test("(C2-09) alle 22 Verben: der vorgesehene Weg funktioniert", async () => {
+test("(C2-09) alle 23 Verben: der vorgesehene Weg funktioniert", async () => {
   const env = schreibendeUmgebung();
   const { config } = resolveAuthConfig(env.read);
   const leaseAktiv = () => makeCoreSnapshot({ leaseOwner: "lead-agent-cloudrun", leaseExpiresAt: new Date(JETZT + 300_000).toISOString() });
@@ -484,7 +485,7 @@ test("(C2-09) alle 22 Verben: der vorgesehene Weg funktioniert", async () => {
       geprueft.add(verb);
     }
   }
-  assert.equal(geprueft.size, 22, `nur ${geprueft.size} von 22 Verben positiv geprüft`);
+  assert.equal(geprueft.size, 23, `nur ${geprueft.size} von 23 Verben positiv geprüft`);
   assert.deepEqual([...geprueft].sort(), [...COMMAND_VERB_NAMES].sort());
 });
 
@@ -505,7 +506,7 @@ test("(C2-09b) run.ensure legt einen fehlenden Lauf an", async () => {
   const ohneLauf = makeStore({ snapshot: makeCoreSnapshot({ ohneRun: true }) });
   const claim = await sendeAls({
     token: env.secrets.service.scheduler, verb: "run.claim",
-    payload: { leaseSeconds: 300 }, version: 5, env, store: ohneLauf,
+    payload: { leaseSeconds: 120 }, version: 5, env, store: ohneLauf,
   });
   assert.equal(claim.status, 403);
   assert.equal(claim.body.reason, "object_not_found");
@@ -523,8 +524,8 @@ test("(C2-09c) zu jedem erlaubten Weg gehört ein verbotener", async () => {
   for (const [verb, payload, version] of [
     ["run.finalize", { outcome: "complete" }, 5],
     ["briefing.consumeAnswer", { briefingId: "briefing_1", answerId: "answer_1" }, 2],
-    ["worker.assign", { assignmentId: "assignment_3", executor: "gemini", sourceVersion: 5, allowedContextIds: ["ctx_1"] }, 0],
-    ["run.claim", { leaseSeconds: 300 }, 5],
+    ["worker.assign", { assignmentId: "assignment_3", executor: "gemini", sourceVersion: 5, allowedContextIds: ["ctx_1"], dueAt: "2026-09-25T09:00:00Z", sourceType: "chatgptLead", sourceId: LEAD_ID, purpose: "x", jobKind: "recherche" }, 0],
+    ["run.claim", { leaseSeconds: 120 }, 5],
   ]) {
     const res = await sendeAls({ token: nutzerToken(), verb, payload, version, env, store: makeStore(), origin: APP });
     assert.equal(res.status, 403, `user/${verb} ergab ${res.status}`);

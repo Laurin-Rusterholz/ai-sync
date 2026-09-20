@@ -41,7 +41,7 @@ einen instanzübergreifenden Ratenzähler.
 | `netlify/lib/quantus-v3-service.mjs` | die Kette: Auth → Herkunft → Körper → Rate → Adapter → Daten → CAS |
 | `netlify/lib/quantus-v3-read-helpers.mjs` | sichtbare Felder, Seitengrösse, Entitätsversionen |
 | `netlify/lib/quantus-v3-rate-limiter.mjs` | CAS-Schutzzähler (RTDB), atomar und geteilt |
-| `netlify/lib/quantus-v3-runtime.mjs` | Verdrahtung der Routen, Adapter über `import()` |
+| `netlify/lib/quantus-v3-runtime.mjs` | Verdrahtung der Routen — seit C3b über benannte Ports, siehe `docs/quantus-v3-c3b-laufzeit.md` |
 | `tests/quantus-v3-c2-*.test.mjs` | 64 Tests an der echten Kette, darunter alle 22 Verben positiv und negativ |
 
 Die vier Routendateien sind Hüllen von je unter zwölf Codezeilen; ein Test
@@ -212,9 +212,9 @@ zu anderen Paketen und bleiben ebenfalls aus.
 C2 bringt **keine** zweite Ledgerlogik und **keine** Fachlogik mit. Das
 Idempotenzmodul liegt nicht in diesem Zweig; die Tests laden deshalb den
 geprüften Integrationsstand **kontrolliert** aus dem Git-Objektspeicher
-(`git show 40a448c:netlify/lib/quantus-v3-idempotency.mjs` in ein temporäres
+(`git show 52b0641:netlify/lib/quantus-v3-idempotency.mjs` in ein temporäres
 Verzeichnis — kein Kopieren ins Paket) und fahren die Kette dagegen. Welche
-Fassung lief, schreibt der Testlauf: `# Idempotenz-Fassung im Lauf: git:40a448c`.
+Fassung lief, schreibt der Testlauf: `# Idempotenz-Fassung im Lauf: git:52b0641`.
 Ist der Stand nicht erreichbar, tritt eine vertragstreue Nachbildung an seine
 Stelle — und der Lauf sagt ausdrücklich, dass dann **kein Integrationsnachweis**
 vorliegt.
@@ -234,10 +234,13 @@ Kein Netz, kein Anbieteraufruf, keine Produktivkonfiguration.
    (erlaubte Übergänge, Wartelogik, Beleganforderungen) gehören zu B, die
    aktive Bindung zu E1. Beide sind hier nur als Port vorhanden.
 2. **Idempotenzmodul** liegt nicht im Zweig; die Tests laden den Stand
-   `40a448c` kontrolliert und fahren die Kette dagegen (Commit und Wiederholung
+   `52b0641` kontrolliert und fahren die Kette dagegen (Commit und Wiederholung
    ergeben genau einen Effekt).
 3. **Widerrufsprüfung** braucht einen Zugriffstoken-Anbieter; solange er fehlt,
-   sind Nutzer-Token nicht verifizierbar (503).
+   sind Nutzer-Token nicht verifizierbar (503). Der Anbieter liegt seit C3b in
+   `netlify/lib/quantus-v3-identity-access.mjs` — er braucht aber ein
+   scope-gebundenes Token von aussen (Gate G1 in
+   `docs/quantus-v3-c3b-laufzeit.md`).
 4. **Ratenzähler** ist gegen eingespeisten Verkehr geprüft, nicht gegen echtes
    RTDB — Latenz und Kontingent sind offen.
 5. **MCP-Werkzeugadapter** sind nicht Teil von C2 und werden nicht als
