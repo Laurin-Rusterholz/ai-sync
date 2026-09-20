@@ -26,6 +26,7 @@
 import { availablePort, unavailablePort } from "./ports.mjs";
 import { HttpError } from "./errors.mjs";
 import { taskName } from "./task-names.mjs";
+import { runIdForRunKey, statusScopeIdForRunKey } from "./run-ids.mjs";
 
 /* ── Kern: der echte CAS-/Idempotenzumschlag ──────────────────────────── */
 
@@ -181,41 +182,164 @@ export function createCloudTasksPort({ transport, dispatchDeadline = TASK_DISPAT
 
 /* ── Abschlussnachweis ueber das Werkzeug `quantus_run_status` ────────── */
 
-/* Bildet die Antwort des Statuswerkzeugs streng auf die Nachweisform ab.
- * Was nicht vollstaendig und eindeutig ist, wird zu `null` — der Worker
- * beendet den Lauf dann ehrlich unvollstaendig statt gruen. */
-export function mapRunStatusToEvidence(antwort, { runKey, tenant, policyVersion }) {
-  if (antwort === null || typeof antwort !== "object") return null;
-  const status = antwort.runStatus && typeof antwort.runStatus === "object" ? antwort.runStatus : antwort;
-  if (status.runKey !== runKey) return null;
-  if (status.closure === null || typeof status.closure !== "object") return null;
-  const closure = status.closure;
-  if (closure.state !== "final") return null;
-  const quellen = Array.isArray(closure.sources) ? closure.sources : null;
-  if (!quellen) return null;
+/*
+ * BEFUND AN DER INTEGRATION 48dc1fe — die fruehere Fassung war erfunden.
+ *
+ * Sie erwartete `{ runStatus: { runKey, closure: { state, fence,
+ * evidenceRef, verifiedAtMs, sources } } }`. Nichts davon gibt es.
+ * `handleReadRequest` antwortet mit einer SEITE:
+ *
+ *   { ok, requestId, serverNow, dataRevision, query, scopeId,
+ *     items, count, hasMore, complete, pageStatus, pageReason,
+ *     cursor, entityVersions }
+ *
+ * und die Eintraege sind auf `VISIBLE_FIELDS.run_status` beschnitten:
+ * `id, runId, state, stage, entityVersion, updatedAt, openQuestions,
+ * blocked`. Alles andere schneidet `projectItem` weg — auch ein Feld,
+ * das der Fachadapter mitgaebe.
+ *
+ * Daraus folgt, was C2 bezeugen KANN und was nicht:
+ *
+ *   bezeugt   der Statusdatensatz dieses Laufs, sein Zustand, seine
+ *             Entitaetsversion, die Datenrevision des Kerns und die
+ *             SERVERZEIT der Auskunft
+ *   bezeugt   dass die Seite VOLLSTAENDIG war (`complete: true`) — eine
+ *             abgebrochene oder fortgesetzte Seite ist kein Beweis, dass
+ *             es nichts weiteres gibt
+ *   NICHT     der Lease-Fence (den kennt nur E1) und der Quellensatz
+ *             (`requiredSources`) — beide stehen nicht in der Sichtliste
+ *
+ * Deshalb liefert diese Abbildung `sources: null`, wenn der Quellensatz
+ * nicht bezeugt ist. Der Lauf wird dann NICHT gruen; `validateClosureEvidence`
+ * meldet `sources_missing`. Das ist der ehrliche Stand und kein Mangel
+ * dieser Datei — siehe `docs/quantus-v3-runtime-cloud.md`.
+ */
+
+export const RUN_STATUS_QUERY = "run.status";
+
+/* Welcher Zustand eines Statusdatensatzes ein ABSCHLUSS ist. Streng und
+ * abgeschlossen: was nicht hier steht, ist kein Abschluss. */
+export const FINAL_RUN_STATES = Object.freeze(["completed", "closed", "finalized", "no_work", "aborted"]);
+export const GREEN_RUN_STATES = Object.freeze(["completed", "closed", "finalized", "no_work"]);
+
+function fehlschlag(code, detail = null) {
+  return { ok: false, code, detail, evidence: null };
+}
+
+/**
+ * Bildet EINE echte Leseantwort auf die Nachweisform ab.
+ *
+ * @param antwort   `{ status, body }` des Transports (nicht der Rumpf allein)
+ * @param erwartet  { runKey, runId, scopeId, tenant, policyVersion }
+ * @returns { ok: true, evidence } | { ok: false, code }
+ */
+export function mapRunStatusPageToEvidence(antwort, erwartet) {
+  if (antwort === null || typeof antwort !== "object") return fehlschlag("response_invalid");
+  if (antwort.status !== 200) return fehlschlag("status_not_ok", { status: antwort.status });
+  const body = antwort.body;
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return fehlschlag("body_invalid");
+  if (body.ok !== true) return fehlschlag("body_not_ok");
+
+  // Die Antwort muss zu DIESER Frage gehoeren. Ein Echo, das abweicht,
+  // ist keine Auskunft ueber unseren Lauf.
+  if (body.query !== RUN_STATUS_QUERY) return fehlschlag("query_echo_mismatch");
+  if (body.scopeId !== erwartet.scopeId) return fehlschlag("scope_echo_mismatch");
+
+  // Eine abgebrochene oder gedeckelte Seite beweist nichts — auch nicht,
+  // dass der Eintrag fehlt.
+  if (body.complete !== true || body.pageStatus !== "done") {
+    return fehlschlag("page_not_complete", { pageStatus: body.pageStatus ?? null, reason: body.pageReason ?? null });
+  }
+  if (body.hasMore !== false) return fehlschlag("page_not_complete");
+  if (!Array.isArray(body.items)) return fehlschlag("items_not_a_list");
+  if (!Number.isSafeInteger(body.dataRevision) || body.dataRevision < 0) return fehlschlag("data_revision_invalid");
+
+  const serverNowMs = Date.parse(String(body.serverNow || ""));
+  if (!Number.isSafeInteger(serverNowMs)) return fehlschlag("server_now_invalid");
+
+  const treffer = body.items.filter((eintrag) => eintrag && typeof eintrag === "object" && eintrag.runId === erwartet.runId);
+  if (treffer.length === 0) return fehlschlag("run_status_not_found", { runId: erwartet.runId });
+  if (treffer.length > 1) return fehlschlag("run_status_ambiguous", { count: treffer.length });
+  const eintrag = treffer[0];
+  if (typeof eintrag.id !== "string" || !eintrag.id) return fehlschlag("item_id_missing");
+  if (!Number.isSafeInteger(eintrag.entityVersion)) return fehlschlag("entity_version_invalid");
+
+  // Die Entitaetsversion muss zur mitgelieferten Liste passen — sonst
+  // widerspricht sich die Antwort selbst.
+  const versionen = body.entityVersions;
+  if (versionen === null || typeof versionen !== "object") return fehlschlag("entity_versions_missing");
+  if (versionen[eintrag.id] !== eintrag.entityVersion) return fehlschlag("entity_version_mismatch");
+
+  if (!FINAL_RUN_STATES.includes(eintrag.state)) return fehlschlag("run_not_final", { state: eintrag.state ?? null });
+  if (eintrag.blocked === true) return fehlschlag("run_blocked");
+  if (Array.isArray(eintrag.openQuestions) && eintrag.openQuestions.length > 0) {
+    return fehlschlag("open_questions", { count: eintrag.openQuestions.length });
+  }
+
   return {
-    runKey,
-    tenant: typeof status.tenant === "string" ? status.tenant : tenant,
-    policyVersion: typeof status.policyVersion === "string" ? status.policyVersion : policyVersion,
-    fence: Number.isSafeInteger(closure.fence) ? closure.fence : null,
-    dataRevision: Number.isSafeInteger(status.dataRevision) ? status.dataRevision : null,
-    evidenceRef: typeof closure.evidenceRef === "string" ? closure.evidenceRef : null,
-    verifiedAtMs: Number.isSafeInteger(closure.verifiedAtMs) ? closure.verifiedAtMs : null,
-    sources: quellen.map((q) => (q && typeof q === "object"
-      ? { id: q.id, status: q.status, checkedAtMs: Number.isSafeInteger(q.checkedAtMs) ? q.checkedAtMs : null }
-      : { id: null, status: null, checkedAtMs: null })),
+    ok: true,
+    code: null,
+    evidence: Object.freeze({
+      runKey: erwartet.runKey,
+      runId: erwartet.runId,
+      tenant: erwartet.tenant,
+      policyVersion: erwartet.policyVersion,
+      // Der Fence kommt NICHT von aussen — er gehoert E1. Der Aufrufer
+      // setzt ihn; hier steht ausdruecklich, dass C2 ihn nicht bezeugt.
+      fence: null,
+      fenceAttestedByC2: false,
+      dataRevision: body.dataRevision,
+      // Ein Bezug auf einen ECHTEN Serverdatensatz samt seiner Version,
+      // nicht auf den Laufschluessel, den wir selbst mitgebracht haben.
+      evidenceRef: `runstatus:${eintrag.id}:v${eintrag.entityVersion}`,
+      verifiedAtMs: serverNowMs,
+      state: eintrag.state,
+      stage: typeof eintrag.stage === "string" ? eintrag.stage : null,
+      green: GREEN_RUN_STATES.includes(eintrag.state),
+      // C2 bezeugt keinen Quellensatz. `null` heisst hier: nicht bezeugt.
+      sources: null,
+    }),
   };
 }
 
-export function createRunStatusClosureEvidencePort({ toolClient, tenant, policyVersion } = {}) {
+/**
+ * Der Nachweisport. Er ruft das Werkzeug `status.run` ueber den
+ * Werkzeugklienten (GET, Query-String, C2-Ids) und rechnet die Antwort
+ * gegen den erwarteten Lauf gegen.
+ */
+export function createRunStatusClosureEvidencePort({ toolClient, tenant, policyVersion, pageSize = 100 } = {}) {
   if (!toolClient || typeof toolClient.call !== "function") {
     return unavailablePort("closureEvidence", "run_status_tool_not_wired");
   }
   return availablePort("closureEvidence", {
-    async load({ runKey, now }) {
-      // Wirft, solange das Werkzeug abgeschaltet ist (C1: ueberall false).
-      const antwort = await toolClient.call("status.run", { query: "run.status", scopeId: runKey }, { now });
-      return mapRunStatusToEvidence(antwort, { runKey, tenant, policyVersion });
+    lastFailure: null,
+    async load({ runKey, fence, now, requestId = null }) {
+      // Die Umrechnung kann scheitern (zu langer Schluessel) — dann gibt
+      // es keinen Nachweis, keine geratene Id.
+      let scopeId; let runId;
+      try {
+        scopeId = statusScopeIdForRunKey(runKey);
+        runId = runIdForRunKey(runKey);
+      } catch (err) {
+        this.lastFailure = err?.code || "run_id_unusable";
+        return null;
+      }
+      // Wirft, solange das Werkzeug abgeschaltet ist (C1: ueberall false)
+      // oder der Transport fehlt — das ist ein 503, kein leerer Nachweis.
+      const antwort = await toolClient.call(
+        "status.run",
+        { query: RUN_STATUS_QUERY, scopeId, jobId: runId, pageSize },
+        { now, requestId },
+      );
+      const abbildung = mapRunStatusPageToEvidence(antwort, { runKey, runId, scopeId, tenant, policyVersion });
+      if (!abbildung.ok) {
+        this.lastFailure = abbildung.code;
+        return null;
+      }
+      this.lastFailure = null;
+      // Der Fence bleibt der des Aufrufers — ausdruecklich und sichtbar,
+      // damit niemand ihn fuer eine Fremdbestaetigung haelt.
+      return { ...abbildung.evidence, fence: Number.isSafeInteger(fence) ? fence : null };
     },
   });
 }

@@ -19,6 +19,7 @@
  * ═════════════════════════════════════════════════════════════════════════ */
 import { HttpError, badRequest } from "./errors.mjs";
 import { requireSchema } from "./schema.mjs";
+import { C2_ID_RE } from "./run-ids.mjs";
 
 /* Die vier Werkzeuge und ihre Routen (C1, Abschnitt 2). */
 export const QUANTUS_TOOLS = Object.freeze({
@@ -45,15 +46,52 @@ export const SERVICE_ROLE_VERBS = Object.freeze({
 const RUN_KEY = { type: "string", pattern: "^[A-Za-z0-9_-]{1,64}:\\d{4}-\\d{2}-\\d{2}:[a-z0-9]{1,24}:[A-Za-z0-9._-]{1,32}$", maxLength: 200 };
 const ID = { type: "string", pattern: "^[A-Za-z0-9_.:-]{1,120}$" };
 
+/*
+ * Die Id-Regel des LESEWEGS ist eine andere und enger: C2 nimmt fuer
+ * `scopeId` und `jobId` nur `[A-Za-z0-9_-]`, hoechstens 128 Zeichen, und
+ * `__` ist verboten. Ein Laufschluessel passt da NICHT hinein — dafuer
+ * gibt es `run-ids.mjs`. Das Muster steht hier genau einmal und kommt aus
+ * derselben Quelle wie die Umrechnung.
+ */
+const C2_ID = { type: "string", pattern: C2_ID_RE.source, maxLength: 128 };
+const CURSOR = { type: "string", maxLength: 4096, pattern: "^[A-Za-z0-9._-]{16,4096}$" };
+
 /* Die acht Ports, die E2 wirklich braucht. */
 export const TOOL_PORTS = Object.freeze({
+  /*
+   * DIE BEIDEN LESEPORTS SIND GET, NICHT POST.
+   *
+   * Befund an der Integration 48dc1fe: `handleReadRequest` weist alles
+   * ausser GET mit 400 `method_not_allowed` ab und liest `query`,
+   * `scopeId`, `pageSize`, `cursor` und `jobId` aus dem QUERY-STRING —
+   * ein JSON-Rumpf wird nie angesehen. Die fruehere POST-Fassung dieses
+   * Pakets haette den Dienst nie erreicht.
+   */
   "context.run": Object.freeze({
-    tool: "quantus_context", verb: "context.read", role: "scheduler", scopeKind: "run", method: "POST",
-    request: { type: "object", required: ["query", "scopeId"], properties: { query: { type: "string", enum: ["run.context"] }, scopeId: RUN_KEY, cursor: { type: "string", maxLength: 4096 } } },
+    tool: "quantus_context", verb: "context.read", role: "scheduler", scopeKind: "run", method: "GET",
+    transport: "query",
+    request: {
+      type: "object", required: ["query", "scopeId"],
+      properties: {
+        query: { type: "string", enum: ["run.context"] },
+        scopeId: C2_ID, jobId: C2_ID,
+        pageSize: { type: "integer", minimum: 1, maximum: 50 },
+        cursor: CURSOR,
+      },
+    },
   }),
   "status.run": Object.freeze({
-    tool: "quantus_run_status", verb: "context.read", role: "scheduler", scopeKind: "run_status", method: "POST",
-    request: { type: "object", required: ["query", "scopeId"], properties: { query: { type: "string", enum: ["run.status"] }, scopeId: RUN_KEY } },
+    tool: "quantus_run_status", verb: "context.read", role: "scheduler", scopeKind: "run_status", method: "GET",
+    transport: "query",
+    request: {
+      type: "object", required: ["query", "scopeId"],
+      properties: {
+        query: { type: "string", enum: ["run.status"] },
+        scopeId: C2_ID, jobId: C2_ID,
+        pageSize: { type: "integer", minimum: 1, maximum: 100 },
+        cursor: CURSOR,
+      },
+    },
   }),
   "run.ensure": Object.freeze({
     tool: "quantus_command", verb: "run.ensure", role: "scheduler", scopeKind: "run", method: "POST",
@@ -83,6 +121,34 @@ export const TOOL_PORTS = Object.freeze({
 
 export const TOOL_PORT_NAMES = Object.freeze(Object.keys(TOOL_PORTS).sort());
 
+/*
+ * Welche benannte Abfrage welche Route bedient — die Liste steht so in
+ * C2 (`ROUTE_QUERIES` in `quantus-v3-service.mjs`). Sie wird hier
+ * gespiegelt, damit ein Leseport, der an der falschen Route haengt, beim
+ * LADEN auffaellt und nicht erst als 403 `query_not_allowed` im Betrieb.
+ */
+export const C2_ROUTE_QUERIES = Object.freeze({
+  "quantus-context": Object.freeze(["run.context", "lead.context", "notes.recent", "policy.current"]),
+  "quantus-read": Object.freeze(["lead.context", "notes.recent", "policy.current", "run.queue"]),
+  "quantus-run-status": Object.freeze(["run.status", "run.queue"]),
+});
+
+/*
+ * Der Query-String eines Leseports. Nur einfache Werte, jeder als
+ * Zeichenkette — genau so liest C2 sie (`url.searchParams.get`). Ein
+ * Feld ohne Wert wird WEGGELASSEN, nicht als "undefined" gesendet.
+ */
+export function toSearchParams(payload) {
+  const out = {};
+  for (const [key, wert] of Object.entries(payload || {})) {
+    if (wert === undefined || wert === null) continue;
+    if (typeof wert === "string") { out[key] = wert; continue; }
+    if (typeof wert === "number" && Number.isSafeInteger(wert)) { out[key] = String(wert); continue; }
+    throw badRequest("tool_query_param_invalid", { field: key });
+  }
+  return Object.freeze(out);
+}
+
 /* Jeder Port muss zu Werkzeug UND Rollenmatrix passen. Das wird nicht nur
  * dokumentiert, sondern beim Laden geprueft — ein Tippfehler faellt sofort
  * auf, nicht erst im Betrieb. */
@@ -93,6 +159,16 @@ for (const [name, port] of Object.entries(TOOL_PORTS)) {
   const roleVerbs = SERVICE_ROLE_VERBS[port.role];
   if (!roleVerbs) throw new Error(`Port ${name}: unbekannte Rolle ${port.role}`);
   if (!roleVerbs.includes(port.verb)) throw new Error(`Port ${name}: Rolle ${port.role} darf ${port.verb} nicht`);
+  if (port.transport === "query") {
+    if (port.method !== "GET") throw new Error(`Port ${name}: Query-Transport verlangt GET`);
+    const abfragen = port.request?.properties?.query?.enum || [];
+    const erlaubt = C2_ROUTE_QUERIES[tool.route] || [];
+    for (const abfrage of abfragen) {
+      if (!erlaubt.includes(abfrage)) throw new Error(`Port ${name}: Route ${tool.route} bedient ${abfrage} nicht`);
+    }
+  } else if (port.method !== "POST") {
+    throw new Error(`Port ${name}: Befehlsweg verlangt POST`);
+  }
 }
 
 /**
@@ -125,7 +201,15 @@ export function createToolClient({ transport, credential, tenant, policyVersion,
       if (typeof secret !== "string" || !secret) {
         throw new HttpError(503, "tool_credential_missing", { role: port.role });
       }
-      return transport.send({
+      /*
+       * Leseweg und Befehlsweg sind VERSCHIEDENE Transporte, und der
+       * Unterschied wird hier entschieden, nicht im Transport:
+       *   · GET  — alles steht im Query-String, es gibt keinen Rumpf und
+       *            keinen Idempotenz-Schluessel.
+       *   · POST — der Rumpf ist der Umschlag, der Schluessel steht in der
+       *            Kopfzeile (C2 liest ihn nie aus dem Rumpf).
+       */
+      const gemeinsam = {
         route: tool.route,
         method: port.method,
         verb: port.verb,
@@ -135,8 +219,11 @@ export function createToolClient({ transport, credential, tenant, policyVersion,
         // Das Geheimnis geht nur an den Transport — nie in ein Log, nie in
         // eine Antwort, nie in einen Fehler.
         credential: secret,
-        payload,
-      });
+      };
+      if (port.transport === "query") {
+        return transport.send({ ...gemeinsam, searchParams: toSearchParams(payload), payload: null });
+      }
+      return transport.send({ ...gemeinsam, payload });
     },
   };
 }

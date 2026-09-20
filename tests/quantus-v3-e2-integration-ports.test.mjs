@@ -15,8 +15,9 @@ import * as PLAN from "../netlify/lib/quantus-v3-runtime-plan.mjs";
 import * as E1 from "../netlify/lib/quantus-v3-runtime-state.mjs";
 import {
   createIntegrationCorePort, createCloudTasksPort, createRunStatusClosureEvidencePort,
-  mapRunStatusToEvidence, TASK_DISPATCH_DEADLINE, DEFAULT_CORE_KEY,
+  mapRunStatusPageToEvidence, TASK_DISPATCH_DEADLINE, DEFAULT_CORE_KEY,
 } from "../runtime/quantus-v3/src/integration-ports.mjs";
+import { runIdForRunKey, runKeyFromRunId, statusScopeIdForRunKey } from "../runtime/quantus-v3/src/run-ids.mjs";
 import { createToolClient } from "../runtime/quantus-v3/src/tool-ports.mjs";
 import { continuationTaskId } from "../runtime/quantus-v3/src/task-names.mjs";
 
@@ -228,41 +229,97 @@ test("ohne Transport gibt es den Task-Port nicht", () => {
   assert.equal(createCloudTasksPort({ transport: {} }).reason, "cloud_tasks_transport_not_wired");
 });
 
-/* ── Abschlussnachweis ueber das Statuswerkzeug ───────────────────────── */
+/* ── Abschlussnachweis: die ECHTE Leseantwort von C2 ──────────────────── */
 
-function statusAntwort(over = {}) {
+const SCOPE_ID = statusScopeIdForRunKey(RUNKEY);
+const RUN_ID = runIdForRunKey(RUNKEY);
+
+/*
+ * Genau die Form, die `handleReadRequest` der Integration 48dc1fe
+ * zurueckgibt — Umschlagfelder und ein Eintrag, der auf
+ * `VISIBLE_FIELDS.run_status` beschnitten ist. Nichts darin ist erfunden.
+ */
+function leseAntwort({ item = {}, body = {}, status = 200 } = {}) {
+  const eintrag = {
+    id: "status_1", runId: RUN_ID, state: "completed", stage: "abschluss",
+    entityVersion: 4, updatedAt: "2026-09-19T08:59:00Z", openQuestions: [], blocked: false,
+    ...item,
+  };
+  const items = body.items === undefined ? [eintrag] : body.items;
   return {
-    runStatus: {
-      runKey: RUNKEY, tenant: "quantus", policyVersion: "3.0", dataRevision: 42,
-      closure: {
-        state: "final", fence: 1, evidenceRef: "closure:2026-09-19:process09:abc123",
-        verifiedAtMs: T0,
-        sources: [{ id: "gmail-inbox", status: "ok", checkedAtMs: T0 }],
-        ...(over.closure || {}),
-      },
-      ...Object.fromEntries(Object.entries(over).filter(([k]) => k !== "closure")),
+    status,
+    body: {
+      ok: true, requestId: "r-1", serverNow: new Date(T0).toISOString(),
+      dataRevision: 42, query: "run.status", scopeId: SCOPE_ID,
+      items, count: items.length, hasMore: false, complete: true,
+      pageStatus: "done", pageReason: null, cursor: null,
+      entityVersions: Object.fromEntries(items
+        .filter((e) => e && typeof e.id === "string" && Number.isSafeInteger(e.entityVersion))
+        .map((e) => [e.id, e.entityVersion])),
+      ...body,
     },
   };
 }
 
-test("die Abbildung des Statuswerkzeugs ist streng", () => {
-  const erwartet = { runKey: RUNKEY, tenant: "quantus", policyVersion: "3.0" };
-  const gut = mapRunStatusToEvidence(statusAntwort(), erwartet);
-  assert.equal(gut.evidenceRef, "closure:2026-09-19:process09:abc123");
-  assert.equal(gut.dataRevision, 42);
-  assert.equal(gut.fence, 1);
-  assert.deepEqual(gut.sources, [{ id: "gmail-inbox", status: "ok", checkedAtMs: T0 }]);
+const ERWARTET = { runKey: RUNKEY, runId: RUN_ID, scopeId: SCOPE_ID, tenant: "quantus", policyVersion: "3.0" };
 
-  // Was nicht eindeutig abgeschlossen ist, ergibt keinen Nachweis.
-  assert.equal(mapRunStatusToEvidence(null, erwartet), null);
-  assert.equal(mapRunStatusToEvidence({}, erwartet), null);
-  assert.equal(mapRunStatusToEvidence(statusAntwort({ runKey: "fremd" }), erwartet), null);
-  assert.equal(mapRunStatusToEvidence(statusAntwort({ closure: { state: "active" } }), erwartet), null);
-  assert.equal(mapRunStatusToEvidence(statusAntwort({ closure: { sources: "viele" } }), erwartet), null);
-  // Fehlende Einzelfelder werden zu null — die Pruefung im Worker weist sie ab.
-  const luecke = mapRunStatusToEvidence(statusAntwort({ closure: { evidenceRef: 7, verifiedAtMs: "jetzt" } }), erwartet);
-  assert.equal(luecke.evidenceRef, null);
-  assert.equal(luecke.verifiedAtMs, null);
+test("die Laufschluessel-Zuordnung ist umkehrbar und C2-tauglich", () => {
+  assert.match(SCOPE_ID, /^[A-Za-z0-9_-]{1,128}$/);
+  assert.match(RUN_ID, /^[A-Za-z0-9_-]{1,128}$/);
+  assert.ok(!SCOPE_ID.includes("__") && !RUN_ID.includes("__"));
+  assert.equal(runKeyFromRunId(RUN_ID), RUNKEY);
+  assert.notEqual(SCOPE_ID, RUN_ID);
+  // Zwei verschiedene Schluessel ergeben nie dieselbe Id.
+  const anders = PLAN.slotRunKey("quantus", "2026-09-19", "process09", "3-0");
+  assert.notEqual(runIdForRunKey(anders), RUN_ID);
+  // Ein Laufschluessel ist selbst NIE eine gueltige C2-Id.
+  assert.ok(!/^[A-Za-z0-9_-]{1,128}$/.test(RUNKEY));
+});
+
+test("aus der echten Seite wird ein Nachweis — gebunden an Datensatz und Version", () => {
+  const out = mapRunStatusPageToEvidence(leseAntwort(), ERWARTET);
+  assert.equal(out.ok, true, out.code);
+  assert.equal(out.evidence.evidenceRef, "runstatus:status_1:v4");
+  assert.equal(out.evidence.dataRevision, 42);
+  assert.equal(out.evidence.verifiedAtMs, T0);
+  assert.equal(out.evidence.green, true);
+  // Was C2 nicht bezeugt, wird auch nicht behauptet.
+  assert.equal(out.evidence.fence, null);
+  assert.equal(out.evidence.fenceAttestedByC2, false);
+  assert.equal(out.evidence.sources, null);
+});
+
+test("eine unvollstaendige Seite ist kein Nachweis — auch nicht fuer Abwesenheit", () => {
+  const faelle = [
+    [leseAntwort({ body: { complete: false, pageStatus: "aborted", pageReason: "item_unusable" } }), "page_not_complete"],
+    [leseAntwort({ body: { pageStatus: "more", complete: false, hasMore: true, cursor: "c" } }), "page_not_complete"],
+    [leseAntwort({ body: { hasMore: true } }), "page_not_complete"],
+    [leseAntwort({ body: { items: [] } }), "run_status_not_found"],
+    [leseAntwort({ body: { ok: false } }), "body_not_ok"],
+    [leseAntwort({ body: { query: "run.queue" } }), "query_echo_mismatch"],
+    [leseAntwort({ body: { scopeId: "s-fremd" } }), "scope_echo_mismatch"],
+    [leseAntwort({ body: { dataRevision: null } }), "data_revision_invalid"],
+    [leseAntwort({ body: { serverNow: "irgendwann" } }), "server_now_invalid"],
+    [leseAntwort({ status: 403 }), "status_not_ok"],
+    [leseAntwort({ item: { state: "running" } }), "run_not_final"],
+    [leseAntwort({ item: { blocked: true } }), "run_blocked"],
+    [leseAntwort({ item: { openQuestions: ["q1"] } }), "open_questions"],
+    [leseAntwort({ item: { runId: "r-fremd" } }), "run_status_not_found"],
+    [leseAntwort({ body: { entityVersions: { status_1: 9 } } }), "entity_version_mismatch"],
+  ];
+  for (const [antwort, code] of faelle) {
+    const out = mapRunStatusPageToEvidence(antwort, ERWARTET);
+    assert.equal(out.ok, false, `haette scheitern muessen: ${code}`);
+    assert.equal(out.code, code);
+  }
+});
+
+test("zwei Eintraege zu demselben Lauf sind mehrdeutig, kein Nachweis", () => {
+  const doppelt = leseAntwort({ body: { items: [
+    { id: "status_1", runId: RUN_ID, state: "completed", entityVersion: 4, openQuestions: [], blocked: false },
+    { id: "status_2", runId: RUN_ID, state: "aborted", entityVersion: 2, openQuestions: [], blocked: false },
+  ] } });
+  assert.equal(mapRunStatusPageToEvidence(doppelt, ERWARTET).code, "run_status_ambiguous");
 });
 
 test("solange das Statuswerkzeug abgeschaltet ist, gibt es keinen Nachweis", async () => {
@@ -278,28 +335,40 @@ test("solange das Statuswerkzeug abgeschaltet ist, gibt es keinen Nachweis", asy
     (e) => e.status === 503 && e.error === "tool_disabled" && e.detail.route === "quantus-run-status");
 });
 
-test("mit freigeschaltetem Werkzeug liefert der Port den abgebildeten Nachweis", async () => {
+test("der Port ruft GET mit Query-String und C2-tauglichen Ids", async () => {
   const gesendet = [];
   const client = createToolClient({
-    transport: async function send() { return null; },
+    transport: { async send(req) { gesendet.push(req); return leseAntwort(); } },
     credential: { async get() { return "x".repeat(40); } },
     tenant: "quantus", policyVersion: "3.0", toolsEnabled: { quantus_run_status: true },
   });
-  // createToolClient erwartet ein Objekt mit `send`.
-  const echterClient = createToolClient({
-    transport: { async send(req) { gesendet.push(req); return statusAntwort(); } },
-    credential: { async get() { return "x".repeat(40); } },
-    tenant: "quantus", policyVersion: "3.0", toolsEnabled: { quantus_run_status: true },
-  });
-  const port = createRunStatusClosureEvidencePort({ toolClient: echterClient, tenant: "quantus", policyVersion: "3.0" });
-  const nachweis = await port.impl.load({ runKey: RUNKEY, now: T0 });
-  assert.equal(nachweis.runKey, RUNKEY);
-  assert.equal(nachweis.evidenceRef, "closure:2026-09-19:process09:abc123");
+  const port = createRunStatusClosureEvidencePort({ toolClient: client, tenant: "quantus", policyVersion: "3.0" });
+  const nachweis = await port.impl.load({ runKey: RUNKEY, fence: 7, now: T0 });
+
   assert.equal(gesendet.length, 1);
-  assert.equal(gesendet[0].route, "quantus-run-status");
-  assert.equal(gesendet[0].verb, "context.read");
-  assert.equal(gesendet[0].role, "scheduler");
-  assert.ok(client);
+  const anfrage = gesendet[0];
+  assert.equal(anfrage.route, "quantus-run-status");
+  assert.equal(anfrage.method, "GET");
+  assert.equal(anfrage.payload, null);
+  assert.deepEqual(anfrage.searchParams, { query: "run.status", scopeId: SCOPE_ID, jobId: RUN_ID, pageSize: "100" });
+
+  assert.equal(nachweis.runKey, RUNKEY);
+  assert.equal(nachweis.evidenceRef, "runstatus:status_1:v4");
+  // Der Fence bleibt der des Aufrufers — C2 bezeugt ihn nicht.
+  assert.equal(nachweis.fence, 7);
+  assert.equal(nachweis.fenceAttestedByC2, false);
+});
+
+test("ein Laufschluessel, der keine C2-Id ergibt, liefert keinen geratenen Nachweis", async () => {
+  const zuLang = PLAN.slotRunKey("t".repeat(64), "2026-09-19", "process09", "a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p");
+  const client = createToolClient({
+    transport: { async send() { throw new Error("darf nicht passieren"); } },
+    credential: { async get() { return "x".repeat(40); } },
+    tenant: "quantus", policyVersion: "3.0", toolsEnabled: { quantus_run_status: true },
+  });
+  const port = createRunStatusClosureEvidencePort({ toolClient: client, tenant: "quantus", policyVersion: "3.0" });
+  assert.equal(await port.impl.load({ runKey: zuLang, now: T0 }), null);
+  assert.equal(port.impl.lastFailure, "run_id_too_long");
 });
 
 test("ohne Werkzeugklienten gibt es den Nachweisport nicht", () => {
