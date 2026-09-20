@@ -384,24 +384,65 @@ C2 — und faehrt Transport, Werkzeugklient, Port und Abbildung gegen die
 schlaegt der Lauf fehl statt stillschweigend gegen eine Nachbildung zu
 laufen.
 
+## Baustein F/G — `sectionWork` und `costPolicy` sind jetzt gefuellt
+
+Auf diesem Checkout liegen `netlify/lib/firebase-admin.mjs` (`mutateAppData`,
+`readAppDataDocument`) und `netlify/lib/quantus-v3-idempotency.mjs`
+tatsaechlich vor — der `core`-Port (Punkt 2 unten, historisch) wird also
+wirklich verdrahtet, nicht nur gegen einen Ersatz geprueft.
+
+Zwei der bislang immer leeren Ports (`server.mjs`) haben jetzt eine echte
+Fuellung, `runtime/quantus-v3/src/f-composition.mjs` entscheidet je nach
+Konfiguration:
+
+| Port | Fuellung | Ohne Konfiguration |
+| --- | --- | --- |
+| `sectionWork` | `section-work.mjs`: Nur-Lese-Gmail-Seiten (`gmail-source.mjs`, echtes HTTP, paginiert) → EIN `recordSourceCheck`-Kommando (echter Domain-Kern `assistant-core.applyCommand`, dieselbe Tagesbriefing-Policy wie der C2-Domain-Adapter, `QUANTUS_V3_TAGESBRIEFING_POLICY_JSON`) → bei mindestens einer gelesenen Quelle: Kostenreservierung + Sendung ueber das UNVERAENDERTE `cost-adapter.mjs` an einen echten Sonnet-Transport (`anthropic-transport.mjs`) → `appendRunNote` mit dem Ergebnis. | `503 section_work_provider_not_configured` (Anthropic-Schluessel/-Modell/-Preise fehlen) oder ein benannter Grund fuer eine fehlende Policy/Gmail-Anbindung. |
+| `costPolicy` | `cost-policy-port.mjs`: liest `QUANTUS_V3_COST_POLICY_JSON` unveraendert (Preise, Limits, Freigabe, Gueltigkeit — **nichts** davon wird hier festgelegt) und liefert es `cost-adapter.mjs`. | `503 cost_policy_not_configured`. |
+
+Andere in `QUANTUS_V3_REQUIRED_SOURCES`/der Policy genannte Quellen als
+Gmail werden von `section-work.mjs` NICHT verarbeitet — sie bekommen keinen
+`recordSourceCheck`-Eintrag. `validateClosureEvidence` verlangt weiterhin
+den vollstaendigen Quellensatz; eine fehlende Quelle bleibt also ehrlich
+`sources_missing`, nie ein erfundener Erfolg. Anhaenge werden nur als
+Metadaten gelesen (Name/Typ/Groesse), nie als Bytes. Siehe
+`tests/quantus-v3-f-source-processing.test.mjs` (echter lokaler
+Worker-Dienst, echte lokale HTTP-Attrappen fuer Gmail/Anthropic): 401 wird
+`auth_error`, eine unvollstaendige Anhangsangabe `partial`, eine
+Teilseite wird ueber einen zweiten Schritt fortgesetzt, eine haengende
+Modellantwort verbucht `unknown` (nie erneut versucht), ein zweiter
+Slotstart nach einem fertigen Lauf sendet kein zweites Mal und legt keine
+zweite Notiz an, eine zu niedrige Kostengrenze und eine fehlende
+Kostenrichtlinie verhindern die Sendung sichtbar statt sie zu erzwingen,
+und eine Anweisung im E-Mail-Betreff bleibt nachweislich in ihrem
+markierten Datenblock, ohne das System- oder Modellfeld der Anfrage zu
+veraendern.
+
+**Offen:** Dokumentenextraktion und jede Quelle ausser Gmail; Gemini als
+zweiter Provider; menschliche Pruefung des Modell-Ergebnisses vor
+Veroeffentlichung; ein echter Gmail-OAuth-Zugang, ein echter Anthropic-
+Schluessel und eine vom Betreiber tatsaechlich freigegebene Kostenrichtlinie
+(`featureFlags.providers: "live"`) — ohne die bleibt jede Sendung im
+`dry_run`, wie es sein soll.
+
 ## Restluecken
 
 1. **Kein Live-Nachweis.** Kein `terraform plan`, kein `apply`, kein
    IAM-Nachweis, keine echte OIDC-Strecke gegen Googles Zertifikate, keine
    Messung eines echten Laufs. Nichts hier behauptet das.
-2. **Der `core`-Port ist verdrahtet, aber nie gegen den echten Umschlag
-   gelaufen.** Der Adapter importiert `mutateAppData` und das
-   Idempotenzpaket der Integration dynamisch; auf diesem Zweig liegen sie
-   nicht vor, also antwortet jede Route mit
-   `503 port_unavailable: core (integration_cas_envelope_not_wired)`.
-   Geprueft ist die Verdrahtung gegen einen Ersatz, der den
-   dokumentierten Vertrag einhaelt — das ersetzt keinen Lauf gegen das
-   echte Modul.
+2. **Der `core`-Port ist verdrahtet.** Auf FRUEHEREN Checkouts fehlten
+   `mutateAppData`/das Idempotenzpaket noch, und jede Route antwortete mit
+   `503 port_unavailable: core (integration_cas_envelope_not_wired)`. Auf
+   diesem Checkout liegen beide Module vor (siehe oben) — ungeprueft bleibt
+   weiterhin ein echter Lauf gegen eine ECHTE Firebase-Instanz (Zugangsdaten,
+   Netz), nicht die Verdrahtung selbst.
 3. **C1/C2 sind nicht abgenommen.** Die Werkzeugports zeigen auf Routen, die
    es noch nicht gibt; `toolsEnabled` ist ueberall falsch, also `503`.
-4. **Kein `sectionWork`-Anbieter und kein `costPolicy`-Port.** Beide
-   fuellen spaetere Pakete. Ohne sie laeuft kein Hauptlauf und kein
-   bezahlter Aufruf — mit Absicht.
+4. **`sectionWork`/`costPolicy` sind jetzt gefuellt (Baustein F/G, oben),
+   aber nur fuer Gmail als einzige Quelle und Anthropic als einzigen
+   Provider.** Ohne Konfiguration (Anthropic-Schluessel, Kostenrichtlinie,
+   Gmail-Zugang) bleiben sie leer — kein Hauptlauf, kein bezahlter Aufruf,
+   mit Absicht.
    **Cloud Tasks:** Anfrage und Transport sind gebaut und geprueft. Was
    fehlt, ist Konfiguration, nicht Code: `getIdentityAccessToken` liegt
    auf der Integration, und ohne `mode=live` plus alle sechs Tore ist die
