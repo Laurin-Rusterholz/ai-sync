@@ -135,6 +135,24 @@ the all-writer gate passed. Do not infer production rules from checked-in rules.
 These are local tests. No live acceptance, provider dispatch or trial day is
 implied. A test of the transaction helper does not prove all HTTP entry points.
 
+## Browser intent queue component
+
+The browser-native command transport and IndexedDB journal are implemented, but
+not imported by production app handlers yet. Writes default disabled. The
+32 behavioral tests cover account isolation, stable IDs, retained conflicts,
+bounded retry, malformed receipts, legacy intent preservation and a real
+composition with the server idempotency helper. A Chrome test independently
+verified reload persistence and recovery after the server committed but its
+HTTP reply was lost: two requests, one effect, original receipt replayed.
+See `docs/quantus-v3-command-client.md`. This is partial T05/T10 evidence only;
+T08/T09/T11/T36/T37 and the all-writer gate remain open.
+
+Package B correction `6e829d5` still fails nine independent second-review
+counterexamples: corrupt map/revision green results, stale cache validation,
+lost waiting proof and reopened project deadline not invalidating closure,
+notes in the wrong original store, and untrusted command time overriding the
+prepared server time. Sent to Claude for correction; not integrated or released.
+
 ## Existing schedule snapshot (not changed)
 
 - Codex Follow-up-Monitor: active, weekdays 09:00.
