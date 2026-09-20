@@ -35,12 +35,18 @@ const ok = (condition, message) => { assert.ok(condition, message); checks++; };
 function loadRenderer() {
   const start = index.indexOf("const V3_MONTHLY_CAP_MICROS = 50_000_000;");
   ok(start > 0, "die Betriebs-Kostenfreigabe (V3_MONTHLY_CAP_MICROS) wurde nicht gefunden");
-  const end = index.indexOf("\nfunction viewDailyBriefing() {", start);
+  // Endet VOR dem manuellen Auslöser-Knopf (`dbRunV3EmailBriefing`, referenziert
+  // `window`, das hier nicht bereitgestellt wird) — dieser wird eigenstaendig in
+  // tests/quantus-v3-email-briefing-button.test.mjs geprueft.
+  const end = index.indexOf("\nasync function dbRunV3EmailBriefing() {", start);
   ok(end > start, "Ende von renderV3AutomationStatus() nicht bestimmbar");
   const escStart = index.indexOf("\nfunction esc(s){");
   ok(escStart > 0, "die top-level esc()-Funktion wurde nicht gefunden");
   const escSrc = index.slice(escStart, index.indexOf("}\n", escStart) + 1);
-  const fn = new Function("APP", escSrc + "\n" + index.slice(start, end) + "\nreturn renderV3AutomationStatus;");
+  const todayStart = index.indexOf("const todayYmd = () => {");
+  ok(todayStart > 0, "die top-level todayYmd()-Funktion wurde nicht gefunden");
+  const todaySrc = index.slice(todayStart, index.indexOf("};\n", todayStart) + 2);
+  const fn = new Function("APP", escSrc + "\n" + todaySrc + "\n" + index.slice(start, end) + "\nreturn renderV3AutomationStatus;");
   return fn;
 }
 
