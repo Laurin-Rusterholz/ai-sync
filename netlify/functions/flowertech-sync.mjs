@@ -40,15 +40,16 @@ export default async (req) => {
     let createdTasks = 0;
 
     if (req.method === "POST") {
-      await mutateAppData("app-data.json", (current) => {
-        const merged = mergeInquiryTasks(current, inquiries);
+      const updatedAt = new Date().toISOString();
+      const mutation = await mutateAppData("app-data.json", (current) => {
+        const merged = mergeInquiryTasks(current, inquiries, { updatedAt });
         const data = merged.data;
-        createdTasks = merged.createdTasks;
         data.flowertech = data.flowertech || {};
         data.flowertech.inquiries = Object.fromEntries(inquiries.map((item) => [item.id, item]));
         data.flowertech.videos = Object.fromEntries(videos.map((item) => [item.id, item]));
-        return data;
+        return { data, result: merged.createdTasks };
       }, { savedBy: "flowertech-sync" });
+      createdTasks = mutation.result;
     }
 
     return Response.json({
@@ -58,7 +59,7 @@ export default async (req) => {
       createdTasks,
     }, { headers: cors });
   } catch (e) {
-    return Response.json({ error: e.message }, { status: 500, headers: cors });
+    return Response.json({ error: e.message, code: e.code }, { status: e.status || 500, headers: cors });
   }
 };
 

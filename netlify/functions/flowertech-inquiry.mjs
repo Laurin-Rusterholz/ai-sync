@@ -118,7 +118,7 @@ export default async (req) => {
     return json(req, { ok: true, inquiryId: id }, 201);
   } catch (e) {
     console.error("[flowertech-inquiry]", e.message);
-    return json(req, { error: "Anfrage konnte nicht gespeichert werden." }, 500);
+    return json(req, { error: "Anfrage konnte nicht gespeichert werden.", code: e.code }, e.status || 500);
   }
 };
 

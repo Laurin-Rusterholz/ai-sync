@@ -1,0 +1,48 @@
+{
+  "schema": "quantus-v3-infra-manifest/1",
+  "deployed": false,
+  "note": "Beschreibung der beabsichtigten Topologie. Nichts davon ist ausgerollt.",
+  "services": [
+    { "role": "worker", "name": "quantus-v3-worker", "routes": ["/v3/slot/start", "/v3/run/continue"], "timeout": "120s" },
+    { "role": "monitor", "name": "quantus-v3-monitor", "routes": ["/v3/monitor/tick", "/v3/monitor/preflight"], "timeout": "120s" },
+    { "role": "watchdog", "name": "quantus-v3-watchdog", "routes": ["/v3/watchdog/check"], "timeout": "60s" }
+  ],
+  "serviceAccounts": [
+    { "key": "worker", "accountId": "quantus-v3-worker", "purpose": "Laufzeit des Workers" },
+    { "key": "monitor", "accountId": "quantus-v3-monitor", "purpose": "Laufzeit des Monitors" },
+    { "key": "watchdog", "accountId": "quantus-v3-watchdog", "purpose": "Laufzeit des Watchdogs" },
+    { "key": "schedulerStart", "accountId": "quantus-v3-sched-start", "purpose": "darf nur /v3/slot/start aufrufen" },
+    { "key": "schedulerMonitor", "accountId": "quantus-v3-sched-monitor", "purpose": "darf nur die beiden Monitorrouten aufrufen" },
+    { "key": "schedulerWatchdog", "accountId": "quantus-v3-sched-watchdog", "purpose": "darf nur /v3/watchdog/check aufrufen" },
+    { "key": "tasks", "accountId": "quantus-v3-tasks", "purpose": "darf nur /v3/run/continue aufrufen" }
+  ],
+  "schedulerJobs": [
+    { "key": "slot-briefing04", "schedule": "0 4 * * *", "timeZone": "Europe/Zurich", "targetPath": "/v3/slot/start", "mainRun": true },
+    { "key": "slot-process09", "schedule": "0 9 * * *", "timeZone": "Europe/Zurich", "targetPath": "/v3/slot/start", "mainRun": true },
+    { "key": "slot-continue14", "schedule": "0 14 * * *", "timeZone": "Europe/Zurich", "targetPath": "/v3/slot/start", "mainRun": true },
+    { "key": "slot-close23", "schedule": "0 23 * * *", "timeZone": "Europe/Zurich", "targetPath": "/v3/slot/start", "mainRun": true },
+    { "key": "monitor-tick", "schedule": "*/5 * * * *", "timeZone": "Europe/Zurich", "targetPath": "/v3/monitor/tick", "mainRun": false },
+    { "key": "monitor-preflight", "schedule": "30 22 * * *", "timeZone": "Europe/Zurich", "targetPath": "/v3/monitor/preflight", "mainRun": false },
+    { "key": "watchdog", "schedule": "7-59/15 * * * *", "timeZone": "Europe/Zurich", "targetPath": "/v3/watchdog/check", "mainRun": false }
+  ],
+  "tasksQueue": {
+    "nameSuffix": "quantus-v3-continuations",
+    "maxAttempts": 5,
+    "minBackoff": "30s",
+    "maxBackoff": "600s"
+  },
+  "activationGates": [
+    "allWriterMigration",
+    "authPackageAccepted",
+    "costPolicyApproved",
+    "restoreDrill",
+    "monitorWatchdogProven",
+    "trial14Days"
+  ],
+  "forbiddenInIac": [
+    "google_secret_manager_secret_version",
+    "google_project_service",
+    "allUsers",
+    "allAuthenticatedUsers"
+  ]
+}

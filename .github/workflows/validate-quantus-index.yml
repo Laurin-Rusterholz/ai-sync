@@ -19,10 +19,22 @@ on:
       - "netlify/functions/flowertech-*.mjs"
       - "netlify/lib/flowertech-core.mjs"
       - "netlify/lib/firebase-admin.mjs"
+      - "netlify/lib/assistant-*.mjs"
+      - "netlify/lib/quantus-v3-*.mjs"
+      - "public/quantus-v3-*.mjs"
+      - "prompts/quantus-v3/**"
+      - "runtime/quantus-v3/**"
+      - "infra/quantus-v3/**"
+      - "tests/tagesbriefing-v3-*.test.mjs"
+      - "netlify/lib/date-invite-core.mjs"
+      - "netlify/functions/date-invite.mjs"
       - "public/flowertech.js"
       - "tests/career-model-learning.test.mjs"
       - "tests/career-model-ideas.test.mjs"
       - "tests/persistence.test.mjs"
+      - "tests/quantus-v3-*.test.mjs"
+      - "tests/f25-restore-core-contract.test.mjs"
+      - "scripts/restore-core.mjs"
       - "public/bm.html"
       - "public/docstudio.html"
       - "public/quantus-bundles/**"
@@ -38,6 +50,7 @@ on:
       - "scripts/deploy-neko-hostinger.sh"
       - "docs/quantus-browser-setup.md"
       - "package.json"
+      - "package-lock.json"
       - ".github/workflows/validate-quantus-index.yml"
   workflow_dispatch:
 
@@ -57,5 +70,7 @@ jobs:
           node-version: 22
       - name: Shell-Syntax des VPS-Deploy-Skripts
         run: bash -n scripts/deploy-neko-hostinger.sh
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
       - name: Run Quantus regression tests
         run: npm test

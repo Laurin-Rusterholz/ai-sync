@@ -1,0 +1,8 @@
+{
+  "name": "quantus-v3-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Quantus Tagesbriefing v3 — kurzer HTTP-Worker, Monitor und Watchdog (Paket E2, nicht ausgerollt)",
+  "engines": { "node": ">=22" }
+}

@@ -68,6 +68,7 @@ const BACKUP_DATEN = {
   const doc = await echteLese({ data: text, etag: "e1" })("app-data.json");
   ok(typeof doc.data === "string", `readAppDataDocument liefert data als ${typeof doc.data} — der Vertrag hat sich geaendert`);
   ok(doc.parsed && typeof doc.parsed === "object", "readAppDataDocument liefert parsed nicht als Objekt");
+  ok(doc.serverEtag === "srv", "readAppDataDocument verliert den Serververgleich fuer Restore-CAS");
 
   const b = R.bewerteAktuellenStand(doc);
   ok(b.art === "vorhanden", `der echte Lesestand wird als "${b.art}" bewertet`);
@@ -83,6 +84,7 @@ const BACKUP_DATEN = {
   // fehlt
   const leer = await echteLese(null)("app-data.json");
   ok(leer.exists === false && leer.data === null, "das echte Format meldet ein fehlendes Dokument anders");
+  ok(leer.serverEtag === "srv", "auch ein fehlender Knoten braucht den Serververgleich");
   ok(R.bewerteAktuellenStand(leer).art === "fehlt", "ein fehlendes Dokument wird nicht als fehlend bewertet");
 
   // unlesbar: data da, parsed null
@@ -194,8 +196,8 @@ async function lauf({ backup, doc, bestaetigung = "app-data.json", dryRun = fals
 
 const GUTES_BACKUP = { tool: "backup-blob", key: "app-data.json", etag: "be", savedAt: "s", data: BACKUP_DATEN };
 const S0_EXPORT = { ...BACKUP_DATEN };   // Vollexport aus der Konsole: kein Wrapper, keine Provenienz
-const DOC_DA = { exists: true, data: JSON.stringify(KERN_DATEN), parsed: KERN_DATEN, etag: "e1" };
-const DOC_FEHLT = { exists: false, data: null, parsed: null, etag: null };
+const DOC_DA = { exists: true, data: JSON.stringify(KERN_DATEN), parsed: KERN_DATEN, etag: "e1", serverEtag: '"srv-1"' };
+const DOC_FEHLT = { exists: false, data: null, parsed: null, etag: null, serverEtag: '"null_etag"' };
 const DOC_KAPUTT = { exists: true, data: "{kaputt", parsed: null, etag: "e2" };
 
 // ── 4. Unlesbarer Ist-Stand: harter Abbruch, keine Anzeige, kein Write ──

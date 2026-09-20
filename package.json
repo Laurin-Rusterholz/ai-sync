@@ -5,11 +5,25 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "pretest": "npm run test:assistant-cas && npm run test:assistant-idempotency && npm run test:assistant-prompts && npm run test:assistant-restore && npm run test:assistant-client && npm run test:assistant-core && npm run test:assistant-router && npm run test:assistant-runtime && npm run test:assistant-domain && npm run test:v3-cloud",
+    "test:assistant-domain": "node --test tests/quantus-v3-domain-adapter.test.mjs tests/tagesbriefing-v3-kern-c3a.test.mjs",
+    "test:assistant-cas": "node --test tests/quantus-v3-cas-safety.test.mjs",
+    "test:assistant-idempotency": "node --test tests/quantus-v3-idempotency.test.mjs",
+    "test:assistant-prompts": "node --test tests/quantus-v3-prompts.test.mjs",
+    "test:assistant-restore": "node --test tests/quantus-v3-restore-safety.test.mjs",
+    "test:assistant-client": "node --test tests/quantus-v3-command-client.test.mjs",
+    "test:assistant-core": "node --test tests/tagesbriefing-v3-kern.test.mjs tests/quantus-v3-core-independent-*.test.mjs",
+    "test:assistant-router": "node --test tests/quantus-v3-job-router.test.mjs tests/quantus-v3-router-independent.test.mjs",
+    "test:assistant-runtime": "node --test tests/quantus-v3-runtime-*.test.mjs",
+    "test:quantus-v3": "node --test tests/quantus-v3-auth-*.test.mjs",
+    "test:quantus-v3-c2": "node --test tests/quantus-v3-c2-*.test.mjs",
     "backup": "node scripts/backup-blob.mjs",
     "restore": "node scripts/backup-blob.mjs --restore",
     "test:backup": "node scripts/backup-blob.test.mjs",
     "test:flowertech": "node scripts/flowertech-sync.test.mjs",
     "test:index-parser": "node tests/quantus-index-parser-repair.test.mjs",
+    "test:v3-runtime": "node --test tests/quantus-v3-runtime-plan.test.mjs tests/quantus-v3-runtime-state.test.mjs tests/quantus-v3-runtime-cost.test.mjs tests/quantus-v3-runtime-monitor.test.mjs tests/quantus-v3-runtime-gegenbeispiele.test.mjs tests/quantus-v3-runtime-r2-gegenbeispiele.test.mjs",
+    "test:v3-cloud": "node --test tests/quantus-v3-e2-config.test.mjs tests/quantus-v3-e2-auth.test.mjs tests/quantus-v3-e2-worker.test.mjs tests/quantus-v3-e2-monitor.test.mjs tests/quantus-v3-e2-infra.test.mjs tests/quantus-v3-e2-cost-adapter.test.mjs tests/quantus-v3-e2-review-gegenbeispiele.test.mjs tests/quantus-v3-e2-cost-review-gegenbeispiele.test.mjs tests/quantus-v3-e2-integration-ports.test.mjs",
     "test:notes": "node tests/quantus-notes-core.test.mjs && node tests/quantus-notes-integration.test.mjs && node tests/quantus-notes-security.test.mjs && node tests/quantus-notes-lifecycle.test.mjs && node tests/newsroom-tag-input.test.mjs && node tests/quantus-notes-visibility.test.mjs && node tests/quantus-notes-routes-autocomplete.test.mjs",
     "test:english-c1-entry": "node tests/quantus-english-c1-entry.test.mjs",
     "test:career-model-entry": "node tests/quantus-career-model-entry.test.mjs",
@@ -26,7 +40,8 @@
     "test:journal-editor": "node tests/journal-editor-typing-cost.test.mjs && node tests/journal-smoothness.test.mjs && node tests/journal-writing-flow.test.mjs",
     "test:browser": "bash -n scripts/deploy-neko-hostinger.sh && node tests/quantus-browser-module.test.mjs && node tests/quantus-browser-layout-runtime.test.mjs && bash tests/neko-smoke-failure-modes.test.sh",
     "check:career-model": "node --check public/quantus-bundle-loader.js && node --check public/career-model-core.js && node --check public/career-model.js && node --check public/quantus-device-sync.js && node --check public/quantus-universal-ui.js && npm test",
-    "test": "npm run test:index-parser && npm run test:notes && npm run test:english-c1-entry && npm run test:career-model-entry && npm run test:career-model && npm run test:universal-sync && npm run test:firebase-sdk && npm run test:firebase-oauth && npm run test:gmail && npm run test:mailversand && npm run test:habits-gmail && npm run test:persons && npm run test:flowertech-projects && npm run test:persistence && npm run test:journal-editor && npm run test:browser && npm run test:layout && npm run test:navigation && npm run test:sticky-export && npm run test:flowertech-portal && npm run test:flowertech-workflow",
+    "test:quantus-v3-c3b": "node --test tests/quantus-v3-c3b-*.test.mjs",
+    "test": "npm run test:index-parser && npm run test:notes && npm run test:english-c1-entry && npm run test:career-model-entry && npm run test:career-model && npm run test:universal-sync && npm run test:firebase-sdk && npm run test:firebase-oauth && npm run test:gmail && npm run test:mailversand && npm run test:habits-gmail && npm run test:persons && npm run test:flowertech-projects && npm run test:persistence && npm run test:journal-editor && npm run test:browser && npm run test:layout && npm run test:navigation && npm run test:sticky-export && npm run test:flowertech-portal && npm run test:flowertech-workflow && npm run test:quantus-v3 && npm run test:quantus-v3-c2 && npm run test:quantus-v3-c3b",
     "test:layout": "node tests/m1-responsive-shell.test.mjs && node tests/m2-noteflow-mobile-sidebar.test.mjs && node tests/m3-rename-sheet.test.mjs && node tests/m4-folder-sheets.test.mjs && node tests/m5-firebase-rearm.test.mjs && node tests/m6-sidebar-close.test.mjs && node tests/seitenmodus-computer.test.mjs && node tests/kopfzeile-schmal.test.mjs && node tests/kopfzeile-desktop.test.mjs && node tests/tabs-sidebarkopf.test.mjs",
     "test:navigation": "node tests/quantus-navigation-search.test.mjs && node tests/quantus-app-search-runtime.test.mjs",
     "test:sticky-export": "node tests/sticky-board-export.test.mjs && node tests/sticky-board-export-runtime.test.mjs",
@@ -35,6 +50,10 @@
   },
   "dependencies": {
     "@netlify/blobs": "^10.7.11",
+    "jose": "^6.2.12",
     "pdf-lib": "^1.17.1"
+  },
+  "devDependencies": {
+    "fake-indexeddb": "6.2.5"
   }
 }

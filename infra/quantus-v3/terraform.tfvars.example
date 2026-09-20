@@ -1,0 +1,35 @@
+# ── Beispielwerte — ABSICHTLICH UNBRAUCHBAR ──────────────────────────────
+#
+# Jeder Wert hier ist ein Platzhalter und wird sowohl von den
+# Terraform-Validierungen als auch von `node validate.mjs` abgewiesen.
+# Es steht KEIN Geheimnis in dieser Datei und es darf nie eines
+# hineingeschrieben werden: die beiden Secret-Variablen nehmen den NAMEN
+# eines Secret-Manager-Eintrags, nicht seinen Inhalt.
+
+project_id     = "REPLACE-ME-project-id"
+region         = "REPLACE-ME-region"
+tenant         = "REPLACE_ME_tenant"
+policy_version = "REPLACE_ME"
+
+# Ein beweglicher Tag ist nicht zulaessig — es muss ein Digest sein.
+image = "REPLACE-ME-registry/REPLACE-ME-image@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+monitor_start_local_date = "REPLACE-ME"
+
+# NAMEN, keine Werte.
+tool_credential_secret_id = "REPLACE-ME-tool-credential-secret-name"
+cost_policy_secret_id     = "REPLACE-ME-cost-policy-secret-name"
+
+# Standard ist dry_run. live verlangt alle sechs Tore mit Nachweis UND
+# allow_external_effects = true.
+runtime_mode           = "dry_run"
+allow_external_effects = false
+
+activation_gates = {
+  allWriterMigration    = { passed = false, ref = "" }
+  authPackageAccepted   = { passed = false, ref = "" }
+  costPolicyApproved    = { passed = false, ref = "" }
+  restoreDrill          = { passed = false, ref = "" }
+  monitorWatchdogProven = { passed = false, ref = "" }
+  trial14Days           = { passed = false, ref = "" }
+}
