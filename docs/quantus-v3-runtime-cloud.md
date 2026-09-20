@@ -315,17 +315,74 @@ Grund, und die Route antwortet mit 503.
 | Port | Was hier wirklich gebaut ist | Was noch fehlt |
 | --- | --- | --- |
 | `core` | `createIntegrationCorePort` importiert `mutateAppData` (firebase-admin) und `prepareIdempotentCommand`/`applyIdempotentCommand` (Idempotenzpaket) **dynamisch** und verdrahtet sie. Es wird nichts davon nachgebaut. Fehlt ein Modul oder eine Ausfuhr, nennt der Port sie beim Namen. Das Laufzeitergebnis bekommt im Umschlag ein eigenes Fach, `replayed` und `wrote` werden durchgereicht, kodierte Kernfehler bleiben kodiert. | Die Module liegen auf der Integration, nicht auf diesem Zweig — dort meldet der Port `integration_cas_envelope_not_wired`. Ein Lauf gegen den echten Umschlag steht aus. |
-| `tasks` | `createCloudTasksPort` baut die vollstaendige Anfrage fuer `projects.locations.queues.tasks.create`: stabiler Name, Zustellfrist, `scheduleTime`, HTTP-Ziel, OIDC-Angabe und ein Rumpf aus genau Lauf und Fortsetzung — keine Identitaet. `409`/`ALREADY_EXISTS` ist eine Dublette, jede andere Antwort ein Fehler. | Der Transport braucht Zugangsdaten und gehoert nicht in dieses Paket. |
-| `closureEvidence` | `createRunStatusClosureEvidencePort` liest ueber den Werkzeugport `status.run` (Route `quantus-run-status`) und bildet die Antwort **streng** ab: was nicht eindeutig abgeschlossen ist, wird `null`, und der Worker beendet den Lauf ehrlich unvollstaendig. | Das Werkzeug ist in C1 abgeschaltet; der Aufruf endet dort mit `503 tool_disabled`. |
+| `tasks` | `createCloudTasksPort` baut die vollstaendige Anfrage fuer `projects.locations.queues.tasks.create`: stabiler Name, Zustellfrist, `scheduleTime`, HTTP-Ziel, OIDC-Angabe und ein Rumpf aus genau Lauf und Fortsetzung — keine Identitaet. `409`/`ALREADY_EXISTS` ist eine Dublette, jede andere Antwort ein Fehler. Der Transport (`createCloudTasksHttpTransport`) setzt sie ab und holt sein Zugriffstoken aus der **vorhandenen** Google-Identitaet: `getIdentityAccessToken({ scope: cloud-platform })` aus `firebase-admin.mjs` (C3b `f39cad2`), dynamisch, nur beim Namen genannt, nichts nachgebaut. | Der Export liegt auf der Integration, nicht auf diesem Zweig — hier meldet der Port `missing_export:getIdentityAccessToken`. Ohne freigegebene Aussenwirkung gibt es gar keinen Transport (`external_effects_not_allowed`). |
+| `jwks` | `createGoogleJwksPort` holt `https://www.googleapis.com/oauth2/v3/certs` — oeffentlich, ohne jedes Zugangsdatum. Streng geprueft (nur RSA, eindeutige `kid`, `alg` nur RS256), gecacht bis zu dem von Google genannten Ablauf (auf 60 s … 6 h begrenzt), ein gemeinsamer Abruf fuer parallele Anfragen. Ein Ausfall reicht **keinen** alten Stand weiter: wer nicht frisch pruefen kann, prueft nicht. | Nichts — dieser Port ist vollstaendig und braucht keine Konfiguration. |
+| `closureEvidence` | `createRunStatusClosureEvidencePort` liest ueber den Werkzeugport `status.run` — **GET** auf `quantus-run-status`, alles im Query-String, C2-taugliche Ids — und bildet die **echte Seite** ab. Was nicht eindeutig abgeschlossen ist, wird `null`, und der Worker beendet den Lauf ehrlich unvollstaendig. | Das Werkzeug ist in C1 abgeschaltet (`503 tool_disabled`), und es fehlen `QUANTUS_V3_C2_BASE_URL` und das Dienstzugangsdatum. Ausserdem bezeugt C2 weder Lease-Fence noch Quellensatz — siehe unten. |
 
 Der Dienst verdrahtet diese Ports beim Start und protokolliert fuer jeden,
 ob er da ist und warum nicht. Auf diesem Zweig sieht das so aus:
 
 ```
 started  role=worker mode=dry_run gatesComplete=false
-         missingPorts=[jwks, core, tasks, sectionWork, costPolicy, closureEvidence]
-         core: integration_cas_envelope_not_wired
+         missingPorts=[core, tasks, sectionWork, costPolicy, closureEvidence]
+         core:            integration_cas_envelope_not_wired
+         tasks:           missing_export:getIdentityAccessToken
+         sectionWork:     section_work_provider_not_wired
+         costPolicy:      cost_policy_not_wired
+         closureEvidence: c2_base_url_not_configured
 ```
+
+## Die C2-Lesestrecke — gegen die Integration geprueft, nicht angenommen
+
+Der Statusnachweis war gegen eine erfundene Antwort gebaut. Gegen
+`48dc1fe` geprueft, gilt:
+
+| Frage | Befund an der Integration | Folge in E2 |
+| --- | --- | --- |
+| Verb | `handleReadRequest` nimmt **nur GET**; alles andere ist 400 `method_not_allowed`, ein Rumpf wird nie gelesen | die zwei Leseports sind GET mit `transport: "query"`; eine Routen-Query-Kreuzprobe schlaegt schon beim Laden fehl |
+| Parameter | `query`, `scopeId`, optional `pageSize`, `cursor`, `jobId` — alle aus dem Query-String | `toSearchParams` baut genau diese, jeder Wert als Zeichenkette |
+| Id-Form | `scopeId` muss `^[A-Za-z0-9_-]{1,128}$` erfuellen und darf kein `__` enthalten | ein Laufschluessel (`tenant:localDate:slot:policyVersion`) passt da **nie** hinein — `run-ids.mjs` rechnet um |
+| Antwort | eine **Seite**: `ok, requestId, serverNow, dataRevision, query, scopeId, items, count, hasMore, complete, pageStatus, pageReason, cursor, entityVersions` | `mapRunStatusPageToEvidence` liest genau diese Felder |
+| Eintraege | beschnitten auf `VISIBLE_FIELDS.run_status`: `id, runId, state, stage, entityVersion, updatedAt, openQuestions, blocked` | der Nachweis haengt an Datensatz-Id und Entitaetsversion (`runstatus:<id>:v<n>`), die Zeit an `serverNow` |
+| Filter | `SCOPE_RELATION["run.status"]` prueft nur, dass ein Eintrag eine Id hat — der Dienst filtert **nicht** nach Lauf | der Port sucht den Eintrag mit `runId === runIdForRunKey(runKey)`; kein Treffer oder mehrere sind kein Nachweis |
+
+### Die Zuordnung Laufschluessel ⇄ Lauf-Id
+
+```
+Laufschluessel  quantus:2026-09-20:process09:3.0
+Lauf-Id         r-quantus_3a2026-09-20_3aprocess09_3a3_2e0   (jobId, item.runId)
+Status-Scope    s-quantus_3a2026-09-20_3aprocess09_3a3_2e0   (scopeId)
+```
+
+Umkehrbar, injektiv, nie `__`, hoechstens 128 Zeichen; ein zu langer
+Schluessel wird **abgelehnt**, nicht gekuerzt. Das ist eine **Konvention**,
+kein Beweis: ob der Fachadapter seine Statusdatensaetze wirklich so
+fuehrt, entscheidet Paket B. E2 kann nur die Id so bilden, dass C2 sie
+annimmt, und die Antwort ablehnen, wenn der gelieferte Eintrag eine
+andere Lauf-Id traegt.
+
+### Was C2 nicht bezeugen kann
+
+`VISIBLE_FIELDS.run_status` kennt weder einen Lease-Fence noch einen
+Quellensatz. Der Nachweis traegt deshalb `fence: null`,
+`fenceAttestedByC2: false` und `sources: null` — und
+`validateClosureEvidence` meldet `sources_missing`, solange
+`QUANTUS_V3_REQUIRED_SOURCES` etwas verlangt. **Ein Lauf wird dadurch
+heute nicht gruen.** Das ist fail closed und kein Mangel dieses Adapters:
+den Quellensatz muesste C2 sichtbar machen oder ein eigener
+Nachweisport liefern. Der Fence gehoert E1 und wird vom Aufrufer gesetzt;
+er ist ausdruecklich als nicht fremdbestaetigt markiert, damit ihn
+niemand fuer eine Bestaetigung von aussen haelt.
+
+### Der Vertragstest
+
+`tests/quantus-v3-e2-c2-contract.test.mjs` laedt die fuenf C2-Module
+kontrolliert aus dem Git-Objektspeicher (`git show 48dc1fe:…`) in ein
+temporaeres Verzeichnis — kein Kopieren ins Paket, keine Aenderung an
+C2 — und faehrt Transport, Werkzeugklient, Port und Abbildung gegen die
+**echte** Kette. Keine Ersatzantwort. Ist der Stand nicht erreichbar,
+schlaegt der Lauf fehl statt stillschweigend gegen eine Nachbildung zu
+laufen.
 
 ## Restluecken
 
@@ -345,8 +402,14 @@ started  role=worker mode=dry_run gatesComplete=false
 4. **Kein `sectionWork`-Anbieter und kein `costPolicy`-Port.** Beide
    fuellen spaetere Pakete. Ohne sie laeuft kein Hauptlauf und kein
    bezahlter Aufruf — mit Absicht.
-   **Kein Cloud-Tasks-Transport:** die Anfrage ist gebaut und geprueft,
-   der Weg hinaus braucht Zugangsdaten.
+   **Cloud Tasks:** Anfrage und Transport sind gebaut und geprueft. Was
+   fehlt, ist Konfiguration, nicht Code: `getIdentityAccessToken` liegt
+   auf der Integration, und ohne `mode=live` plus alle sechs Tore ist die
+   Aussenwirkung nicht freigegeben.
+   **Statusnachweis:** ohne `QUANTUS_V3_C2_BASE_URL`, ohne
+   `QUANTUS_V3_TOOL_CREDENTIAL_SCHEDULER` und ohne
+   `QUANTUS_V3_TOOLS_ENABLED.quantus_run_status` gibt es keinen Port.
+   Selbst mit allem dreien fehlt der Quellensatz (siehe oben).
 5. **Kein Warnweg.** Der Watchdog stellt Veralterung fest und scheitert mit
    `503 warning_delivery_failed`, solange kein `alert`-Port da ist. Die
    fehlgeschlagene Warnung wird verbucht, gilt aber nie als zugestellt.
