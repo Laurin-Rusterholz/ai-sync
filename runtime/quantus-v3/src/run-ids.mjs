@@ -1,43 +1,31 @@
-/* ══ E2 — die Zuordnung Laufschluessel ⇄ C2-Id ════════════════════════════
+/* ══ E2 — die Zuordnung E1-Laufschluessel ⇄ echte B/C3a-Id ════════════════
  *
- * E1 kennt einen Lauf unter seinem LAUFSCHLUESSEL
- * `tenant:localDate:slot:policyVersion`. C2 kennt Laeufe unter IDs, und
- * seine Ids sind eng: `^[A-Za-z0-9_-]{1,128}$`, und `__` ist verboten (es
- * trennt Segmente in den Blob-Schluesseln). Ein Laufschluessel enthaelt
- * `:` und meistens auch `.` — er kann also NIE direkt als Id auftreten.
+ * BEFUND (Review-Auftrag): eine fruehere Fassung erfand eine eigene
+ * `r-`/`s-`-Kodierung fuer C2-Ids. Das war unnoetig UND falsch — Paket B
+ * (`quantus-v3-domain-adapter.mjs`, `assistant-abschluss.mjs`) fuehrt genau
+ * EINEN Lauf pro Kalendertag, unter der Kennung
  *
- * Fruehere Fassung dieses Pakets schickte den Laufschluessel dennoch als
- * `scopeId` an die Statusroute. Das haette der echte Dienst mit
- * 400 `scope_id_invalid` beantwortet, noch bevor irgendetwas gelesen
- * worden waere — der Nachweisweg war damit nie begehbar.
+ *     run.id            "run_" + YYYY-MM-DD           (dailyBriefing.assistantRuns[date])
+ *     Statusdatensatz   "status_" + YYYY-MM-DD         (objektLaden Fall "run_status")
  *
- * Deshalb hier EINE Zuordnung, umkehrbar und an einer Stelle:
+ * Beides sind einfache, feste Zeichenketten ohne Sonderzeichen — sie
+ * erfuellen `quantus-v3-service.mjs`s Id-Regel (`^[A-Za-z0-9_:-]{1,120}$`,
+ * kein `__`) ohnehin, jede Umkodierung waere reine Erfindung.
  *
- *   Laufschluessel  quantus:2026-09-20:process09:3.0
- *   Lauf-Id         r-quantus_3a2026-09-20_3aprocess09_3a3_2e0
- *   Status-Scope    s-quantus_3a2026-09-20_3aprocess09_3a3_2e0
- *
- * Die Kodierung ist dieselbe wie bei den Cloud-Tasks-Namen: jedes Zeichen
- * ausserhalb `[A-Za-z0-9-]` wird zu `_` plus zwei Hexziffern. Damit
- *   · ergeben zwei verschiedene Schluessel nie dieselbe Id (injektiv),
- *   · entsteht nie `__` (auf `_` folgt immer eine Hexziffer),
- *   · und die Id laesst sich zurueckrechnen.
- *
- * WICHTIG — DAS IST EINE KONVENTION, KEIN BEWEIS. Ob der Fachadapter
- * (Paket B) seine Laufdatensaetze wirklich unter diesen Ids fuehrt, kann
- * dieses Paket nicht entscheiden. Es kann nur zweierlei, und tut beides:
- * die Id so bilden, dass C2 sie ueberhaupt annimmt — und die Antwort
- * ABLEHNEN, wenn der gelieferte Eintrag eine andere Lauf-Id traegt.
- * Geraten wird nichts.
+ * WAS HIER WIRKLICH GEBRAUCHT WIRD: E1 fuehrt Laeufe PRO SLOT
+ * (`tenant:localDate:slot:policyVersion`, vier am Tag), B fuehrt sie PRO
+ * TAG. Die einzige echte Aufgabe dieser Datei ist, aus einem E1-Laufschluessel
+ * das lokale Datum zu ziehen (ueber `parseSlotRunKey`, keine eigene
+ * Zerlegung) und daraus die B-Id zu bilden. Mehrere E1-Slot-Laeufe desselben
+ * Tages ergeben also dieselbe B-Id — das ist keine Kollision, sondern genau
+ * das Modell: der Status eines Kalendertags ist EINER, unabhaengig davon,
+ * welcher Slot ihn zuletzt fortgeschrieben hat.
  * ═════════════════════════════════════════════════════════════════════════ */
-import { encodeTaskSegment, decodeTaskSegment } from "./task-names.mjs";
+import { parseSlotRunKey } from "../../../netlify/lib/quantus-v3-runtime-plan.mjs";
 
-/* Die Id-Regel aus C2 (`quantus-v3-service.mjs`, Leseweg und Umschlag). */
-export const C2_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
-export const C2_ID_MAX = 128;
-
-export const RUN_ID_PREFIX = "r-";
-export const STATUS_SCOPE_PREFIX = "s-";
+export const RUN_ID_PREFIX = "run_";
+export const STATUS_SCOPE_PREFIX = "status_";
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export class RunIdError extends Error {
   constructor(code, detail = null) {
@@ -48,45 +36,21 @@ export class RunIdError extends Error {
   }
 }
 
-/* Genau die Form, die E1 ausgibt — hier nur geprueft, nicht nachgebaut. */
-const RUN_KEY_RE = /^[A-Za-z0-9_-]{1,64}:\d{4}-\d{2}-\d{2}:[a-z0-9]{1,24}:[A-Za-z0-9._-]{1,32}$/;
-
-export function isRunKey(value) {
-  return typeof value === "string" && RUN_KEY_RE.test(value);
+function localDateOf(runKey) {
+  let parsed;
+  try {
+    parsed = parseSlotRunKey(runKey);
+  } catch (err) {
+    throw new RunIdError("run_key_invalid", { cause: err?.code || null });
+  }
+  if (!DATE_RE.test(parsed.localDate)) throw new RunIdError("run_key_invalid_date");
+  return parsed.localDate;
 }
 
-function kodiere(prefix, runKey) {
-  if (!isRunKey(runKey)) throw new RunIdError("run_key_invalid");
-  const id = prefix + encodeTaskSegment(runKey);
-  // Die Kodierung kann wachsen (jedes Sonderzeichen wird dreimal so lang).
-  // Eine zu lange Id wird NICHT gekuerzt — das waere das Ende der
-  // Eindeutigkeit. Sie wird abgelehnt.
-  if (id.length > C2_ID_MAX) throw new RunIdError("run_id_too_long", { length: id.length, max: C2_ID_MAX });
-  if (!C2_ID_RE.test(id) || id.includes("__")) throw new RunIdError("run_id_unusable");
-  return id;
-}
+/** Die B-Lauf-Id fuer diesen Kalendertag (`jobId`, `item.runId`). */
+export function runIdForRunKey(runKey) { return RUN_ID_PREFIX + localDateOf(runKey); }
 
-function dekodiere(prefix, id) {
-  if (typeof id !== "string" || !C2_ID_RE.test(id) || id.includes("__")) throw new RunIdError("run_id_invalid");
-  if (!id.startsWith(prefix)) throw new RunIdError("run_id_prefix");
-  let runKey;
-  try { runKey = decodeTaskSegment(id.slice(prefix.length)); } catch { throw new RunIdError("run_id_undecodable"); }
-  if (!isRunKey(runKey)) throw new RunIdError("run_key_invalid");
-  return runKey;
-}
+/** Der `scopeId` der Statusabfrage (`quantus-run-status`, Query `run.status`). */
+export function statusScopeIdForRunKey(runKey) { return STATUS_SCOPE_PREFIX + localDateOf(runKey); }
 
-/** Die Lauf-Id, unter der C2 diesen Lauf fuehren soll (`jobId`, `item.runId`). */
-export function runIdForRunKey(runKey) { return kodiere(RUN_ID_PREFIX, runKey); }
-
-/** Die Umkehrung — damit eine gelieferte Id gegengerechnet werden kann. */
-export function runKeyFromRunId(runId) { return dekodiere(RUN_ID_PREFIX, runId); }
-
-/** Der `scopeId` der Statusabfrage: der Statusdatensatz DIESES Laufs. */
-export function statusScopeIdForRunKey(runKey) { return kodiere(STATUS_SCOPE_PREFIX, runKey); }
-
-export function runKeyFromStatusScopeId(scopeId) { return dekodiere(STATUS_SCOPE_PREFIX, scopeId); }
-
-export default {
-  C2_ID_RE, C2_ID_MAX, RUN_ID_PREFIX, STATUS_SCOPE_PREFIX, RunIdError, isRunKey,
-  runIdForRunKey, runKeyFromRunId, statusScopeIdForRunKey, runKeyFromStatusScopeId,
-};
+export default { RUN_ID_PREFIX, STATUS_SCOPE_PREFIX, RunIdError, runIdForRunKey, statusScopeIdForRunKey };

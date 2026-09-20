@@ -1,292 +1,278 @@
-/* ══ E2 ⇄ C2 — der Vertragstest an der ECHTEN Lesekette ═══════════════════
+/* ══ E2 ⇄ B/C3a/C2/Idempotenz — der Vertragstest gegen den ECHTEN Checkout ═
  *
  * BEFUND, DER DIESE DATEI AUSGELOEST HAT
  * --------------------------------------
- * Der Statusnachweis dieses Pakets war gegen eine ERFUNDENE Antwort
- * gebaut: ein Objekt `{ runStatus: { closure: … } }`, einen POST und einen
- * Laufschluessel als `scopeId`. Keines davon existiert. Die Integration
- * 48dc1fe antwortet auf `quantus-run-status` nur auf GET, liest alles aus
- * dem Query-String, verlangt fuer `scopeId` `[A-Za-z0-9_-]{1,128}` ohne
- * `__` und liefert eine SEITE mit `items`, beschnitten auf
- * `VISIBLE_FIELDS.run_status`.
+ * Eine fruehere Fassung fuhr die Kette gegen einen historischen Git-Stand
+ * (`git show 48dc1fe:…`) statt gegen das, was tatsaechlich im Checkout
+ * liegt — und benutzte dabei eine ERFUNDENE Lauf-Id-Kodierung sowie eine
+ * ERFUNDENE Abschlussnachweisform. Diese Datei laedt NICHTS aus dem
+ * Git-Objektspeicher: `assistant-core.mjs`, `quantus-v3-domain-adapter.mjs`,
+ * `quantus-v3-service.mjs`, `quantus-v3-auth.mjs`, `quantus-v3-idempotency.mjs`
+ * und `quantus-v3-runtime-state.mjs` (E1) sind die Dateien, die auf DIESEM
+ * main-Stand liegen — direkt importiert.
  *
- * Deshalb wird hier nicht gegen eine Nachbildung geprueft, sondern gegen
- * die echte Kette: `handleReadRequest` und ihre vier Module werden
- * KONTROLLIERT aus dem Git-Objektspeicher in ein temporaeres Verzeichnis
- * gelegt (kein Kopieren ins Paket, keine Aenderung an C2) und von dort
- * geladen. Welche Fassung lief, schreibt der Lauf.
- *
- * Kein Netz: der Transport bekommt ein `fetch`, das die Anfrage in die
- * echte Kette gibt und deren Antwort als echte `Response` zurueckreicht.
- * Alle Geheimnisse entstehen zur Laufzeit; kein Projekt, kein Anbieter,
- * keine Produktivkonfiguration.
+ * Getrieben wird ein ECHTER Tag: `ensureRun` → Quellenpruefung
+ * (`recordSourceCheck`) → Beleg (`registerEvidence`) → Abschluss eines
+ * Elements (`transitionState`, gebunden an den Beleg) → `closeRun` (B's
+ * einziger, durch `pruefeAbschluss`/`dailyAssistantTrafficLight` gesicherter
+ * Abschlussweg). Erst DANACH wird ueber die echte C2-Kette gelesen:
+ * `quantus-run-status` mit einem Dienst-Zugangsdatum (Rolle `scheduler`),
+ * `quantus-context` mit einem echten, laufgebundenen Job-Token (Rolle
+ * `lead_agent` — `run_context` darf kein Dienst-Zugangsdatum lesen, siehe
+ * `ROLE_POLICY`). Beide Antworten komponiert `integration-ports.mjs` zu
+ * einem Nachweis, den `validateClosureEvidence` (E2) gegen alle vier
+ * Kriterien prueft: aktueller Fence, vollstaendiger Quellensatz, belegter
+ * B-Abschluss, aktuelle Version.
  * ═════════════════════════════════════════════════════════════════════════ */
 import test from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { randomBytes, createHash } from "node:crypto";
-import * as PLAN from "../netlify/lib/quantus-v3-runtime-plan.mjs";
+import * as K from "../netlify/lib/assistant-core.mjs";
+import * as A from "../netlify/lib/quantus-v3-auth.mjs";
+import * as S from "../netlify/lib/quantus-v3-service.mjs";
+import { createQuantusV3DomainAdapter } from "../netlify/lib/quantus-v3-domain-adapter.mjs";
+import * as FA from "./fixtures/quantus-v3-auth-fixtures.mjs";
+import * as FC from "./fixtures/quantus-v3-c2-fixtures.mjs";
 import { createC2HttpTransport } from "../runtime/quantus-v3/src/c2-transport.mjs";
 import { createToolClient } from "../runtime/quantus-v3/src/tool-ports.mjs";
-import { createRunStatusClosureEvidencePort, mapRunStatusPageToEvidence } from "../runtime/quantus-v3/src/integration-ports.mjs";
+import { createRunStatusClosureEvidencePort } from "../runtime/quantus-v3/src/integration-ports.mjs";
+import { validateClosureEvidence, CLOSURE_FINAL_STATE, CLOSURE_EVIDENCE_MAX_AGE_MS } from "../runtime/quantus-v3/src/worker-handlers.mjs";
 import { runIdForRunKey, statusScopeIdForRunKey } from "../runtime/quantus-v3/src/run-ids.mjs";
+import { slotRunKey } from "../netlify/lib/quantus-v3-runtime-plan.mjs";
 
-const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-export const C2_COMMIT = "48dc1fe";
-const C2_MODULE = [
-  "quantus-v3-service.mjs", "quantus-v3-auth.mjs", "quantus-v3-cursor.mjs",
-  "quantus-v3-read-helpers.mjs", "quantus-v3-command-envelope.mjs",
-];
+const { TENANT, POLICY_VERSION } = FA;
+const OWNER = "uid-laurin";
+const APP = "https://management-xo2-pro.netlify.app";
+const DATE = "2026-09-19";
+const RUNKEY = slotRunKey(TENANT, DATE, "close23", POLICY_VERSION);
+const RUN_ID = runIdForRunKey(RUNKEY);           // "run_2026-09-19"
+const STATUS_SCOPE_ID = statusScopeIdForRunKey(RUNKEY);
+const MIN = 60_000;
+const CONTEXT_ITEM_ID = "ctx_chatgptLead_l1";
 
-const TENANT = "quantus";
-const POLICY_VERSION = "3.0";
-const PROJECT_ID = "quantus-test-project";
-const BASE = "https://management-xo2-pro.netlify.app";
-const T0 = PLAN.wallTimeToMs("2026-09-19", 9, 0);
-const RUNKEY = PLAN.slotRunKey(TENANT, "2026-09-19", "process09", POLICY_VERSION);
-const SCOPE_ID = statusScopeIdForRunKey(RUNKEY);
-const RUN_ID = runIdForRunKey(RUNKEY);
+/* Genau EINE, minimale Kern-Quelle: eine erforderliche interne Quelle
+ * ("quantus-core", B verlangt genau eine solche), keine externe. */
+const POLICY = Object.freeze({
+  ...K.POLICY_TEMPLATE, version: POLICY_VERSION, tenant: TENANT,
+  requiredSources: [{ id: "quantus-core", kind: "quantus-core" }],
+  noExternalSources: true,
+});
 
-const sha256Hex = (v) => createHash("sha256").update(String(v), "utf8").digest("hex");
-
-/* ── Die echte C2-Kette, kontrolliert geladen ─────────────────────────── */
-let geladen = null;
-async function ladeC2() {
-  if (geladen) return geladen;
-  let quellen;
-  try {
-    quellen = C2_MODULE.map((datei) => execFileSync("git", ["show", `${C2_COMMIT}:netlify/lib/${datei}`],
-      { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }));
-  } catch {
-    geladen = { ok: false, reason: `git_object_missing:${C2_COMMIT}` };
-    return geladen;
-  }
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qv3-c2-"));
-  C2_MODULE.forEach((datei, i) => fs.writeFileSync(path.join(dir, datei), quellen[i]));
-  // Damit der blosse Bezeichner `jose` aufloest, ohne etwas zu kopieren.
-  try { fs.symlinkSync(path.join(root, "node_modules"), path.join(dir, "node_modules"), "dir"); } catch { /* schon da */ }
-  try {
-    const service = await import(path.join(dir, "quantus-v3-service.mjs"));
-    geladen = { ok: true, source: `git:${C2_COMMIT}`, service };
-  } catch (err) {
-    geladen = { ok: false, reason: `import_failed:${err?.code || err?.message || "unknown"}` };
-  }
-  return geladen;
+let cmdN = 0;
+function bCmd(data, type, payload, now, actor = { kind: "agent", id: "chatgpt-run" }) {
+  const r = K.applyCommand(data, { type, commandId: "fix_" + String(++cmdN).padStart(6, "0"), now, payload }, { policy: POLICY, actor });
+  assert.equal(r.ok, true, `${type}: ${r.error} ${JSON.stringify(r.detail)}`);
+  return r.data;
 }
+const ver = (data, sourceType, id) => K.effektiverZustand(sourceType, K.quelleFinden(data, sourceType, id)).version;
 
-/* ── Serverkonfiguration und Bestand, beides synthetisch ──────────────── */
-function makeEnv(secret) {
-  const vars = {
-    QUANTUS_V3_FIREBASE_PROJECT_ID: PROJECT_ID,
-    QUANTUS_V3_POLICY_VERSION: POLICY_VERSION,
-    QUANTUS_V3_ALLOWED_ORIGINS: BASE,
-    QUANTUS_V3_SERVICE_CREDENTIALS: JSON.stringify([
-      { id: "cred-sched-1", principal: "cloud-run-worker", role: "scheduler", tenant: TENANT, secretSha256: sha256Hex(secret), status: "active" },
-    ]),
-    QUANTUS_V3_WORKER_TOKEN_KEYS: JSON.stringify([{ kid: "w1", secret: randomBytes(32).toString("hex"), status: "active" }]),
-    QUANTUS_V3_CURSOR_KEYS: JSON.stringify([{ kid: "c1", secret: randomBytes(32).toString("hex"), status: "active" }]),
-  };
-  return (name) => vars[name];
-}
-
-/* Ein Statusdatensatz genau so, wie der Fachadapter ihn fuehren muesste,
-   wenn er die Zuordnung dieses Pakets einhaelt. */
-function statusEintrag(over = {}) {
+/* Ein einziges, echtes chatgptLead — dieselben Rollenfelder, die B fuer
+ * ein "explizit" zugewiesenes Element verlangt (sonst ROLES_MISSING). */
+function bestand() {
+  const t0 = "2026-09-18T10:00:00.000Z";
   return {
-    kind: "run_status", id: SCOPE_ID, tenant: TENANT, ownerId: "uid-laurin",
-    runId: RUN_ID, jobId: RUN_ID, entityVersion: 4,
-    state: "completed", stage: "abschluss", updatedAt: "2026-09-19T08:59:00Z",
-    openQuestions: [], blocked: false,
-    // Ein Feld, das die Sichtliste NICHT kennt — es darf nicht hinausgehen.
-    internerVermerk: "nicht fuer Agenten",
-    ...over,
+    entities: {
+      tasks: {}, projects: {}, notes: {}, chatgptNotes: {},
+      chatgptLeads: {
+        l1: {
+          id: "l1", title: "Kunde anlegen", rawInput: "Bitte Firma Muster AG anlegen.",
+          status: "in_arbeit", readAt: t0, assignee: "chatgpt",
+          interpretation: "Neue Organisation", research: "gesucht", plan: "anlegen", execution: "angelegt", result: "#/organizations/abc",
+          assessment: {}, assignmentReason: "klein", linkedOrganizations: ["abc"], createdAt: t0, updatedAt: t0, comments: [],
+        },
+      },
+      chatgptTasks: {},
+    },
+    journal: { documents: [] }, mobilePushes: [], dailyBriefing: { routines: [], dailyLog: {} },
   };
 }
 
-function makeDeps(env, { eintraege = [statusEintrag()], dataRevision = 42, hasMore = false } = {}) {
+/* Der Tag: ensureRun → Quellenpruefung → Beleg → Abschluss des Elements
+ * → closeRun. Alles direkt ueber B, nicht ueber C2 — C2 wird erst zum
+ * LESEN benutzt (siehe unten), das ist der Teil, den dieses Paket bezeugt. */
+function gruenerTag() {
+  let d = K.migrateCore(bestand(), { now: Date.parse("2026-09-18T06:00:00Z") }).data;
+  d = bCmd(d, "ensureRun", { date: DATE }, K.slotBeginnMs(DATE, "briefing04") + MIN);
+  d = bCmd(d, "ensureStartNote", { date: DATE, noteId: "note_start_" + DATE }, K.slotBeginnMs(DATE, "briefing04") + 2 * MIN);
+  d = bCmd(d, "addItemRef", { date: DATE, sourceType: "chatgptLead", sourceId: "l1" }, K.slotBeginnMs(DATE, "briefing04") + 3 * MIN);
+  for (const slot of ["briefing04", "process09", "continue14", "close23"]) {
+    d = bCmd(d, "recordSlotReceipt", { date: DATE, slot, receiptId: "rcpt_" + slot }, K.slotBeginnMs(DATE, slot) + MIN);
+  }
+  const abend = K.wandzeitZuMs(DATE, 23, 5);
+  d = bCmd(d, "recordSourceCheck", { date: DATE, sourceId: "quantus-core", cursor: "c-1", outcome: "ok" }, abend - 8 * MIN, { kind: "system", id: "quantus-scheduler" });
+  d = bCmd(d, "registerEvidence", {
+    evidenceId: "ev_l1", kind: "message", ref: "msg_l1", sourceType: "chatgptLead", sourceId: "l1",
+    origin: { adapter: "gmail", ref: "t_l1" }, observedAt: new Date(abend - 7 * MIN).toISOString(), fingerprint: "fp_l1_0123456789abcdef",
+  }, abend - 6 * MIN, { kind: "adapter", id: "gmail-adapter" });
+  d = bCmd(d, "transitionState", {
+    sourceType: "chatgptLead", sourceId: "l1", state: "done",
+    expectedVersion: ver(d, "chatgptLead", "l1"), evidence: { kind: "evidence", evidenceId: "ev_l1" },
+  }, abend - 5 * MIN);
+  d = bCmd(d, "closeRun", { date: DATE, finalNoteId: "note_final_" + DATE }, abend);
+  const lauf = d.dailyBriefing.assistantRuns[DATE];
+  assert.equal(lauf.phase, "final", JSON.stringify(lauf.finalEvaluation));
+  assert.equal(lauf.finalEvaluation.coverage, "green");
+  assert.equal(lauf.finalEvaluation.operations, "green");
+  return { data: d, abendMs: abend };
+}
+
+/* ── Verdrahtung: echte Domaene, echter Dienst, echte Ausweise ──────────── */
+
+const PORTS = Object.freeze({ policy: POLICY, ownerId: OWNER, read: () => undefined });
+function aufbau() {
+  const { data, abendMs } = gruenerTag();
+  const env = FA.makeEnv({ tenant: TENANT, mode: "enforce", overrides: { QUANTUS_V3_API_WRITES: "enabled" } });
+  const store = FC.makeStore({ snapshot: data });
+  const domain = createQuantusV3DomainAdapter({ policyVersion: POLICY_VERSION, tenantId: TENANT, mode: "enforce", now: () => abendMs + MIN, ports: PORTS });
   let n = 0;
-  const spur = { reads: 0, pages: 0 };
-  return {
-    now: () => T0,
-    newRequestId: () => `r-${++n}`,
-    env,
-    keySource: { async get() { return null; } },
-    userLookup: async () => null,
-    rateLimiter: {
-      atomic: true, scope: "shared", multiInstanceSafe: true,
-      async increment() { return { count: 1 }; },
-    },
-    store: {
-      async readSnapshot() {
-        spur.reads++;
-        return { entities: { runStatus: Object.fromEntries(eintraege.map((e) => [e.id, e])) },
-          automation: { schemaVersion: 3, dataRevision, idempotencyByKey: {} } };
-      },
-    },
-    domain: {
-      loadObject(snapshot, { kind, id }) {
-        if (kind !== "run_status") return null;
-        return snapshot?.entities?.runStatus?.[id] || null;
-      },
-      listPage(snapshot, { pageSize }) {
-        spur.pages++;
-        const alle = Object.values(snapshot?.entities?.runStatus || {});
-        const teil = alle.slice(0, pageSize);
-        return { items: teil, hasMore, nextAfterId: hasMore ? teil[teil.length - 1]?.id : null };
-      },
-    },
-    spur,
-  };
-}
+  const deps = { now: () => abendMs + MIN, newRequestId: () => `req-${++n}`, env: env.read,
+    keySource: { async get() { return null; } }, userLookup: async () => null,
+    rateLimiter: FC.makeRateLimiter(), store, domain };
 
-/* ── Der Transport spricht mit der echten Kette, ohne Netz ────────────── */
-function fetchGegenKette(service, deps, aufzeichnung) {
-  return async function fetchImpl(url, init = {}) {
+  const gesendet = [];
+  const fetchGegenKette = async (url, init = {}) => {
     const headerMap = new Map(Object.entries(init.headers || {}).map(([k, v]) => [k.toLowerCase(), v]));
     headerMap.set("x-forwarded-proto", "https");
-    aufzeichnung.push({ url, method: init.method, headers: [...headerMap.keys()].sort() });
-    const req = {
-      method: init.method,
-      url,
+    const route = new URL(url).pathname.split("/").pop();
+    gesendet.push({ route, method: init.method, url });
+    const req = { method: init.method, url,
       headers: { get: (name) => headerMap.get(String(name).toLowerCase()) ?? null },
-      async text() { return init.body == null ? "" : String(init.body); },
-    };
-    const antwort = await service.handleReadRequest(req, deps, { route: "quantus-run-status" });
-    return new Response(antwort.body === null ? null : JSON.stringify(antwort.body), {
-      status: antwort.status,
-      headers: { "content-type": "application/json" },
-    });
+      async text() { return init.body == null ? "" : String(init.body); } };
+    const antwort = await S.handleReadRequest(req, deps, { route });
+    return new Response(antwort.body === null ? null : JSON.stringify(antwort.body), { status: antwort.status, headers: { "content-type": "application/json" } });
   };
-}
+  const transport = createC2HttpTransport({ baseUrl: APP, fetchImpl: fetchGegenKette });
 
-async function aufbau(optionen = {}) {
-  const c2 = await ladeC2();
-  const secret = randomBytes(32).toString("hex");
-  const env = makeEnv(secret);
-  const deps = makeDeps(env, optionen);
-  const aufzeichnung = [];
-  const transport = createC2HttpTransport({
-    baseUrl: BASE,
-    fetchImpl: c2.ok ? fetchGegenKette(c2.service, deps, aufzeichnung) : async () => new Response("", { status: 503 }),
-  });
+  const { config: authConfig } = A.resolveAuthConfig(env.read);
+  const jobTokenIssuer = {
+    async mint({ audience, jobId, tenant, now }) {
+      const t = await A.mintJobToken({ config: authConfig, audience, jobId, tenant, role: "lead_agent", principalId: "quantus-v3-runtime:lead_agent", assignedJobIds: [jobId], now: () => now });
+      assert.equal(t.ok, true, JSON.stringify(t));
+      return t.token;
+    },
+  };
   const toolClient = createToolClient({
-    transport, credential: { async get() { return secret; } },
-    tenant: TENANT, policyVersion: POLICY_VERSION,
-    toolsEnabled: { quantus_run_status: true },
+    transport, credential: { async get() { return env.secrets.service.scheduler; } },
+    jobTokenIssuer, tenant: TENANT, policyVersion: POLICY_VERSION,
+    toolsEnabled: { quantus_run_status: true, quantus_context: true },
   });
-  return { c2, deps, transport, toolClient, aufzeichnung, secret };
+  return { data, abendMs, deps, gesendet, toolClient, env, authConfig };
 }
 
-test(`die gepruefte C2-Fassung ist ladbar (Integrationsnachweis)`, async () => {
-  const c2 = await ladeC2();
-  assert.equal(c2.ok, true, `C2 nicht ladbar: ${c2.reason} — ohne sie ist dieser Lauf KEIN Integrationsnachweis`);
-  assert.equal(typeof c2.service.handleReadRequest, "function");
-  console.log(`# C2-Fassung im Lauf: ${c2.source}`);
+test("die gepruefte Kette ist auf diesem Checkout ladbar (kein Git-Objektspeicher)", () => {
+  assert.equal(typeof K.applyCommand, "function", "assistant-core");
+  assert.equal(typeof S.handleReadRequest, "function", "quantus-v3-service");
+  assert.equal(typeof A.resolveAuthConfig, "function", "quantus-v3-auth");
+  assert.equal(typeof A.mintJobToken, "function", "quantus-v3-auth");
+  assert.equal(typeof createQuantusV3DomainAdapter, "function", "quantus-v3-domain-adapter");
 });
 
-test("der Leseport erreicht die echte Route und bekommt die echte Seite", async () => {
-  const { c2, toolClient, aufzeichnung } = await aufbau();
-  assert.equal(c2.ok, true);
-  const antwort = await toolClient.call("status.run",
-    { query: "run.status", scopeId: SCOPE_ID, jobId: RUN_ID, pageSize: 100 }, { now: T0 });
-
+test("run.status erreicht die echte C2/B-Kette mit dem Dienst-Zugangsdatum (Rolle scheduler)", async () => {
+  const { toolClient, gesendet, abendMs } = aufbau();
+  const antwort = await toolClient.call("status.run", { query: "run.status", scopeId: STATUS_SCOPE_ID, jobId: RUN_ID, pageSize: 100 }, { now: abendMs + MIN });
   assert.equal(antwort.status, 200, JSON.stringify(antwort.body));
-  // Der echte Umschlag — keine erfundenen Felder.
-  assert.equal(antwort.body.ok, true);
-  assert.equal(antwort.body.query, "run.status");
-  assert.equal(antwort.body.scopeId, SCOPE_ID);
-  assert.equal(antwort.body.complete, true);
-  assert.equal(antwort.body.pageStatus, "done");
-  assert.equal(antwort.body.hasMore, false);
-  assert.equal(antwort.body.dataRevision, 42);
-  assert.equal(antwort.body.items.length, 1);
-  assert.deepEqual(antwort.body.entityVersions, { [SCOPE_ID]: 4 });
-
-  // Beschnitten auf die Sichtliste — der interne Vermerk geht NICHT hinaus.
-  const eintrag = antwort.body.items[0];
-  assert.equal(eintrag.runId, RUN_ID);
-  assert.equal(eintrag.state, "completed");
-  assert.ok(!Object.hasOwn(eintrag, "internerVermerk"));
-  assert.ok(!Object.hasOwn(eintrag, "tenant"));
-
-  // Und es war wirklich ein GET mit Query-String.
-  assert.equal(aufzeichnung.length, 1);
-  assert.equal(aufzeichnung[0].method, "GET");
-  const url = new URL(aufzeichnung[0].url);
-  assert.equal(url.pathname, "/.netlify/functions/quantus-run-status");
-  assert.equal(url.searchParams.get("query"), "run.status");
-  assert.equal(url.searchParams.get("scopeId"), SCOPE_ID);
-  assert.equal(url.searchParams.get("jobId"), RUN_ID);
-  assert.equal(url.searchParams.get("pageSize"), "100");
-  assert.ok(aufzeichnung[0].headers.includes("authorization"));
+  assert.equal(antwort.body.items[0].runId, RUN_ID);
+  assert.equal(antwort.body.items[0].state, "final");
+  assert.equal(antwort.body.items[0].blocked, false);
+  assert.equal(antwort.body.items[0].openQuestions, 0);
+  assert.equal(gesendet[0].route, "quantus-run-status");
 });
 
-test("aus der echten Antwort entsteht ein Nachweis — gebunden an Datensatz, Version und Serverzeit", async () => {
-  const { toolClient } = await aufbau();
+test("run.context erreicht die echte C2/B-Kette NUR mit einem laufgebundenen Job-Token (Rolle lead_agent) — ein Dienst-Zugangsdatum wird 403", async () => {
+  const { deps, env } = aufbau();
+  const url = new URL(`${APP}/.netlify/functions/quantus-context`);
+  url.searchParams.set("query", "run.context"); url.searchParams.set("scopeId", RUN_ID); url.searchParams.set("jobId", RUN_ID);
+  const mitDienstZugangsdatum = await S.handleReadRequest(
+    FC.makeRequest({ method: "GET", url: url.toString(), headers: { authorization: `Bearer ${env.secrets.service.scheduler}`, origin: APP } }),
+    deps, { route: "quantus-context" },
+  );
+  assert.equal(mitDienstZugangsdatum.status, 403, JSON.stringify(mitDienstZugangsdatum.body));
+
+  const { config } = A.resolveAuthConfig(env.read);
+  const jobToken = await A.mintJobToken({ config, audience: "quantus-context", jobId: RUN_ID, tenant: TENANT, role: "lead_agent", principalId: "p", assignedJobIds: [RUN_ID], now: deps.now });
+  const mitJobToken = await S.handleReadRequest(
+    FC.makeRequest({ method: "GET", url: url.toString(), headers: { authorization: `Bearer ${jobToken.token}`, origin: APP } }),
+    deps, { route: "quantus-context" },
+  );
+  assert.equal(mitJobToken.status, 200, JSON.stringify(mitJobToken.body));
+  assert.deepEqual(mitJobToken.body.items.map((i) => i.id), [CONTEXT_ITEM_ID]);
+  assert.deepEqual(mitJobToken.body.items[0].evidenceRefs, ["ev_l1"]);
+});
+
+test("der zusammengesetzte Nachweisport liefert einen echten, gruenen Abschlussnachweis aus B/C2", async () => {
+  const { toolClient, abendMs } = aufbau();
   const port = createRunStatusClosureEvidencePort({ toolClient, tenant: TENANT, policyVersion: POLICY_VERSION });
-  const nachweis = await port.impl.load({ runKey: RUNKEY, fence: 3, now: T0 });
+  const nachweis = await port.impl.load({ runKey: RUNKEY, fence: 3, now: abendMs + MIN });
   assert.notEqual(nachweis, null, `kein Nachweis: ${port.impl.lastFailure}`);
-  assert.equal(nachweis.evidenceRef, `runstatus:${SCOPE_ID}:v4`);
-  assert.equal(nachweis.dataRevision, 42);
-  assert.equal(nachweis.verifiedAtMs, T0);
-  assert.equal(nachweis.green, true);
+  assert.equal(nachweis.state, CLOSURE_FINAL_STATE);
+  assert.equal(nachweis.blocked, false);
+  assert.deepEqual(nachweis.sources, [{ id: CONTEXT_ITEM_ID, status: "ok", checkedAtMs: nachweis.verifiedAtMs }]);
   assert.equal(nachweis.fence, 3);
   assert.equal(nachweis.fenceAttestedByC2, false);
-  // C2 bezeugt keinen Quellensatz — das bleibt sichtbar offen.
-  assert.equal(nachweis.sources, null);
+
+  // Und die VOLLE Pruefung (alle vier Kriterien) laesst diesen echten
+  // Nachweis durch — nicht als Attrappe, sondern gegen den echten Ausgang
+  // von B's closeRun ueber die echte C2-Kette gelesen.
+  const urteil = validateClosureEvidence(nachweis, {
+    runKey: RUNKEY, tenant: TENANT, policyVersion: POLICY_VERSION, fence: 3,
+    now: nachweis.verifiedAtMs, requiredSources: [CONTEXT_ITEM_ID],
+  });
+  assert.deepEqual(urteil, { ok: true, errors: [] });
 });
 
-test("ein Laufschluessel als scopeId wird von der echten Kette abgewiesen", async () => {
-  const { c2, transport, secret } = await aufbau();
-  assert.equal(c2.ok, true);
-  // Genau das schickte die fruehere Fassung dieses Pakets.
-  const antwort = await transport.send({
-    route: "quantus-run-status", method: "GET",
-    searchParams: { query: "run.status", scopeId: RUNKEY },
-    credential: secret,
+test("ein Quellensatz, der eine bei B tatsaechlich nicht gefuehrte Quelle verlangt, faellt durch — nichts wird ergaenzt", async () => {
+  const { toolClient, abendMs } = aufbau();
+  const port = createRunStatusClosureEvidencePort({ toolClient, tenant: TENANT, policyVersion: POLICY_VERSION });
+  const nachweis = await port.impl.load({ runKey: RUNKEY, fence: 3, now: abendMs + MIN });
+  const urteil = validateClosureEvidence(nachweis, {
+    runKey: RUNKEY, tenant: TENANT, policyVersion: POLICY_VERSION, fence: 3,
+    now: nachweis.verifiedAtMs, requiredSources: [CONTEXT_ITEM_ID, "ctx_chatgptTask_c1"],
   });
-  assert.equal(antwort.status, 400);
-  assert.equal(antwort.body.reason, "scope_id_invalid");
+  assert.equal(urteil.ok, false);
+  assert.ok(urteil.errors.some((e) => e.startsWith("sources_incomplete")), urteil.errors.join(","));
 });
 
-test("ein POST auf die Leseroute wird von der echten Kette abgewiesen", async () => {
-  const { c2, transport, secret } = await aufbau();
-  assert.equal(c2.ok, true);
-  const antwort = await transport.send({
-    route: "quantus-run-status", method: "POST",
-    payload: { query: "run.status", scopeId: SCOPE_ID },
-    idempotencyKey: "k-1", credential: secret,
-  });
-  assert.equal(antwort.status, 400);
-  assert.equal(antwort.body.reason, "method_not_allowed");
+test("ein falscher Fence oder ein veralteter Nachweis fallen durch — der echte Inhalt allein genuegt nicht", async () => {
+  const { toolClient, abendMs } = aufbau();
+  const port = createRunStatusClosureEvidencePort({ toolClient, tenant: TENANT, policyVersion: POLICY_VERSION });
+  const nachweis = await port.impl.load({ runKey: RUNKEY, fence: 3, now: abendMs + MIN });
+  const basis = { runKey: RUNKEY, tenant: TENANT, policyVersion: POLICY_VERSION, requiredSources: [CONTEXT_ITEM_ID] };
+  assert.equal(validateClosureEvidence(nachweis, { ...basis, fence: 99, now: nachweis.verifiedAtMs }).errors.includes("fence_mismatch"), true);
+  assert.equal(validateClosureEvidence(nachweis, { ...basis, fence: 3, now: nachweis.verifiedAtMs + CLOSURE_EVIDENCE_MAX_AGE_MS + 1 }).errors.includes("evidence_stale"), true);
 });
 
-test("eine fortgesetzte Seite ist kein Nachweis — auch nicht fuer den gefundenen Eintrag", async () => {
-  const { toolClient } = await aufbau({
-    eintraege: [statusEintrag(), statusEintrag({ id: "s-anderer", runId: "r-anderer", entityVersion: 1 })],
-    hasMore: true,
+test("VOR dem Abschluss (Lauf noch nicht final) liefert die echte Kette einen ehrlich unfertigen Status — kein falsches Gruen", async () => {
+  const env = FA.makeEnv({ tenant: TENANT, mode: "enforce", overrides: { QUANTUS_V3_API_WRITES: "enabled" } });
+  let d = K.migrateCore(bestand(), { now: Date.parse("2026-09-18T06:00:00Z") }).data;
+  d = bCmd(d, "ensureRun", { date: DATE }, K.slotBeginnMs(DATE, "briefing04") + MIN);
+  const nowMs = K.slotBeginnMs(DATE, "process09") + MIN;
+  const store = FC.makeStore({ snapshot: d });
+  const domain = createQuantusV3DomainAdapter({ policyVersion: POLICY_VERSION, tenantId: TENANT, mode: "enforce", now: () => nowMs, ports: PORTS });
+  let n = 0;
+  const deps = { now: () => nowMs, newRequestId: () => `req-${++n}`, env: env.read,
+    keySource: { async get() { return null; } }, userLookup: async () => null,
+    rateLimiter: FC.makeRateLimiter(), store, domain };
+  const fetchGegenKette = async (url, init = {}) => {
+    const headerMap = new Map(Object.entries(init.headers || {}).map(([k, v]) => [k.toLowerCase(), v]));
+    headerMap.set("x-forwarded-proto", "https");
+    const route = new URL(url).pathname.split("/").pop();
+    const req = { method: init.method, url, headers: { get: (name) => headerMap.get(String(name).toLowerCase()) ?? null }, async text() { return ""; } };
+    const antwort = await S.handleReadRequest(req, deps, { route });
+    return new Response(antwort.body === null ? null : JSON.stringify(antwort.body), { status: antwort.status, headers: { "content-type": "application/json" } });
+  };
+  const toolClient = createToolClient({
+    transport: createC2HttpTransport({ baseUrl: APP, fetchImpl: fetchGegenKette }),
+    credential: { async get() { return env.secrets.service.scheduler; } },
+    jobTokenIssuer: { async mint() { throw new Error("darf hier nicht gerufen werden — run.context wird bei fehlendem Abschluss nicht gebraucht"); } },
+    tenant: TENANT, policyVersion: POLICY_VERSION,
+    toolsEnabled: { quantus_run_status: true, quantus_context: true },
   });
-  const antwort = await toolClient.call("status.run",
-    { query: "run.status", scopeId: SCOPE_ID, jobId: RUN_ID, pageSize: 1 }, { now: T0 });
-  // Die echte Kette liefert entweder eine Fortsetzung oder bricht ab —
-  // beides ist kein vollstaendiger Beweis.
-  assert.ok(antwort.status !== 200 || antwort.body.complete === false, JSON.stringify(antwort.body));
-  const out = mapRunStatusPageToEvidence(antwort, {
-    runKey: RUNKEY, runId: RUN_ID, scopeId: SCOPE_ID, tenant: TENANT, policyVersion: POLICY_VERSION,
-  });
-  assert.equal(out.ok, false);
-});
-
-test("ohne freigeschaltetes Werkzeug kommt die Anfrage gar nicht erst hinaus", async () => {
-  const { transport, secret } = await aufbau();
-  const aus = createToolClient({
-    transport, credential: { async get() { return secret; } },
-    tenant: TENANT, policyVersion: POLICY_VERSION, toolsEnabled: {},
-  });
-  await assert.rejects(() => aus.call("status.run", { query: "run.status", scopeId: SCOPE_ID }, { now: T0 }),
-    (e) => e.status === 503 && e.error === "tool_disabled");
+  const antwort = await toolClient.call("status.run", { query: "run.status", scopeId: statusScopeIdForRunKey(RUNKEY), jobId: RUN_ID, pageSize: 100 }, { now: nowMs });
+  assert.equal(antwort.status, 200);
+  assert.equal(antwort.body.items[0].state, "created");
+  const urteil = validateClosureEvidence(
+    { runKey: RUNKEY, tenant: TENANT, policyVersion: POLICY_VERSION, fence: 1, dataRevision: 0, evidenceRef: "runstatus:x:v1", verifiedAtMs: nowMs, state: antwort.body.items[0].state, blocked: antwort.body.items[0].blocked, sources: null },
+    { runKey: RUNKEY, tenant: TENANT, policyVersion: POLICY_VERSION, fence: 1, now: nowMs, requiredSources: [] },
+  );
+  assert.equal(urteil.ok, false);
+  assert.ok(urteil.errors.includes("run_not_final"));
 });

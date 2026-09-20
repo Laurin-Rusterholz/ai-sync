@@ -21,6 +21,7 @@ import { createIntegrationCorePort, createCloudTasksPort, createRunStatusClosure
 import { createC2HttpTransport } from "./c2-transport.mjs";
 import { createToolClient } from "./tool-ports.mjs";
 import { createGoogleJwksPort, createGoogleAccessTokenSource, createCloudTasksHttpTransport } from "./google-transport.mjs";
+import { createJobTokenIssuer } from "./job-token-issuer.mjs";
 import { externalEffectsAllowed } from "./config.mjs";
 
 function structuredLog(entry) {
@@ -70,10 +71,17 @@ if (!resolved.ok) {
   } else if (typeof toolCredential !== "string" || !toolCredential) {
     closurePort = unavailablePort("closureEvidence", "tool_credential_not_configured");
   } else {
+    // `run.context` (Kategorie `run_context`) darf laut der echten
+    // Rollenmatrix nur `lead_agent` lesen — ein Job-Token, laufgebunden,
+    // nicht das statische Dienst-Zugangsdatum oben. Fehlt dessen
+    // Konfiguration (C1-eigene `QUANTUS_V3_WORKER_TOKEN_KEYS` u.a.),
+    // bleibt `sources` im Nachweis leer statt erfunden.
+    const jobTokenIssuer = await createJobTokenIssuer({});
     const toolClient = createToolClient({
       transport: createC2HttpTransport({ baseUrl: config.c2BaseUrl }),
       // Das Geheimnis wird NUR hier gereicht und nie protokolliert.
       credential: { async get() { return toolCredential; } },
+      jobTokenIssuer: jobTokenIssuer.available ? jobTokenIssuer : null,
       tenant: config.tenant,
       policyVersion: config.policyVersion,
       toolsEnabled: config.toolsEnabled,

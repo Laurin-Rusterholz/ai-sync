@@ -16,7 +16,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as F from "./quantus-v3-e2-fixtures.mjs";
 import * as PLAN from "../netlify/lib/quantus-v3-runtime-plan.mjs";
-import { validateClosureEvidence, CLOSURE_EVIDENCE_MAX_AGE_MS } from "../runtime/quantus-v3/src/worker-handlers.mjs";
+import { validateClosureEvidence, CLOSURE_EVIDENCE_MAX_AGE_MS, CLOSURE_FINAL_STATE } from "../runtime/quantus-v3/src/worker-handlers.mjs";
 
 const T = PLAN.wallTimeToMs("2026-09-19", 9, 0) + 2_000;
 const RUNKEY = PLAN.slotRunKey(F.TENANT, "2026-09-19", "process09", F.POLICY_VERSION);
@@ -121,6 +121,10 @@ function gueltigerNachweis(over = {}, now = T) {
     dataRevision: null,          // wird je Test gesetzt
     evidenceRef: "closure:2026-09-19:process09:abc123",
     verifiedAtMs: now,
+    // Belegter B-Abschluss: Zustand UND Gesamturteil muessen zusammen
+    // vorliegen (siehe validateClosureEvidence, worker-handlers.mjs).
+    state: CLOSURE_FINAL_STATE,
+    blocked: false,
     sources: QUELLEN.map((id) => ({ id, status: "ok", checkedAtMs: now })),
     ...over,
   };

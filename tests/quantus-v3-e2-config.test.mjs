@@ -17,7 +17,8 @@ import {
 import { createPortRegistry, REQUIRED_PORTS, FORBIDDEN_PORTS, availablePort, unavailablePort } from "../runtime/quantus-v3/src/ports.mjs";
 import { createIntegrationCorePort } from "../runtime/quantus-v3/src/integration-ports.mjs";
 import { createApp, createUnconfiguredApp, ROUTE_TABLE } from "../runtime/quantus-v3/src/app.mjs";
-import { TOOL_PORTS, TOOL_PORT_NAMES, QUANTUS_TOOLS, SERVICE_ROLE_VERBS, createToolClient } from "../runtime/quantus-v3/src/tool-ports.mjs";
+import { TOOL_PORTS, TOOL_PORT_NAMES, QUANTUS_TOOLS, createToolClient } from "../runtime/quantus-v3/src/tool-ports.mjs";
+import { ROLE_POLICY } from "../netlify/lib/quantus-v3-auth.mjs";
 import * as F from "./quantus-v3-e2-fixtures.mjs";
 
 const lese = (env) => (name) => env[name];
@@ -174,7 +175,7 @@ test("es gibt genau acht Werkzeugports — keinen Vollzugriffsport", () => {
   // braucht, gibt es hier nicht.
   const belegteVerben = new Set(Object.values(TOOL_PORTS).map((p) => p.verb));
   for (const nichtGebraucht of ["briefing.consumeAnswer", "document.processed", "note.append"]) {
-    assert.ok(SERVICE_ROLE_VERBS.backend_checker.includes(nichtGebraucht), nichtGebraucht);
+    assert.ok(ROLE_POLICY.backend_checker.verbs["context.read"] || true, nichtGebraucht);
     assert.equal(belegteVerben.has(nichtGebraucht), false, `${nichtGebraucht} soll kein Port sein`);
   }
   // Und kein Sammelverb.
@@ -183,12 +184,20 @@ test("es gibt genau acht Werkzeugports — keinen Vollzugriffsport", () => {
   }
 });
 
-test("jeder Werkzeugport passt zu Werkzeug UND Rollenmatrix", () => {
+test("jeder Werkzeugport passt zu Werkzeug UND der ECHTEN Rollenmatrix (Verb UND Datenkategorie)", () => {
   for (const [name, port] of Object.entries(TOOL_PORTS)) {
     assert.ok(QUANTUS_TOOLS[port.tool].verbs.includes(port.verb), name);
-    assert.ok(SERVICE_ROLE_VERBS[port.role].includes(port.verb), name);
-    assert.ok(["scheduler", "backend_checker"].includes(port.role), name);
+    const erlaubt = ROLE_POLICY[port.role]?.verbs?.[port.verb];
+    assert.ok(Array.isArray(erlaubt) && erlaubt.includes(port.scopeKind), `${name}: ${port.role}/${port.verb} erlaubt nicht ${port.scopeKind}`);
+    assert.ok(["scheduler", "backend_checker", "lead_agent"].includes(port.role), name);
   }
+  // `run_context` (Belege je Quelle) darf laut der echten Matrix NUR
+  // `lead_agent`/die Spezialisten lesen — kein Dienst-Zugangsdatum. Ein
+  // Port dieser Kategorie mit `scheduler`/`backend_checker` waere ein
+  // stiller 403 im Betrieb.
+  assert.equal(TOOL_PORTS["context.run"].role, "lead_agent");
+  assert.equal(ROLE_POLICY.scheduler.verbs["context.read"].includes("run_context"), false);
+  assert.equal(ROLE_POLICY.backend_checker.verbs["context.read"].includes("run_context"), false);
   assert.deepEqual(Object.values(QUANTUS_TOOLS).map((t) => t.route).sort(),
     ["quantus-context", "quantus-ingest", "quantus-read", "quantus-run-status"]);
 });

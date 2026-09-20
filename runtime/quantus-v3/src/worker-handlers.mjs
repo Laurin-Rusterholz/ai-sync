@@ -357,6 +357,32 @@ const EVIDENCE_REF_RE = /^[A-Za-z0-9_.:-]{8,120}$/;
 /* Streng, und ausdruecklich nicht aus etwas ableitbar, das dieser Prozess
  * selbst kennt. Die frueher hier erzeugte Kennung `run-evidence:<runKey>`
  * wird namentlich abgewiesen. */
+/*
+ * VIER Dinge muessen ZUSAMMEN belegt sein, keines ersetzt ein anderes:
+ *
+ *   1. AKTUELLER FENCE     evidence.fence === expected.fence (E1s eigene,
+ *                          gerade gueltige Fuehrung — C2 bezeugt ihn nicht,
+ *                          das bleibt Sache des Aufrufers).
+ *   2. VOLLSTAENDIGER      jede in `expected.requiredSources` genannte
+ *      QUELLENSATZ         Quelle steht in `evidence.sources` mit
+ *                          `status: "ok"` und einem frischen `checkedAtMs`
+ *                          — UND keine unerwartete Quelle fehlt/ueberzaehlt.
+ *   3. BELEGTER            `evidence.state === "final"` (B's durch
+ *      B-ABSCHLUSS         `closeRun` gesicherter Abschlusszustand) UND
+ *                          `evidence.blocked === false` (B's eigenes
+ *                          Gesamturteil aus `dailyAssistantTrafficLight`).
+ *   4. AKTUELLE VERSION    `dataRevision`/`verifiedAtMs` frisch (unten).
+ *
+ * `sources` kommt aus der Kategorie `run_context` — die darf laut
+ * `ROLE_POLICY` (`quantus-v3-auth.mjs`) NUR `lead_agent` (Job-Token,
+ * `assigned`) und die Spezialisten lesen, kein Dienst-Zugangsdatum. Der
+ * Nachweisport (`integration-ports.mjs`) beschafft dafuer ein eigenes,
+ * laufgebundenes Job-Token (`job-token-issuer.mjs`); fehlt dessen
+ * Konfiguration, bleibt `sources` leer — und DIESE Pruefung faellt dann
+ * durch (`sources_missing`), sie wird nicht uebersprungen oder gelockert.
+ */
+export const CLOSURE_FINAL_STATE = "final";
+
 export function validateClosureEvidence(evidence, expected) {
   const fehler = [];
   const record = evidence !== null && typeof evidence === "object" && !Array.isArray(evidence);
@@ -372,6 +398,11 @@ export function validateClosureEvidence(evidence, expected) {
   else if (evidence.verifiedAtMs > expected.now) fehler.push("verified_in_future");
   else if (expected.now - evidence.verifiedAtMs > CLOSURE_EVIDENCE_MAX_AGE_MS) fehler.push("evidence_stale");
 
+  // 3. Belegter B-Abschluss.
+  if (evidence.state !== CLOSURE_FINAL_STATE) fehler.push("run_not_final");
+  if (evidence.blocked !== false) fehler.push("run_blocked");
+
+  // 2. Vollstaendiger, tatsaechlich geprueft ausgewiesener Quellensatz.
   const verlangt = expected.requiredSources;
   const gesehen = Array.isArray(evidence.sources) ? evidence.sources : null;
   if (!gesehen) fehler.push("sources_missing");
