@@ -15,13 +15,34 @@ fehlt, antwortet der Dienst **503**, ohne etwas zu tun.
 | Fassung | Stand |
 | --- | --- |
 | `1a8d08c` | C2 unabhängig geprüft (64 eigene Tests, 13 unabhängige Gegenprüfungen). Befund: die Verdrahtung selbst war **nicht** belastbar |
-| diese Fassung | die drei Befunde unten behoben, 16 eigene Tests (`tests/quantus-v3-c3b-*.test.mjs`) |
+| `a422670` | C3b-01 … C3b-03 behoben, 16 eigene Tests. Unabhängig geprüft: Positivfall bestanden, aber **acht Gegenproben** am Zugriffstoken fehlgeschlagen |
+| diese Fassung | G-1 … G-8 behoben, je als Fall in `tests/quantus-v3-c3b-gegenbeispiele.test.mjs`; 22 eigene Tests |
 
 | # | Befund (`1a8d08c`) | Jetzt |
 | --- | --- | --- |
 | C3b-01 | `buildRuntimeDeps` baute einen Speicher über ein **eigenes Testmodell** (`entities.leads`) mit Rückfall auf den Wurzelknoten — nicht über den echten CAS | `createCoreStore` benutzt ausschliesslich `readAppDataDocument`/`mutateAppData` und prüft deren Vorhandensein; der Schlüssel ist auf `app-data.json` **festgenagelt** (anderer Schlüssel ⇒ `key_denied`), kein Wurzel-Rückfall |
 | C3b-02 | Der Fachadapter war `modul?.default \|\| modul` — ein Modul, das zufällig die richtigen Namen trägt, wäre zum Rechtegeber geworden | Genau **ein** Port: die benannte Fabrik `createQuantusV3DomainAdapter`, aufgerufen mit serverseitiger Politik und Mandant. Fehlt sie, wirft sie, oder fehlt eine Methode ⇒ 503 (`domain_factory_missing` / `domain_factory_failed` / `domain_adapter_incomplete`) |
 | C3b-03 | Die Widerrufsprüfung brauchte ein Zugriffstoken, das **nirgends** herkam — und wurde stillschweigend nicht verdrahtet | `quantus-v3-identity-access.mjs`: eine streng benannte Reihenfolge, scope- und projektgebunden, mit Cache und gebündeltem Abruf. Gibt es keinen Weg, bleibt `userLookup` **null**, und C1 antwortet 503 `user_lookup_missing` — ein ID-Token ohne Widerrufsprüfung gilt nie |
+
+### Runde 2 — die acht Gegenproben (Review `a422670`)
+
+Alle acht betrafen **denselben Bereich**: das Zugriffstoken. Jede ist gegen
+den alten Stand nachgestellt und schlägt dort fehl.
+
+| # | Befund (`a422670`) | Jetzt |
+| --- | --- | --- |
+| G-1..3 | Ein Port, der `expiresAt = jetzt-1`, `jetzt` oder `jetzt+59999` lieferte (Marge 60 s), wurde **akzeptiert**: die Marge galt nur dem alten Cache-Eintrag, nie der frischen Antwort | Dieselbe Schranke für **jedes** Token, gleich woher: `expiresAt - MARGE > jetzt`, sonst `identity_token_expired`. Genau eine Millisekunde jenseits der Marge gilt weiterhin — die Schranke ist eine Grenze, keine Pauschalablehnung |
+| G-4 | Ein Erwerb, der 121 s dauerte, lieferte ein Token, das bis Start+120 s gültig war — geprüft wurde mit der Zeit **vom Start** | Die Schranke wird **nach** dem `await` mit neu abgefragter Zeit gezogen. Nicht die Dauer entscheidet, sondern die Frist danach |
+| G-5 | `expires_in: -60` wurde still zu einer Stunde | Fehlende, negative, nicht numerische, nicht endliche oder `NaN`-Frist ⇒ `identity_token_lifetime_invalid` — auf **jedem** Weg. Auch ein hereingegebener Port muss seine Frist nennen; eine nackte Zeichenkette ist keine Zusicherung mehr |
+| G-6 | Zwei echte `buildRuntimeDeps` für **dieselbe** Konfiguration ergaben bei parallelem `userLookup` **zwei** Tokenabrufe: der Cache lag im Provider-Abschluss, die Handler bauen ihre Abhängigkeiten aber **pro Request** | Der Speicher liegt im Modul und wirkt über Requests. Gebunden an Projekt, Mandant, Scope, Tokenquelle (Portidentität), Verkehr und die **aktuelle** Zugangskonfiguration (als Hash — die Werte werden nicht gespeichert und nirgends zurückgegeben). Begrenzt auf `MAX_CACHE_ENTRIES` (8), ausdrücklich verwerfbar über `invalidateIdentityAccessCache()`. Jeder Wechsel von Projekt, Mandant, Scope, Quelle oder Zugangsdaten ergibt einen anderen Schlüssel. Der **Widerrufslookup** selbst wird **nie** gecacht |
+| G-7..8 | Ein werfender Port (oder `getIdentityAccessToken`) wurde mit Originalfehler weitergereicht — Nachricht, `body` und `cause` konnten ein Zugangsdatum tragen | An der Modulgrenze wird **jeder** Fehler in einen neuen übersetzt: `message` = Kennung, ein einziges eigenes Feld (`code`), kein `cause`, kein `body`, kein Tokenwert. Das ist ein Grenznachweis am Modul — keine Aussage über eine HTTP-Antwort |
+
+Die Kennungen, die das Modul nach aussen gibt (`IDENTITY_ACCESS_ERRORS`):
+`identity_access_not_configured`, `identity_project_mismatch`,
+`identity_token_failed`, `identity_scope_missing`,
+`identity_token_lifetime_invalid`, `identity_token_expired`. C1 übersetzt einen
+gescheiterten Lookup wie bisher zu 401 `user_lookup_failed`; ein fehlender
+Lookup bleibt 503 `user_lookup_missing`.
 
 ## 1. Dateien
 
@@ -30,6 +51,7 @@ fehlt, antwortet der Dienst **503**, ohne etwas zu tun.
 | `netlify/lib/quantus-v3-runtime.mjs` | die Verdrahtung: Ports, Diagnose, `toResponse` |
 | `netlify/lib/quantus-v3-identity-access.mjs` | das Zugriffstoken für `accounts:lookup` — und nur dieses |
 | `tests/quantus-v3-c3b-identity-access.test.mjs` | 6 Tests: Reihenfolge, Scope, Projektbindung, Cache, Bündelung, Fehlerformen |
+| `tests/quantus-v3-c3b-gegenbeispiele.test.mjs` | 6 Tests mit den acht Gegenproben G-1 … G-8 |
 | `tests/quantus-v3-c3b-runtime.test.mjs` | 10 Tests an der **gebauten** Laufzeit gegen konditionale Fake-HTTP-Transporte |
 
 Nicht angefasst: `firebase-admin.mjs`, `netlify.toml`, Umgebungsvariablen,
@@ -105,13 +127,26 @@ Streng benannte Reihenfolge, ohne Zwischentöne:
    Zugangsauflösung, die `firebase-admin.mjs` heute exportiert.
 4. Sonst **503**, mit dem Namen des fehlenden Gates.
 
-Regeln: der Token muss `identitytoolkit` (oder `cloud-platform`) tragen —
-Google nennt die gewährten Scopes, und ein zu enger Token wird **verworfen**,
-statt bei jedem Lookup 403 zu erzeugen. Das v3-Projekt muss dasselbe sein wie
-das Firebase-Projekt (sonst sähe die Sperrprüfung im falschen Verzeichnis nach
-und hielte jeden für ungesperrt). Cache mit 60 s Marge, parallele Anfragen
-teilen **einen** Abruf, Fehlschläge werden nicht gecacht. Kein Tokenwert
-erscheint in Log, Antwort oder Diagnose.
+Regeln:
+
+* **Scope.** Der Token muss `identitytoolkit` (oder `cloud-platform`) tragen —
+  Google nennt die gewährten Scopes, und ein zu enger Token wird **verworfen**,
+  statt bei jedem Lookup 403 zu erzeugen.
+* **Projekt.** Das v3-Projekt muss dasselbe sein wie das Firebase-Projekt, sonst
+  sähe die Sperrprüfung im falschen Verzeichnis nach und hielte jeden für
+  ungesperrt.
+* **Frist.** Jedes Token wird an derselben Schranke gemessen —
+  `expiresAt - 60 s > jetzt`, geprüft **nach** dem Erwerb mit frischer Zeit. Eine
+  fehlende oder unbrauchbare Frist wird nie zu einer erfundenen Stunde.
+* **Speicher.** Der Cache liegt im Modul und wirkt damit über Requests hinweg
+  (die Handler bauen ihre Abhängigkeiten pro Request). Schlüssel ist ein Abdruck
+  über Projekt, Mandant, Scope, Quelle und die aktuelle Zugangskonfiguration;
+  begrenzt auf 8 Einträge, verwerfbar über `invalidateIdentityAccessCache()`.
+  Parallele Anfragen teilen **einen** Abruf, Fehlschläge werden nicht gecacht.
+* **Der Widerrufslookup selbst wird nie gecacht.** Er ist die Prüfung.
+* **Fehler.** Nur feste Kennungen, ohne `cause`, ohne `body`, ohne Tokenwert.
+  Kein Tokenwert erscheint in Log, Antwort oder Diagnose; der Zugangs-Abdruck
+  verlässt das Modul nicht.
 
 ## 4. Diagnose — Namen und Gründe, nie Werte
 
@@ -145,19 +180,20 @@ C3b nimmt sie ausdrücklich nicht selbst vor.
 ## 6. Tests
 
 ```
-npm run test:quantus-v3-c3b     # 16 Tests
+npm run test:quantus-v3-c3b     # 22 Tests
 ```
 
 Der Laufzeittest baut die Abhängigkeiten **wirklich** über `buildRuntimeDeps`
 und fährt `handleCommandRequest`/`handleReadRequest` dagegen:
 
-* `firebase-admin.mjs` **und** `quantus-v3-idempotency.mjs` werden aus dem
-  geprüften Integrationsstand `52b0641` kontrolliert in ein temporäres
-  Verzeichnis gelegt und von dort geladen — der Lauf schreibt die Herkunft mit
-  (`# C3b: … aus git:52b0641, unchanged geprüft: true`). Lässt sich der Stand
-  nicht laden, werden die Tests der echten Kette **übersprungen** und als
-  „kein Integrationsnachweis" benannt, statt eine Nachbildung als Beleg
-  auszugeben.
+* Der Prüfstand ist zuerst der **aktuelle Checkout** (Idempotenzmodul vorhanden
+  **und** `mutateAppData` mit geprüfter `unchanged`-Rückgabe) — nach der
+  Integration also zwingend der Stand, der wirklich läuft. Erst als Rückfall
+  kommt der geprüfte Commit `52b0641`, kontrolliert in ein temporäres
+  Verzeichnis. Der Lauf schreibt die Herkunft mit (`# C3b: … aus checkout`
+  bzw. `… aus git:52b0641`). Fehlt beides — etwa in einem flachen CI-Klon —
+  **scheitert** der Lauf und nennt beide Gründe. Es wird nichts übersprungen
+  und nichts nachgebildet.
 * Ersetzt ist nur der **Transport**: ein konditionaler Fake für den
   OAuth-Endpunkt, Googles Zertifikatsendpunkt, `accounts:lookup`, den
   Kernknoten (mit echtem `if-match`, 412 bei falschem Stempel) und die

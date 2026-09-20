@@ -34,7 +34,9 @@ import { randomUUID } from "node:crypto";
 import { envRead, createGooglePublicKeySource, createIdentityToolkitUserLookup } from "./quantus-v3-auth.mjs";
 import { createCasRateLimiter } from "./quantus-v3-rate-limiter.mjs";
 import { CORE_KEY } from "./quantus-v3-service.mjs";
-import { createAccessTokenProvider, identityAccessAvailability } from "./quantus-v3-identity-access.mjs";
+import {
+  createAccessTokenProvider, identityAccessAvailability, resetIdentityAccessCacheForTests,
+} from "./quantus-v3-identity-access.mjs";
 
 /* Der Fachadapter-Port. C3a liefert genau diese Fabrik; C2 verlangt genau
    diese Methoden. Beides steht hier zusammen, damit niemand raten muss. */
@@ -144,7 +146,14 @@ export async function buildRuntimeDeps({
 
   if (!keySourceSingleton) keySourceSingleton = createGooglePublicKeySource({ fetchImpl, now });
 
-  /* ── Widerrufsprüfung: nur mit scope-gebundenem Token ──────────────── */
+  /* ── Widerrufsprüfung: nur mit scope-gebundenem Token ────────────────
+   *
+   * BEFUND (Review a422670): Der Tokencache lag im Abschluss des Providers.
+   * Die Handler bauen ihre Abhängigkeiten aber PRO REQUEST — der Cache war
+   * damit je Aufruf neu, und zwei gleichzeitige Anfragen holten zwei Token.
+   * Der Speicher liegt jetzt im Identity-Access-Modul, gebunden an Projekt,
+   * Mandant, Scope, Quelle und die aktuelle Zugangskonfiguration. Hier wird
+   * nichts gecacht — und der Widerrufslookup selbst NIE. */
   const zugang = identityAccessAvailability({ read, firebaseModule: firebase, obtainAccessToken });
   const provider = zugang.available
     ? createAccessTokenProvider({ read, fetchImpl, now, obtainAccessToken, firebaseModule: firebase })
@@ -217,10 +226,14 @@ export function toResponse(result) {
   return new Response(JSON.stringify(result.body), { status: result.status || 200, headers });
 }
 
-/* Nur für Tests: den Schlüsselbezug zurücksetzen, damit ein Lauf nicht den
-   Cache des vorigen erbt. */
+/* Nur für Tests: die geteilten Speicher zurücksetzen, damit ein Lauf nicht
+   den Cache des vorigen erbt. Beides liegt bewusst im MODUL — der
+   Schlüsselbezug und der Zugriffstoken müssen über Requests hinweg wirken,
+   weil die Handler ihre Abhängigkeiten pro Request bauen. Genau deshalb
+   braucht ein Test einen ausdrücklichen Schnitt. */
 export function resetRuntimeCachesForTests() {
   keySourceSingleton = null;
+  resetIdentityAccessCacheForTests();
 }
 
 export default { buildRuntimeDeps, toResponse, createCoreStore, buildDomainAdapter, DOMAIN_FACTORY_EXPORT, DOMAIN_ADAPTER_METHODS };

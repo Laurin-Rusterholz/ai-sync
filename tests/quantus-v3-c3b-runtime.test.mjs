@@ -49,16 +49,25 @@ const JETZT = Date.parse("2026-09-20T09:00:00Z");
 const key = makeSigningKey("c3b-kid");
 const etagVon = (text) => createHash("sha256").update(String(text)).digest("hex");
 
-/* ══ Der Integrationsstand, kontrolliert geladen ═══════════════════════════
+/* ══ Der Prüfstand: aktueller Checkout zuerst, Commit nur als Rückfall ════
  *
- * Der echte CAS (mit der geprüften `unchanged`-Rückgabe) und der echte
- * Idempotenz-Ledger liegen im Integrationszweig, nicht in diesem Paket. Sie
- * werden aus genau dem geprüften Commit in ein temporäres Verzeichnis gelegt
- * und von dort geladen — nichts wird ins Paket kopiert, nichts nachgebaut.
- * Klappt das nicht, sagen die Tests das ausdrücklich und prüfen die echte
- * Kette NICHT als bestanden.
+ * BEFUND (Review a422670): Der Test lud den echten CAS und den echten
+ * Idempotenz-Ledger NUR aus dem Commit `52b0641`. Nach der Integration wäre
+ * damit der veraltete Stand geprüft worden statt des ausgelieferten — und in
+ * einem flachen CI-Klon, in dem der Commit nicht erreichbar ist, hätte der
+ * Lauf still ÜBERSPRUNGEN. Beides ist wertlos.
+ *
+ * Jetzt gilt:
+ *   1. Der aktuelle Checkout, wenn er den Vertrag erfüllt (Idempotenzmodul
+ *      vorhanden UND `mutateAppData` mit geprüfter `unchanged`-Rückgabe).
+ *      Das ist nach der Integration zwingend der Stand, der läuft.
+ *   2. Sonst der geprüfte Commit, kontrolliert in ein temporäres Verzeichnis.
+ *   3. Sonst SCHEITERT der Lauf und nennt beide Gründe. Kein Überspringen,
+ *      keine Nachbildung, kein „Prüfung bestanden" ohne Prüfstand.
  * ─────────────────────────────────────────────────────────────────────── */
-function ausCommit(dateien) {
+const UNCHANGED_MARKER = "unchanged_mutation_invalid";
+
+function ausCommitInTemp(dateien) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qv3-c3b-"));
   for (const name of dateien) {
     const quelle = execFileSync("git", ["show", `${INTEGRATION_COMMIT}:netlify/lib/${name}`],
@@ -69,38 +78,67 @@ function ausCommit(dateien) {
   return dir;
 }
 
-async function integrationsModule() {
-  try {
-    const dir = ausCommit(["blob-key-policy.mjs", "firebase-admin.mjs", "quantus-v3-idempotency.mjs"]);
-    const firebase = await import(path.join(dir, "firebase-admin.mjs"));
-    const idem = await import(path.join(dir, "quantus-v3-idempotency.mjs"));
-    const quelltext = fs.readFileSync(path.join(dir, "firebase-admin.mjs"), "utf8");
-    if (typeof firebase.mutateAppData !== "function" || typeof firebase.readAppDataDocument !== "function") {
-      throw new Error("firebase-admin unvollständig");
-    }
-    if (typeof idem.prepareIdempotentCommand !== "function" || typeof idem.applyIdempotentCommand !== "function") {
-      throw new Error("Idempotenz unvollständig");
-    }
-    return {
-      ok: true, source: `git:${INTEGRATION_COMMIT}`, firebase, idem,
-      // Ohne geprüfte `unchanged`-Rückgabe würde eine Wiederholung erneut
-      // schreiben. Das ist eine Eigenschaft des Standes, keine Annahme.
-      unchanged: quelltext.includes("unchanged_mutation_invalid"),
-    };
-  } catch (err) {
-    return { ok: false, source: "unavailable", reason: String(err && err.message || err) };
+async function ladeStand({ firebaseDatei, idemDatei }) {
+  const quelltext = fs.readFileSync(firebaseDatei, "utf8");
+  if (!quelltext.includes(UNCHANGED_MARKER)) {
+    throw new Error("mutateAppData ohne geprüfte unchanged-Rückgabe");
   }
+  const firebase = await import(firebaseDatei);
+  const idem = await import(idemDatei);
+  for (const [modul, namen, wer] of [
+    [firebase, ["readAppDataDocument", "mutateAppData", "firebaseDbGetWithEtag", "firebaseDbSet"], "firebase-admin"],
+    [idem, ["prepareIdempotentCommand", "applyIdempotentCommand"], "quantus-v3-idempotency"],
+  ]) {
+    for (const name of namen) {
+      if (typeof modul[name] !== "function") throw new Error(`${wer}: ${name} fehlt`);
+    }
+  }
+  return { firebase, idem };
 }
 
-const INTEGRATION = await integrationsModule();
-const OHNE_INTEGRATION = INTEGRATION.ok
-  ? false
-  : `Integrationsstand ${INTEGRATION_COMMIT} nicht ladbar (${INTEGRATION.reason}) — kein Integrationsnachweis`;
+async function pruefstand() {
+  const gruende = [];
 
-test("welcher Stand im Lauf steckt", () => {
-  console.log(`# C3b: firebase-admin + Idempotenz aus ${INTEGRATION.source}`
-    + (INTEGRATION.ok ? `, unchanged geprüft: ${INTEGRATION.unchanged}` : ""));
-  assert.ok(true);
+  // 1. Der aktuelle Checkout — nach der Integration der einzige richtige Stand.
+  try {
+    const firebaseDatei = path.join(root, "netlify/lib/firebase-admin.mjs");
+    const idemDatei = path.join(root, "netlify/lib/quantus-v3-idempotency.mjs");
+    if (!fs.existsSync(idemDatei)) throw new Error("quantus-v3-idempotency.mjs liegt nicht im Checkout");
+    const geladen = await ladeStand({ firebaseDatei, idemDatei });
+    return { ok: true, source: "checkout", ...geladen };
+  } catch (err) {
+    gruende.push(`checkout: ${err && err.message || err}`);
+  }
+
+  // 2. Rückfall: der geprüfte Integrationsstand aus dem Git-Objektspeicher.
+  try {
+    const dir = ausCommitInTemp(["blob-key-policy.mjs", "firebase-admin.mjs", "quantus-v3-idempotency.mjs"]);
+    const geladen = await ladeStand({
+      firebaseDatei: path.join(dir, "firebase-admin.mjs"),
+      idemDatei: path.join(dir, "quantus-v3-idempotency.mjs"),
+    });
+    return { ok: true, source: `git:${INTEGRATION_COMMIT}`, ...geladen };
+  } catch (err) {
+    gruende.push(`git:${INTEGRATION_COMMIT}: ${err && err.message || err}`);
+  }
+
+  return { ok: false, source: null, gruende };
+}
+
+const INTEGRATION = await pruefstand();
+
+/* Kein stilles Überspringen: wer den Prüfstand nicht hat, hat keine Prüfung. */
+function pruefstandOderScheitern() {
+  assert.ok(INTEGRATION.ok, "Kein Prüfstand: weder der Checkout noch der Commit "
+    + `${INTEGRATION_COMMIT} liefern firebase-admin mit geprüfter unchanged-Rückgabe und das `
+    + `Idempotenzmodul (${(INTEGRATION.gruende || []).join(" | ")}). `
+    + "Der Lauf braucht den integrierten Checkout oder eine nicht-flache Klontiefe — "
+    + "übersprungen wird hier nichts.");
+}
+
+test("der Prüfstand ist echt — sonst scheitert der Lauf", () => {
+  pruefstandOderScheitern();
+  console.log(`# C3b: firebase-admin + Idempotenz aus ${INTEGRATION.source}`);
 });
 
 /* ══ Serverkonfiguration: echte Namen, Attrappenwerte ═════════════════════ */
@@ -278,7 +316,8 @@ function befehl({ token, idempotencyKey = null, text = "Über die echte Laufzeit
 const nutzerToken = () => makeIdToken({ key, sub: OWNER, now: JETZT, tenant: TENANT });
 
 /* ══ 1. Was fehlt, wird benannt — nicht ersetzt ═══════════════════════════ */
-test("die Verdrahtung sagt ehrlich, was fehlt", { skip: OHNE_INTEGRATION }, async () => {
+test("die Verdrahtung sagt ehrlich, was fehlt", async () => {
+  pruefstandOderScheitern();
   await imLauf({}, async ({ read }) => {
     const ohneFabrik = await laufzeit({ read, domainFactory: null });
     assert.equal(ohneFabrik.domain, null);
@@ -359,7 +398,8 @@ test("nur die benannte Fabrik gilt — ein Rohmodul wird nicht übernommen", () 
 });
 
 /* ══ 3. Der Speicher schreibt nur den Kern ════════════════════════════════ */
-test("der Speicherport ist festgenagelt", { skip: OHNE_INTEGRATION }, async () => {
+test("der Speicherport ist festgenagelt", async () => {
+  pruefstandOderScheitern();
   const store = createCoreStore(INTEGRATION.firebase, { write: true });
   await assert.rejects(() => store.mutate("readinghub-data.json", (d) => d), (err) => err.code === "key_denied");
   await assert.rejects(() => store.mutate(CORE_KEY, "kein Mutator"), (err) => err.code === "mutation_invalid");
@@ -376,8 +416,8 @@ test("der Speicherport ist festgenagelt", { skip: OHNE_INTEGRATION }, async () =
 });
 
 /* ══ 4. Die echte Kette: Befehl ═══════════════════════════════════════════ */
-test("ECHTE Kette: ein Befehl über die gebaute Laufzeit, echtes CAS, echter Ledger",
-  { skip: OHNE_INTEGRATION }, async () => {
+test("ECHTE Kette: ein Befehl über die gebaute Laufzeit, echtes CAS, echter Ledger", async () => {
+    pruefstandOderScheitern();
     await imLauf({}, async ({ read, t }) => {
       const deps = await laufzeit({ read });
       const token = nutzerToken();
@@ -429,8 +469,8 @@ test("ECHTE Kette: ein Befehl über die gebaute Laufzeit, echtes CAS, echter Led
   });
 
 /* ══ 5. Die echte Kette: Lesen ════════════════════════════════════════════ */
-test("ECHTE Kette: Lesen über die gebaute Laufzeit — ohne jeden Kernschreibvorgang",
-  { skip: OHNE_INTEGRATION }, async () => {
+test("ECHTE Kette: Lesen über die gebaute Laufzeit — ohne jeden Kernschreibvorgang", async () => {
+    pruefstandOderScheitern();
     await imLauf({ schreiben: false }, async ({ read, t }) => {
       const deps = await laufzeit({ read, schreiben: false });
       assert.equal(deps.store.mutate, undefined, "der Leseweg hat einen Schreibport");
@@ -466,7 +506,8 @@ test("ECHTE Kette: Lesen über die gebaute Laufzeit — ohne jeden Kernschreibvo
   });
 
 /* ══ 6. Ohne Zugriffstoken: kein Nutzer-Token gilt ════════════════════════ */
-test("ohne Zugriffstoken lässt die Laufzeit kein Nutzer-Token durch", { skip: OHNE_INTEGRATION }, async () => {
+test("ohne Zugriffstoken lässt die Laufzeit kein Nutzer-Token durch", async () => {
+  pruefstandOderScheitern();
   await imLauf({ overrides: { FIREBASE_OAUTH_REFRESH_TOKEN: null, FIREBASE_OAUTH_CLIENT_ID: null, FIREBASE_OAUTH_CLIENT_SECRET: null } },
     async ({ read, t }) => {
       const deps = await laufzeit({ read });
@@ -482,7 +523,8 @@ test("ohne Zugriffstoken lässt die Laufzeit kein Nutzer-Token durch", { skip: O
 });
 
 /* ══ 7. Zu enger Scope: sperren, nicht erlauben ═══════════════════════════ */
-test("ein zu enger Token-Scope sperrt die Anmeldung", { skip: OHNE_INTEGRATION }, async () => {
+test("ein zu enger Token-Scope sperrt die Anmeldung", async () => {
+  pruefstandOderScheitern();
   await imLauf({ transportOptionen: { identityScope: "https://www.googleapis.com/auth/firebase.database" } },
     async ({ read, t }) => {
       const deps = await laufzeit({ read });
@@ -496,7 +538,8 @@ test("ein zu enger Token-Scope sperrt die Anmeldung", { skip: OHNE_INTEGRATION }
 });
 
 /* ══ 8. Sperre, Widerruf, fremder Mandant ═════════════════════════════════ */
-test("die echte Sperrprüfung greift: gesperrt, widerrufen, fremder Mandant", { skip: OHNE_INTEGRATION }, async () => {
+test("die echte Sperrprüfung greift: gesperrt, widerrufen, fremder Mandant", async () => {
+  pruefstandOderScheitern();
   const faelle = [
     { name: "gesperrt", lookup: { disabled: true, validSince: 0, tenantId: TENANT }, status: 403, reason: "user_disabled" },
     { name: "widerrufen", lookup: { disabled: false, validSince: Math.floor(JETZT / 1000), tenantId: TENANT }, status: 401, reason: "token_revoked" },

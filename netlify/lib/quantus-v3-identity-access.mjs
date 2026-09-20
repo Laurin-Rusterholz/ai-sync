@@ -19,40 +19,76 @@
  * zweite unkontrollierte Credentiallogik — genau das soll es nicht geben.
  *
  * Deshalb diese Reihenfolge, streng benannt und ohne Zwischentöne:
- *   1. `obtainAccessToken`  — ausdrücklich hereingegebener Port (Tests, und
- *                             später der Betrieb, wenn er einen hat).
+ *   1. `obtainAccessToken`  — ausdrücklich hereingegebener Port.
  *   2. `getIdentityAccessToken` aus firebase-admin — wenn der Eigentümer
  *      dieser Datei einen scope-gebundenen Token EXPORTIERT. Nur der Name
  *      zählt, nichts wird nachgebaut.
  *   3. Refresh-Token-Weg — die EINZIGE Zugangsauflösung, die firebase-admin
- *      heute exportiert (`userRefreshTokenFromEnv`). Wir tauschen damit ein
- *      Zugriffstoken; die Zugangsdaten selbst werden nicht von uns gelesen,
- *      zusammengesetzt oder gespeichert.
- *   4. Sonst: **503**, mit Namen des fehlenden Gates. Kein Dienstkonto-JWT
- *      aus dieser Datei, kein Client-API-Key, kein „dann eben ohne Prüfung".
+ *      heute exportiert (`userRefreshTokenFromEnv`).
+ *   4. Sonst: **503**, mit Namen des fehlenden Gates.
+ *
+ * ── WAS RUNDE 2 GEÄNDERT HAT (acht Gegenproben, Review a422670) ──────────
+ *
+ * G-1..3  DIE MARGE GILT FÜR JEDES TOKEN, nicht nur für den Cache.
+ *         Befund: ein Port, der `expiresAt = now - 1`, `now` oder
+ *         `now + 59999` liefert (Marge 60 s), wurde AKZEPTIERT — geprüft
+ *         wurde nur der alte Cache-Eintrag, nie die frische Antwort. Jetzt
+ *         läuft jedes Token, gleich woher, durch dieselbe Schranke:
+ *         `expiresAt - MARGE > jetzt`. Sonst `identity_token_expired`.
+ *
+ * G-4     FRISCHE ZEIT NACH DEM AWAIT. Ein Erwerb kann dauern (121 s im
+ *         Gegenbeispiel). Die Schranke wird deshalb NACH dem Erwerb mit
+ *         neu abgefragter Zeit gezogen, nie mit der Zeit vom Start.
+ *
+ * G-5     KEINE ERFUNDENE LAUFZEIT. `expires_in: -60` wurde still zu einer
+ *         Stunde. Eine fehlende, negative, nicht endliche oder nicht
+ *         numerische Lebensdauer ist jetzt ein Fehler
+ *         (`identity_token_lifetime_invalid`) — auf JEDEM Weg, auch beim
+ *         hereingegebenen Port: wer ein Token liefert, nennt seine Frist.
+ *
+ * G-6     CACHE UND BÜNDELUNG WIRKEN ÜBER REQUESTS. Befund: die produktiven
+ *         Handler bauen ihre Abhängigkeiten PRO REQUEST; ein Cache im
+ *         Provider-Abschluss war damit je Aufruf neu, und zwei parallele
+ *         Anfragen holten zwei Token. Der Cache liegt jetzt im Modul, streng
+ *         gebunden an Projekt, Mandant, Scope, Tokenquelle (Portidentität)
+ *         und die AKTUELLE Zugangskonfiguration (als Hash, siehe unten).
+ *         Er ist begrenzt (`MAX_CACHE_ENTRIES`) und ausdrücklich
+ *         ungültigmachbar (`invalidateIdentityAccessCache`). Ein Wechsel von
+ *         Projekt, Mandant, Scope, Quelle oder Zugangsdaten ergibt einen
+ *         anderen Schlüssel — der alte Token wird nie weiterverwendet.
+ *         Der WIDERRUFSLOOKUP selbst wird NIE gecacht; das wäre genau die
+ *         Prüfung, um die es geht (siehe C1, `createIdentityToolkitUserLookup`).
+ *
+ * G-7..8  FEHLER VERLASSEN DAS MODUL NUR ALS FESTE KENNUNG. Befund: wirft
+ *         der Port (oder der firebase-Export) einen Fehler, dessen `message`
+ *         oder `body` ein Zugangsdatum trägt, reichte der Provider das
+ *         Original weiter — mitsamt `cause`. Jetzt wird jeder Fehler an der
+ *         Modulgrenze in einen neuen Fehler mit einer der Kennungen unten
+ *         übersetzt: keine fremde Nachricht, kein `cause`, kein `body`, kein
+ *         Tokenwert. Das ist ein Grenznachweis am Modul, keine Aussage über
+ *         irgendeine HTTP-Antwort.
  *
  * WEITERE REGELN
  * --------------
  * • SCOPE-GEBUNDEN. Der Token muss `identitytoolkit` (oder das übergeordnete
- *   `cloud-platform`) tragen. Google nennt die gewährten Scopes in der
- *   Antwort; fehlt der nötige, ist das ein Fehler und kein Versuch wert.
+ *   `cloud-platform`) tragen. Google nennt die gewährten Scopes; fehlt der
+ *   nötige, ist das ein Fehler und kein Versuch wert.
  * • PROJEKTGEBUNDEN. Das v3-Projekt muss dasselbe sein wie das Firebase-
  *   Projekt. Sonst würde die Sperrprüfung im falschen Verzeichnis nachsehen
  *   und jeden für ungesperrt halten.
- * • CACHE MIT MARGE, EINMAL HOLEN. Ein Token wird bis kurz vor Ablauf
- *   wiederverwendet (Marge 60 s); parallele Anfragen teilen sich EINEN Abruf.
- * • NIE IN LOG ODER ANTWORT. Diese Datei schreibt nichts ins Log und gibt
- *   Fehler nur als feste Kennungen zurück. Der Token verlässt das Modul nur
- *   als Rückgabewert an den Aufrufer, der ihn in die Authorization-Kopfzeile
- *   setzt.
+ * • NIE IN LOG ODER ANTWORT. Diese Datei schreibt nichts ins Log. Der
+ *   Zugangs-Hash ist ein Schlüssel im Arbeitsspeicher; er wird nirgends
+ *   zurückgegeben und erscheint in keiner Diagnose.
  * ═══════════════════════════════════════════════════════════════════════ */
 
+import { createHash } from "node:crypto";
 import { envRead } from "./quantus-v3-auth.mjs";
 
 export const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 export const IDENTITY_SCOPE = "https://www.googleapis.com/auth/identitytoolkit";
 export const CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
 export const EXPIRY_MARGIN_MS = 60_000;
+export const MAX_CACHE_ENTRIES = 8;
 
 /* Nur Namen — hier steht nie ein Wert. */
 export const IDENTITY_ACCESS_VARS = Object.freeze({
@@ -68,13 +104,129 @@ export const IDENTITY_ACCESS_VARS = Object.freeze({
    dokumentierte Gate. */
 export const FIREBASE_TOKEN_EXPORT = "getIdentityAccessToken";
 
+/* Die einzigen Kennungen, die dieses Modul nach aussen gibt. */
+export const IDENTITY_ACCESS_ERRORS = Object.freeze([
+  "identity_access_not_configured",   // kein Weg vorhanden (Gate, siehe Kopf)
+  "identity_project_mismatch",        // v3- und Firebase-Projekt weichen ab
+  "identity_token_failed",            // der Erwerb schlug fehl (auch: Port wirft)
+  "identity_scope_missing",           // der Token trägt den nötigen Scope nicht
+  "identity_token_lifetime_invalid",  // Frist fehlt, ist negativ oder nicht endlich
+  "identity_token_expired",           // Frist liegt (fast) in der Vergangenheit
+]);
+const EIGENE_KENNUNGEN = new Set(IDENTITY_ACCESS_ERRORS);
+
+/*
+ * Ein Fehler ohne Erbe: Nachricht = Kennung, kein `cause`, kein `body`,
+ * nichts aus einer fremden Bibliothek.
+ */
 function fehler(code) {
-  return Object.assign(new Error(code), { code });
+  const err = new Error(code);
+  err.code = code;
+  return err;
+}
+
+/* Die Modulgrenze: was auch kommt, hinaus geht nur eine eigene Kennung. */
+function sichererFehler(ursache) {
+  const code = ursache && typeof ursache.code === "string" && EIGENE_KENNUNGEN.has(ursache.code)
+    ? ursache.code
+    : "identity_token_failed";
+  return fehler(code);
 }
 
 function scopeGenuegt(scopeText) {
   const teile = String(scopeText || "").split(/\s+/).filter(Boolean);
   return teile.includes(IDENTITY_SCOPE) || teile.includes(CLOUD_PLATFORM_SCOPE);
+}
+
+function digest(teile) {
+  return createHash("sha256").update(teile.map((t) => String(t == null ? "" : t)).join("\u0000"), "utf8").digest("hex");
+}
+
+/* ══ Der geteilte Tokenspeicher ════════════════════════════════════════════
+ *
+ * Er liegt im MODUL, nicht im Provider — sonst wirkte er nur innerhalb eines
+ * Requests (G-6). Schlüssel ist ein Abdruck über Projekt, Mandant, Scope,
+ * Quelle und Zugangskonfiguration; Wert ist Token, Frist und der laufende
+ * Abruf (für die Bündelung paralleler Anfragen).
+ * ─────────────────────────────────────────────────────────────────────── */
+const tokenCache = new Map();
+const portKennungen = new WeakMap();
+let portZaehler = 0;
+
+/* Eine stabile Kennung je Funktionsobjekt — dieselbe Funktion (also dieselbe
+   Tokenquelle) ergibt denselben Cache-Schlüssel, eine andere nicht. */
+function portKennung(fn) {
+  if (typeof fn !== "function") return "kein-port";
+  if (!portKennungen.has(fn)) portKennungen.set(fn, `port-${++portZaehler}`);
+  return portKennungen.get(fn);
+}
+
+/*
+ * Der Abdruck der AKTUELLEN Zugangskonfiguration. Er ist ein Hash — die
+ * Werte selbst werden nicht gespeichert, nicht zurückgegeben und nicht
+ * protokolliert. Ändern sich die Zugangsdaten, ändert sich der Schlüssel, und
+ * ein Token aus der alten Konfiguration wird nie weiterverwendet.
+ */
+function zugangsAbdruck(firebaseModule) {
+  let zugang = null;
+  try {
+    zugang = typeof firebaseModule?.userRefreshTokenFromEnv === "function"
+      ? firebaseModule.userRefreshTokenFromEnv()
+      : null;
+  } catch {
+    return "zugang-unbrauchbar";
+  }
+  if (!zugang) return "zugang-fehlt";
+  return digest(["refresh", zugang.source, zugang.clientId, zugang.clientSecret, zugang.refreshToken]);
+}
+
+function eintragFuer(abdruck) {
+  let eintrag = tokenCache.get(abdruck);
+  if (!eintrag) {
+    eintrag = { token: null, expiresAt: 0, inFlight: null };
+    tokenCache.set(abdruck, eintrag);
+    begrenze(abdruck);
+  }
+  return eintrag;
+}
+
+/* Begrenzt: ein Speicher ohne Obergrenze ist ein Leck. Verdrängt werden
+   zuerst die ältesten Einträge ohne laufenden Abruf. */
+function begrenze(schutz) {
+  if (tokenCache.size <= MAX_CACHE_ENTRIES) return;
+  for (const [schluessel, eintrag] of tokenCache) {
+    if (tokenCache.size <= MAX_CACHE_ENTRIES) break;
+    if (schluessel === schutz || eintrag.inFlight) continue;
+    tokenCache.delete(schluessel);
+  }
+}
+
+/* Dieselbe Schranke für jedes Token — Cache oder frisch erworben. */
+function nochBrauchbar(expiresAt, jetzt) {
+  const bis = Number(expiresAt);
+  return Number.isFinite(bis) && bis - EXPIRY_MARGIN_MS > jetzt;
+}
+
+/* Betrieb: einen Token ausdrücklich verwerfen (Zugangswechsel, Vorfall). */
+export function invalidateIdentityAccessCache() {
+  tokenCache.clear();
+}
+
+/* Nur für Tests — damit ein Lauf nicht den Speicher des vorigen erbt. */
+export function resetIdentityAccessCacheForTests() {
+  tokenCache.clear();
+}
+
+/* Diagnose ohne Werte: wie viele Einträge liegen da, und wie viele leben. */
+export function identityAccessCacheStats(now = () => Date.now()) {
+  const jetzt = now();
+  let brauchbar = 0;
+  let laufend = 0;
+  for (const eintrag of tokenCache.values()) {
+    if (eintrag.token && nochBrauchbar(eintrag.expiresAt, jetzt)) brauchbar++;
+    if (eintrag.inFlight) laufend++;
+  }
+  return { entries: tokenCache.size, usable: brauchbar, inFlight: laufend, limit: MAX_CACHE_ENTRIES };
 }
 
 /*
@@ -119,14 +271,10 @@ export function resolveIdentityAccessConfig(read = envRead) {
 
 /*
  * Der Provider. Rückgabe ist eine async Funktion, die ein Zugriffstoken
- * liefert oder mit einer festen Kennung scheitert:
- *   identity_access_not_configured  kein Weg vorhanden (Gate, siehe Kopf)
- *   identity_project_mismatch       v3- und Firebase-Projekt weichen ab
- *   identity_token_failed           der Tausch schlug fehl
- *   identity_scope_missing          der Token trägt den nötigen Scope nicht
- *
- * Fehlt die Konfiguration, ist das Ergebnis `null` — der Aufrufer (Laufzeit)
- * reicht dann KEINEN Lookup weiter, und C1 antwortet 503.
+ * liefert oder mit einer der Kennungen aus `IDENTITY_ACCESS_ERRORS`
+ * scheitert. Fehlt die Konfiguration oder gibt es überhaupt keinen Weg, ist
+ * das Ergebnis `null` — die Laufzeit verdrahtet dann KEINEN Lookup, und C1
+ * antwortet 503.
  */
 export function createAccessTokenProvider({
   read = envRead,
@@ -143,12 +291,22 @@ export function createAccessTokenProvider({
   const wege = identityAccessAvailability({ read, firebaseModule, obtainAccessToken });
   if (!wege.available) return null;
 
-  let cache = null;              // { token, expiresAt }
-  let inFlight = null;
-
   const ausFirebaseExport = typeof firebaseModule?.[FIREBASE_TOKEN_EXPORT] === "function"
     ? firebaseModule[FIREBASE_TOKEN_EXPORT]
     : null;
+  const quelle = typeof obtainAccessToken === "function"
+    ? "injected"
+    : (ausFirebaseExport ? `firebase:${FIREBASE_TOKEN_EXPORT}` : "oauth_refresh_exchange");
+
+  /* Der Cache-Schlüssel. Alles, was einen anderen Token bedeuten würde,
+     steht darin — Projekt, Mandant, Scope, Quelle, Portidentität, Verkehr und
+     die aktuelle Zugangskonfiguration. */
+  const abdruck = digest([
+    "quantus-v3-identity-access/1",
+    config.projectId, config.tenantId, IDENTITY_SCOPE, quelle,
+    portKennung(obtainAccessToken), portKennung(ausFirebaseExport), portKennung(fetchImpl),
+    zugangsAbdruck(firebaseModule),
+  ]);
 
   async function refreshTokenTausch() {
     if (typeof firebaseModule?.userRefreshTokenFromEnv !== "function") throw fehler("identity_access_not_configured");
@@ -184,52 +342,83 @@ export function createAccessTokenProvider({
     // die Zustimmung zu eng — dann lieber gar kein Token als einer, der bei
     // jedem Lookup 403 erzeugt.
     if (daten.scope != null && !scopeGenuegt(daten.scope)) throw fehler("identity_scope_missing");
-    const lebt = Number(daten.expires_in);
-    const dauerMs = Number.isFinite(lebt) && lebt > 0 ? lebt * 1000 : 3_600_000;
-    return { token, expiresAt: now() + dauerMs };
+    // KEINE erfundene Laufzeit (G-5): `expires_in` muss eine positive, endliche
+    // Zahl sein. Fehlt sie oder ist sie unbrauchbar, gilt der Token nicht.
+    const lebt = typeof daten.expires_in === "number" ? daten.expires_in : Number(daten.expires_in);
+    if (!Number.isFinite(lebt) || lebt <= 0) throw fehler("identity_token_lifetime_invalid");
+    return { token, expiresAt: now() + lebt * 1000 };
+  }
+
+  /* Eine Portantwort, die eine Frist NENNT — oder keine ist. */
+  function ausPortAntwort(ergebnis) {
+    if (!ergebnis || typeof ergebnis !== "object") throw fehler("identity_token_lifetime_invalid");
+    const token = typeof ergebnis.token === "string" ? ergebnis.token : "";
+    if (!token) throw fehler("identity_token_failed");
+    if (ergebnis.scope != null && !scopeGenuegt(ergebnis.scope)) throw fehler("identity_scope_missing");
+    const bis = typeof ergebnis.expiresAt === "number" ? ergebnis.expiresAt : Number(ergebnis.expiresAt);
+    if (!Number.isFinite(bis)) throw fehler("identity_token_lifetime_invalid");
+    return { token, expiresAt: bis };
   }
 
   async function hole() {
     if (typeof obtainAccessToken === "function") {
-      const ergebnis = await obtainAccessToken({ projectId: config.projectId, tenantId: config.tenantId, scope: IDENTITY_SCOPE });
-      if (!ergebnis) throw fehler("identity_token_failed");
-      if (typeof ergebnis === "string") return { token: ergebnis, expiresAt: now() + 300_000 };
-      const token = typeof ergebnis.token === "string" ? ergebnis.token : "";
-      if (!token) throw fehler("identity_token_failed");
-      if (ergebnis.scope != null && !scopeGenuegt(ergebnis.scope)) throw fehler("identity_scope_missing");
-      const bis = Number(ergebnis.expiresAt);
-      return { token, expiresAt: Number.isFinite(bis) ? bis : now() + 300_000 };
+      return ausPortAntwort(await obtainAccessToken({
+        projectId: config.projectId, tenantId: config.tenantId, scope: IDENTITY_SCOPE,
+      }));
     }
     if (ausFirebaseExport) {
-      const ergebnis = await ausFirebaseExport({ scope: IDENTITY_SCOPE, projectId: config.projectId });
-      const token = typeof ergebnis === "string" ? ergebnis : (ergebnis && typeof ergebnis.token === "string" ? ergebnis.token : "");
-      if (!token) throw fehler("identity_token_failed");
-      if (ergebnis && ergebnis.scope != null && !scopeGenuegt(ergebnis.scope)) throw fehler("identity_scope_missing");
-      const bis = ergebnis && Number(ergebnis.expiresAt);
-      return { token, expiresAt: Number.isFinite(bis) ? bis : now() + 300_000 };
+      return ausPortAntwort(await ausFirebaseExport({ scope: IDENTITY_SCOPE, projectId: config.projectId }));
     }
     return refreshTokenTausch();
   }
 
-  const provider = async function getAccessToken() {
-    if (cache && cache.expiresAt - EXPIRY_MARGIN_MS > now()) return cache.token;
-    // Parallele Anfragen teilen sich EINEN Abruf. Der Fehlerfall wird nicht
-    // gecacht: der nächste Aufruf darf es erneut versuchen.
-    if (!inFlight) {
-      inFlight = hole()
-        .then((frisch) => { cache = frisch; return frisch.token; })
-        .finally(() => { inFlight = null; });
+  /*
+   * Erwerb und Prüfung in einem. Die Schranke wird NACH dem Erwerb mit
+   * FRISCHER Zeit gezogen (G-4): ein Erwerb, der zwei Minuten dauert, darf
+   * kein Token liefern, das inzwischen abgelaufen ist.
+   */
+  async function holeGeprueft() {
+    let frisch;
+    try {
+      frisch = await hole();
+    } catch (ursache) {
+      throw sichererFehler(ursache);       // Modulgrenze (G-7/G-8)
     }
-    return inFlight;
+    if (!nochBrauchbar(frisch.expiresAt, now())) throw fehler("identity_token_expired");
+    return frisch;
+  }
+
+  const provider = async function getAccessToken() {
+    const eintrag = eintragFuer(abdruck);
+    if (eintrag.token && nochBrauchbar(eintrag.expiresAt, now())) return eintrag.token;
+    // Ein abgelaufener Stand wird NICHT weiterbenutzt, auch nicht „nur diesmal".
+    if (!eintrag.inFlight) {
+      eintrag.token = null;
+      eintrag.expiresAt = 0;
+      // Parallele Anfragen — auch aus verschiedenen Requests — teilen EINEN
+      // Abruf. Der Fehlerfall wird nicht gecacht.
+      eintrag.inFlight = holeGeprueft().then(
+        (frisch) => {
+          eintrag.token = frisch.token;
+          eintrag.expiresAt = frisch.expiresAt;
+          eintrag.inFlight = null;
+          return frisch.token;
+        },
+        (err) => {
+          eintrag.inFlight = null;
+          throw sichererFehler(err);
+        },
+      );
+    }
+    return eintrag.inFlight;
   };
 
   provider.projectId = config.projectId;
   provider.tenantId = config.tenantId;
   provider.scope = IDENTITY_SCOPE;
-  /* Für Diagnose: WELCHER Weg gilt — ohne je einen Wert zu nennen. */
-  provider.source = typeof obtainAccessToken === "function"
-    ? "injected"
-    : (ausFirebaseExport ? `firebase:${FIREBASE_TOKEN_EXPORT}` : "oauth_refresh_exchange");
+  /* Für Diagnose: WELCHER Weg gilt — ohne je einen Wert zu nennen. Der
+     Cache-Abdruck wird bewusst NICHT nach aussen gegeben. */
+  provider.source = quelle;
   return provider;
 }
 
@@ -257,5 +446,7 @@ export function identityAccessAvailability({ read = envRead, firebaseModule = nu
 
 export default {
   createAccessTokenProvider, resolveIdentityAccessConfig, identityAccessAvailability,
-  firebaseProjectIdFrom, IDENTITY_ACCESS_VARS, IDENTITY_SCOPE, FIREBASE_TOKEN_EXPORT, EXPIRY_MARGIN_MS,
+  firebaseProjectIdFrom, invalidateIdentityAccessCache, resetIdentityAccessCacheForTests,
+  identityAccessCacheStats, IDENTITY_ACCESS_VARS, IDENTITY_SCOPE, FIREBASE_TOKEN_EXPORT,
+  EXPIRY_MARGIN_MS, MAX_CACHE_ENTRIES, IDENTITY_ACCESS_ERRORS,
 };

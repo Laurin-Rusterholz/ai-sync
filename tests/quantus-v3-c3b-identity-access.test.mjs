@@ -121,7 +121,11 @@ test("die Reihenfolge der Wege ist fest: injiziert, Export, Refresh-Tausch", asy
     read: umgebung(),
     firebaseModule: {
       ...firebaseMitRefresh(),
-      [FIREBASE_TOKEN_EXPORT]: async ({ scope }) => { spur2.push(`export:${scope}`); return { token: "token-export", scope: CLOUD_PLATFORM_SCOPE }; },
+      [FIREBASE_TOKEN_EXPORT]: async ({ scope }) => {
+        spur2.push(`export:${scope}`);
+        // Wer ein Token liefert, nennt seine Frist — auch der Export.
+        return { token: "token-export", scope: CLOUD_PLATFORM_SCOPE, expiresAt: Date.now() + 600_000 };
+      },
     },
     fetchImpl: async () => { spur2.push("netz"); return tokenAntwort(); },
   });
@@ -239,9 +243,9 @@ test("kein Token in Fehlern, kein Log, keine zweite Credentiallogik", async () =
   for (const v of ["createSign", "private_key", "jwt-bearer", "assertion", "?key=", "apiKey"]) {
     assert.ok(!code.includes(v), `das Modul enthält ${v}`);
   }
-  // Und es importiert nichts ausser dem eigenen Paket.
+  // Und es importiert nichts ausser dem eigenen Paket und der Standardbibliothek.
   for (const [, spec] of code.matchAll(/from\s+"([^"]+)"/g)) {
-    assert.ok(spec.startsWith("./quantus-v3-"), `unerwarteter Import ${spec}`);
+    assert.ok(spec.startsWith("./quantus-v3-") || spec === "node:crypto", `unerwarteter Import ${spec}`);
   }
   assert.ok(code.includes(IDENTITY_ACCESS_VARS.projectId));
 });
