@@ -9,21 +9,32 @@
  * abgeleitete Zahl.
  * ═════════════════════════════════════════════════════════════════════════ */
 import { COST_POLICY_SCHEMA } from "../../../netlify/lib/quantus-v3-runtime-state.mjs";
-import { availablePort, unavailablePort } from "./ports.mjs";
+import { availablePort } from "./ports.mjs";
 
+/* Der Dienst (`server.mjs`) ist ein LANGLEBIGER Prozess (Cloud Run/Node,
+ * nicht eine Netlify-Function pro Aufruf) — `createEnvCostPolicyPort` wird
+ * EINMAL beim Start aufgerufen, `.load()` aber vor JEDEM Reservieren/Senden
+ * (`cost-adapter.mjs` `ladePolicy()`). Frueher wurde die Umgebungsvariable
+ * nur beim Bau des Ports gelesen und das Ergebnis eingefroren zurueckgegeben
+ * — ein Widerruf oder eine Preisaenderung waere bis zum naechsten
+ * Prozessneustart unsichtbar geblieben. `.load()` liest jetzt bei JEDEM
+ * Aufruf frisch, deshalb ist der Port immer "verfuegbar"; fehlt/ungueltig
+ * ist die Variable GERADE JETZT, liefert `.load()` `null` — genau der
+ * Vertrag, den `cost-adapter.mjs` bereits kennt (503 `cost_policy_unavailable`). */
 export function createEnvCostPolicyPort(envRead, envName = "QUANTUS_V3_COST_POLICY_JSON") {
-  const raw = envRead(envName);
-  if (typeof raw !== "string" || !raw.trim()) return unavailablePort("costPolicy", "cost_policy_not_configured");
-  let parsed;
-  try { parsed = JSON.parse(raw); } catch { return unavailablePort("costPolicy", "cost_policy_json_invalid"); }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return unavailablePort("costPolicy", "cost_policy_json_invalid");
-  // `schema` wird hier gesetzt, nicht vom Betreiber verlangt — alles
-  // andere (Preise, Limits, Freigabe, Gueltigkeit) muss die Variable tragen.
-  const policy = Object.freeze({ ...parsed, schema: COST_POLICY_SCHEMA });
+  function leseFrisch() {
+    const raw = envRead(envName);
+    if (typeof raw !== "string" || !raw.trim()) return null;
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch { return null; }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    // `schema` wird hier gesetzt, nicht vom Betreiber verlangt — alles
+    // andere (Preise, Limits, Freigabe, Gueltigkeit) muss die Variable tragen.
+    return Object.freeze({ ...parsed, schema: COST_POLICY_SCHEMA });
+  }
   return availablePort("costPolicy", {
-    // `now`/`step` werden bewusst ignoriert: die Richtlinie ist das, was in
-    // der Konfiguration steht, und wird bei jedem Aufruf frisch aus ihr
-    // gelesen (kein Zwischenspeicher, der einen Widerruf verdecken koennte).
-    async load() { return policy; },
+    // `now`/`step` werden bewusst ignoriert: die Richtlinie ist das, was
+    // JETZT in der Konfiguration steht — bei jedem Aufruf frisch gelesen.
+    async load() { return leseFrisch(); },
   });
 }

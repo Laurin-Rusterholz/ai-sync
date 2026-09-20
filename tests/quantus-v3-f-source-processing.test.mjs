@@ -22,6 +22,7 @@ import { createGmailSourceReader } from "../runtime/quantus-v3/src/gmail-source.
 import { createAnthropicTransport } from "../runtime/quantus-v3/src/anthropic-transport.mjs";
 import { createSectionWorkProvider, SOURCE_ID } from "../runtime/quantus-v3/src/section-work.mjs";
 import { availablePort } from "../runtime/quantus-v3/src/ports.mjs";
+import * as E1 from "../netlify/lib/quantus-v3-runtime-state.mjs";
 
 const DATE = "2026-09-21";
 const T_START = PLAN.wallTimeToMs(DATE, 4, 0) + 1_000;
@@ -280,4 +281,128 @@ test("F: ohne freigegebene Kostenrichtlinie bleibt der Lauf ehrlich ohne Entwurf
   const run = data8.dailyBriefing.assistantRuns[DATE];
   assert.equal(run.sourceChecks[SOURCE_ID].outcome, "ok", "die Quelle selbst wurde ja gelesen");
   assert.equal(Boolean(data8.entities.chatgptNotes[`v3-draft:${RUNKEY}`]), false, "ohne Kostenfreigabe darf kein Entwurf vorgetaeuscht werden");
+});
+
+/* ── Unabhaengiges Review von 4182e8f, Befund 1: der echte Modelltext wurde
+ * NIE persistiert (`claimAndDispatch` liefert kein `draftText`) — die Notiz
+ * stand mit leerem Text. Jetzt wird sie INNERHALB von `send()` geschrieben,
+ * VOR der Kostenabrechnung. ────────────────────────────────────────────── */
+test("F-Review #1: der tatsaechliche, nicht-leere Modelltext steht unveraendert in der persistierten Notiz", async (t) => {
+  const gmail = await gmailServer({ messages: { m1: { id: "m1", threadId: "m1", internalDate: String(T_START), snippet: "x", payload: { headers: [] } } } });
+  const anthropic = await anthropicServer({ respond: () => ({ status: 200, body: { id: "msg_x", content: [{ type: "text", text: "Eindeutiger Testtext 7f3a." }], usage: { input_tokens: 500, output_tokens: 50 } } }) });
+  t.after(async () => { await gmail.close(); await anthropic.close(); });
+  const cp = livePolicy();
+  const { service, core, startToken } = await runSlot((core, clock) => buildSectionWork({ gmailBase: gmail.base, anthropicBase: anthropic.base, costPolicy: cp }, core, clock), cp);
+  t.after(() => service.close());
+  const res = await service.post("/v3/slot/start", { token: startToken(), body: { slot: "briefing04" } });
+  assert.equal(res.status, 200, res.text);
+  const note = core.store.snapshot().entities.chatgptNotes[`v3-draft:${RUNKEY}`];
+  assert.ok(note, "die Notiz muss stehen");
+  assert.match(note.instruction, /Eindeutiger Testtext 7f3a\./, "der echte Modelltext (nicht leer) muss unveraendert in der Notiz stehen: " + JSON.stringify(note));
+  // "Reload": ein zweites Lesen desselben Bestands liefert denselben Text.
+  const reread = core.store.snapshot().entities.chatgptNotes[`v3-draft:${RUNKEY}`];
+  assert.equal(reread.instruction, note.instruction);
+});
+
+/* ── Befund 2: format=metadata lieferte nur Betreff+Auszug, kein echter
+ * Volltext; eine vorhandene attachmentId allein durfte nicht "ok" bedeuten.
+ * ────────────────────────────────────────────────────────────────────── */
+test("F-Review #2: voller MIME-Volltext geht in die Modellanfrage ein; ein Anhang MIT attachmentId bleibt trotzdem 'partial'", async (t) => {
+  const body64 = Buffer.from("Wichtiger Volltext-Inhalt der Nachricht.", "utf8").toString("base64url");
+  const gmail = await gmailServer({ messages: { m1: {
+    id: "m1", threadId: "m1", internalDate: String(T_START), snippet: "kurz",
+    payload: {
+      headers: [{ name: "Subject", value: "Betreff" }],
+      mimeType: "multipart/mixed",
+      parts: [
+        { mimeType: "text/plain", body: { data: body64 } },
+        { filename: "anhang.pdf", mimeType: "application/pdf", body: { size: 42, attachmentId: "att-1" } },
+      ],
+    },
+  } } });
+  const captured = [];
+  const anthropic = await anthropicServer({ captured });
+  t.after(async () => { await gmail.close(); await anthropic.close(); });
+  const cp = livePolicy();
+  const { service, core, startToken } = await runSlot((core, clock) => buildSectionWork({ gmailBase: gmail.base, anthropicBase: anthropic.base, costPolicy: cp }, core, clock), cp);
+  t.after(() => service.close());
+  const res = await service.post("/v3/slot/start", { token: startToken(), body: { slot: "briefing04" } });
+  assert.equal(res.status, 200, res.text);
+  const run = core.store.snapshot().dailyBriefing.assistantRuns[DATE];
+  assert.equal(run.sourceChecks[SOURCE_ID].outcome, "partial", "eine attachmentId allein macht die Nachricht nicht 'ok': " + JSON.stringify(run.sourceChecks));
+  assert.equal(captured.length, 1);
+  assert.match(captured[0].body.messages[0].content, /Wichtiger Volltext-Inhalt der Nachricht\./, "der volle Nachrichtentext muss in der Anfrage stehen");
+});
+
+/* ── Befund 3+4: `messages.length<10` verwarf Nachrichten stumm, waehrend
+ * `ok`/Wasserzeichen trotzdem weiterliefen. Jetzt: ehrlich `partial`, kein
+ * Fortschritt des Wasserzeichens. ─────────────────────────────────────── */
+test("F-Review #3+4: mehr Nachrichten als das Mengenlimit werden ehrlich 'partial', das Wasserzeichen wandert nicht weiter", async (t) => {
+  const ids1 = Array.from({ length: 25 }, (_, i) => `m${i + 1}`);
+  const ids2 = Array.from({ length: 20 }, (_, i) => `m${i + 26}`);
+  const gmail = await gmailServer({ pages: [{ ids: ids1, next: "p2" }, { ids: ids2, next: null }] });
+  t.after(() => gmail.close());
+  const cp = livePolicy();
+  const { service, core, startToken } = await runSlot((core, clock) => buildSectionWork({ gmailBase: gmail.base, costPolicy: cp }, core, clock), cp);
+  t.after(() => service.close());
+  const res = await service.post("/v3/slot/start", { token: startToken(), body: { slot: "briefing04" } });
+  assert.equal(res.status, 200, res.text);
+  const data = core.store.snapshot();
+  const check = data.dailyBriefing.assistantRuns[DATE].sourceChecks[SOURCE_ID];
+  assert.equal(check.outcome, "partial", "ueber dem Mengenlimit darf das Ergebnis nicht 'ok' sein: " + JSON.stringify(check));
+  const cursor = JSON.parse(check.cursor);
+  assert.equal(cursor.sinceMs, null, "das Wasserzeichen darf bei 'partial' nicht weiterwandern");
+});
+
+/* ── Befund 7: die Fuehrung wurde aus dem AKTUELL gespeicherten Bestand
+ * gelesen statt an die urspruengliche Fence des Aufrufers gebunden — ein
+ * alter Arbeiter konnte so die Identitaet eines neueren Halters uebernehmen.
+ * ────────────────────────────────────────────────────────────────────── */
+test("F-Review #7: ein alter Arbeiter mit veralteter Fence kann nicht mehr unter fremder Identitaet schreiben", async (t) => {
+  const gmail = await gmailServer({ messages: { m1: { id: "m1", threadId: "m1", internalDate: String(T_START), snippet: "x", payload: { headers: [] } } } });
+  t.after(() => gmail.close());
+  const cp = livePolicy();
+  const clock = F.createClock(T_START);
+  const core = F.createCorePort(F.createCasStore(seedCore()));
+  const leaseScope = `${F.TENANT}:mainrun`;
+  const acq1 = F.casMutate(core.store, (data) => E1.acquireLease(data, { now: clock.value, holder: "worker-old", scope: leaseScope, ttlMs: E1.LEASE_TTL_MS }));
+  assert.equal(acq1.result.ok, true, JSON.stringify(acq1.result));
+  const gmailSource = createGmailSourceReader({ getAccessToken: async () => ({ token: "t" }), apiBase: gmail.base });
+  const anthropic = createAnthropicTransport({ apiKey: "k", model: "claude-sonnet-5", modelPricing: MODEL_PRICING, apiBase: "http://127.0.0.1:1" });
+  const provider = createSectionWorkProvider({
+    corePort: core.port.impl, costPolicyPort: cp.impl, clockPort: clock.port.impl,
+    gmailSource, anthropic, leaseScope, policy: POLICY,
+    runtimeConfig: { mode: "live", allowExternalEffects: true, gatesComplete: true },
+  });
+  const step1 = await provider.impl.next({ runKey: RUNKEY, sectionId: "gmail", cursor: null, now: clock.value, signal: undefined });
+  assert.equal(step1.done, false);
+  assert.equal(step1.cursor.phase, "finalize", JSON.stringify(step1));
+  // Die Pacht laeuft ab und geht an einen NEUEN Arbeiter mit hoeherer Fence.
+  clock.advance(E1.LEASE_TTL_MS + 1000);
+  const acq2 = F.casMutate(core.store, (data) => E1.acquireLease(data, { now: clock.value, holder: "worker-new", scope: leaseScope, ttlMs: E1.LEASE_TTL_MS }));
+  assert.equal(acq2.result.ok, true, JSON.stringify(acq2.result));
+  assert.notEqual(acq2.result.fence, acq1.result.fence, "die neue Pacht muss eine hoehere Fence erhalten");
+  // Der ALTE Arbeiter versucht, mit seinem (jetzt veralteten) Fortsetzungsstand weiterzuschreiben.
+  await assert.rejects(
+    () => provider.impl.next({ runKey: RUNKEY, sectionId: "finalize", cursor: step1.cursor, now: clock.value, signal: undefined }),
+    (err) => { assert.equal(err.status, 409, JSON.stringify(err)); return true; },
+    "ein Fortsetzungsversuch unter der alten Fence muss abgelehnt werden, nicht unter der Identitaet des neuen Halters schreiben",
+  );
+  assert.equal(core.store.snapshot().dailyBriefing.assistantRuns[DATE].sourceChecks[SOURCE_ID], undefined, "es darf KEINE Quellenpruefung unter der fremden Fence geschrieben worden sein");
+});
+
+/* ── Befund 6: Fehler beim Reservieren/Senden wurden als `done:true`
+ * geschluckt, ohne Spur. Jetzt: `recordRunEvent` haelt den Grund sichtbar
+ * fest. ──────────────────────────────────────────────────────────────── */
+test("F-Review #6: eine fehlgeschlagene Reservierung bleibt als Ereignis sichtbar, statt spurlos zu verschwinden", async (t) => {
+  const gmail = await gmailServer({ messages: { m1: { id: "m1", threadId: "m1", internalDate: String(T_START), snippet: "teuer", payload: { headers: [] } } } });
+  const anthropic = await anthropicServer({});
+  t.after(async () => { await gmail.close(); await anthropic.close(); });
+  const cp = livePolicy({ callLimitMicros: 1, models: { "anthropic:claude-sonnet-5": { inputMicrosPerMillionTokens: MODEL_PRICING.inputMicrosPerMillionTokens, outputMicrosPerMillionTokens: MODEL_PRICING.outputMicrosPerMillionTokens, maxCallMicros: 1 } } });
+  const { service, core, startToken } = await runSlot((core, clock) => buildSectionWork({ gmailBase: gmail.base, anthropicBase: anthropic.base, costPolicy: cp }, core, clock), cp);
+  t.after(() => service.close());
+  const res = await service.post("/v3/slot/start", { token: startToken(), body: { slot: "briefing04" } });
+  assert.equal(res.status, 200, res.text);
+  const run = core.store.snapshot().dailyBriefing.assistantRuns[DATE];
+  assert.ok(Array.isArray(run.events) && run.events.some((e) => e.event === "reserve_failed"), "die fehlgeschlagene Reservierung muss als Lauf-Ereignis sichtbar bleiben: " + JSON.stringify(run.events));
 });

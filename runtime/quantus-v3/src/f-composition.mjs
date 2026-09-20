@@ -50,7 +50,12 @@ export async function createFSourcePorts({ config, corePort, clockPort, envRead 
   let sectionWork;
   try {
     sectionWork = createSectionWorkProvider({
-      corePort, costPolicyPort: costPolicy.available ? costPolicy.impl : { async load() { return null; } },
+      // `costPolicy` ist jetzt immer verfuegbar (s. cost-policy-port.mjs) —
+      // `.load()` selbst meldet frisch, ob GERADE JETZT eine gueltige
+      // Richtlinie konfiguriert ist. Der frueher hier gebaute always-null-
+      // Ersatz haette eine spaeter (im selben warmen Prozess) gesetzte
+      // Variable nie mehr gesehen.
+      corePort, costPolicyPort: costPolicy.impl,
       clockPort, gmailSource, anthropic, leaseScope: config.leaseScope, policy: policyResult.policy,
       runtimeConfig: config,
     });

@@ -80,9 +80,16 @@ function appWith(data) {
 }
 
 // ── 3) Persistierter Entwurf wird unveraendert angezeigt, referenziert die Quelle ──
+// Echtes Id-Schema aus section-work.mjs: "v3-draft:<tenant>:<date>:<slot>:<policyVersion>"
+// (chatgptNoteBauen-Form, kein erfundenes Fixture) — s. Review-Befund F/G #8.
+const REAL_RUN_KEY = "quantus:2026-09-21:briefing04:3";
 {
   const data = appWith({
-    entities: { chatgptNotes: { "v3-draft:x": { kind: "assistantEntry", content: "Quelle gmail (ok), 2 Beleg(e): Zusammenfassung des Tages.", assistantNote: { runDate: "2026-09-21" } } } },
+    entities: { chatgptNotes: { ["v3-draft:" + REAL_RUN_KEY]: {
+      id: "v3-draft:" + REAL_RUN_KEY, kind: "assistantEntry",
+      instruction: "Quelle gmail (ok), 2 Beleg(e): Zusammenfassung des Tages.",
+      assistantNote: { runDate: "2026-09-21" }, createdAt: "2026-09-21T04:02:05.000Z", updatedAt: "2026-09-21T04:02:05.000Z",
+    } } },
     dailyBriefing: { assistantRuns: { "2026-09-21": { sourceChecks: { gmail: { outcome: "ok", checkedAt: "2026-09-21T04:02:00.000Z" } } } } },
   });
   const html = loadRenderer()(data)("2026-09-21");
@@ -93,6 +100,42 @@ function appWith(data) {
   const data = appWith({ entities: { chatgptNotes: {} }, dailyBriefing: { assistantRuns: { "2026-09-21": { sourceChecks: {} } } } });
   const html = loadRenderer()(data)("2026-09-21");
   ok(/noch kein Entwurf/i.test(html), "ohne Entwurf muss das ehrlich sichtbar sein");
+}
+{
+  // Review-Befund F/G #8: eine ANDERE assistantEntry-Notiz desselben Tages
+  // (z. B. eine Startnotiz, nicht vom v3-Lauf erzeugt) darf NICHT als
+  // Entwurf erscheinen — nur die exakte "v3-draft:"-Notiz mit passendem
+  // Datum im Id-Schema zaehlt.
+  const data = appWith({
+    entities: { chatgptNotes: {
+      "manual-start-note-2026-09-21": { id: "manual-start-note-2026-09-21", kind: "assistantEntry", instruction: "Falscher Treffer: das ist keine Entwurfsnotiz.", assistantNote: { runDate: "2026-09-21" } },
+    } },
+    dailyBriefing: { assistantRuns: { "2026-09-21": { sourceChecks: { gmail: { outcome: "ok", checkedAt: "2026-09-21T04:02:00.000Z" } } } } },
+  });
+  const html = loadRenderer()(data)("2026-09-21");
+  ok(!html.includes("Falscher Treffer"), `eine fremde assistantEntry-Notiz darf nicht als Entwurf erscheinen: ${html}`);
+  ok(/noch kein Entwurf/i.test(html), "ohne echte v3-draft-Notiz muss ehrlich 'noch kein Entwurf' stehen");
+}
+{
+  // Mehrere Slots desselben Tages: die NEUESTE (hoechstes updatedAt) wird gezeigt.
+  const data = appWith({
+    entities: { chatgptNotes: {
+      "v3-draft:quantus:2026-09-21:briefing04:3": { id: "v3-draft:quantus:2026-09-21:briefing04:3", kind: "assistantEntry", instruction: "Alter Entwurf 04 Uhr.", assistantNote: { runDate: "2026-09-21" }, updatedAt: "2026-09-21T04:02:00.000Z" },
+      "v3-draft:quantus:2026-09-21:briefing14:3": { id: "v3-draft:quantus:2026-09-21:briefing14:3", kind: "assistantEntry", instruction: "Neuerer Entwurf 14 Uhr.", assistantNote: { runDate: "2026-09-21" }, updatedAt: "2026-09-21T14:02:00.000Z" },
+    } },
+    dailyBriefing: { assistantRuns: { "2026-09-21": { sourceChecks: {} } } },
+  });
+  const html = loadRenderer()(data)("2026-09-21");
+  ok(html.includes("Neuerer Entwurf 14 Uhr."), `der neueste Entwurf haette gezeigt werden muessen: ${html}`);
+  ok(!html.includes("Alter Entwurf 04 Uhr."), "nur EIN Entwurf darf angezeigt werden, nicht beide");
+}
+
+// ── 3b) Die Anzeige behauptet keine bestaetigte Serverfrische ────────────
+{
+  const data = appWith({ entities: { chatgptNotes: {} }, dailyBriefing: { assistantRuns: { "2026-09-21": { sourceChecks: {} } } } });
+  const html = loadRenderer()(data)("2026-09-21");
+  ok(!/bestätigt.*server|server.*bestätigt/i.test(html), "die Anzeige darf keine bestaetigte Serverfrische behaupten");
+  ok(/letzten Synchronisierung/i.test(html), "ein ehrlicher Hinweis auf den Sync-Stand muss sichtbar sein");
 }
 
 // ── 4) HTML-Escaping: eine Quellen-Id/Detail mit Markup wird nicht ausgefuehrt ──
