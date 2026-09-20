@@ -68,6 +68,7 @@ import { applyCommand } from "../../../netlify/lib/assistant-core.mjs";
 import { validatePolicy } from "../../../netlify/lib/assistant-schema.mjs";
 import { DOMAIN_PORT_VARS } from "../../../netlify/lib/quantus-v3-domain-adapter.mjs";
 import { createCostAdapter } from "./cost-adapter.mjs";
+import { MONTHLY_CAP_MICROS } from "./monthly-cost-cap.mjs";
 import { estimateRequestTokenCap, MAX_SOURCE_BLOCKS } from "./anthropic-transport.mjs";
 import { availablePort, unavailablePort } from "./ports.mjs";
 import { HttpError } from "./errors.mjs";
@@ -345,7 +346,12 @@ export function createSectionWorkProvider({
         const datum = localDateOfRunKey(runKey);
         if (!datum) throw new HttpError(500, "run_key_invalid", { runKey });
         const ctx = kostenCtx(jetzt0, verifiedScope, `draft:${runKey}`);
-        const adapter = createCostAdapter(ctx);
+        // Explizite, vom Nutzer beauftragte globale $50/Kalendermonat-
+        // Betriebs-Kostengrenze — getrennt von jeder Cost-Policy-Grenze,
+        // atomar geprueft innerhalb derselben CAS-Mutation wie die
+        // Reservierung selbst (monthly-cost-cap.mjs). Nicht ueber Umgebung/
+        // UI/Modelltext veraenderbar.
+        const adapter = createCostAdapter(ctx, { monthlyCap: { capMicros: MONTHLY_CAP_MICROS } });
         const callId = `draft:${runKey}`;
         // Dieselbe Anfrage (System + Nutzerinhalt), die der Transport
         // TATSAECHLICH sendet — keine separate, driftende Schaetzung

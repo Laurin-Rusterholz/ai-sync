@@ -33,8 +33,8 @@ const ok = (condition, message) => { assert.ok(condition, message); checks++; };
 
 // ── Extraktion der echten Funktion ────────────────────────────────────────
 function loadRenderer() {
-  const start = index.indexOf("function renderV3AutomationStatus(selectedDate) {");
-  ok(start > 0, "renderV3AutomationStatus() wurde nicht gefunden");
+  const start = index.indexOf("const V3_MONTHLY_CAP_MICROS = 50_000_000;");
+  ok(start > 0, "die Betriebs-Kostenfreigabe (V3_MONTHLY_CAP_MICROS) wurde nicht gefunden");
   const end = index.indexOf("\nfunction viewDailyBriefing() {", start);
   ok(end > start, "Ende von renderV3AutomationStatus() nicht bestimmbar");
   const escStart = index.indexOf("\nfunction esc(s){");
@@ -53,7 +53,13 @@ function appWith(data) {
   const render = loadRenderer()(appWith({ entities: {}, dailyBriefing: {} }));
   const html = render("2026-09-21");
   ok(/noch kein automatischer Lauf/i.test(html), `ohne Lauf fehlt der ehrliche Hinweis: ${html}`);
-  ok(!/✅|⚠️|🔒|📡|💸/.test(html), "ohne echten Lauf duerfen keine Status-Symbole erscheinen");
+  // Quellen-spezifische Symbole (echter Lauf) duerfen ohne Lauf nicht
+  // erscheinen. Das Budget-Symbol (💰/⚠️/🔒) ist davon ausgenommen: die
+  // Betriebs-Kostenfreigabe muss read-only sichtbar bleiben, AUCH ohne
+  // Lauf des Tages und selbst wenn das Monatslimit einen Modell-Stopp
+  // ausloest.
+  ok(!/✅|📡|💸/.test(html), "ohne echten Lauf duerfen keine QUELLEN-Status-Symbole erscheinen");
+  ok(/\$0\.00 \/ \$50\.00/.test(html), `die Budget-Anzeige muss auch ohne Lauf sichtbar sein: ${html}`);
 }
 {
   // Auch ganz ohne automation/dailyBriefing (frischer, nie synchronisierter Client).
@@ -146,6 +152,55 @@ const REAL_RUN_KEY = "quantus:2026-09-21:briefing04:3";
   });
   const html = loadRenderer()(data)("2026-09-21");
   ok(!html.includes("<img src=x"), "eine boesartige Quellen-Id darf nicht ungeprueft ins HTML gelangen");
+}
+
+// ── 5) Betriebs-Kostenfreigabe: $30-Warnung / $50-Sperre, IMMER sichtbar ──
+// (Nutzeranfrage: explizite globale $50/Monat-Grenze, $30-Warnung, read-only
+// sichtbar auch bei aktivem Modell-Stopp.)
+const AKTUELLER_MONAT = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Zurich" }).format(new Date()).slice(0, 7);
+function kostenBestand(callsById) {
+  return appWith({ entities: {}, automation: { runtime: { cost: { callsById } } }, dailyBriefing: {} });
+}
+{
+  const data = kostenBestand({});
+  const html = loadRenderer()(data)("2026-09-21");
+  ok(/\$0\.00 \/ \$50\.00/.test(html), `ohne Kosten muss $0.00 von $50.00 stehen: ${html}`);
+  ok(!/Warnschwelle erreicht/i.test(html) && !/Monatslimit erreicht/i.test(html), "ohne Kosten darf weder gewarnt noch gesperrt werden");
+}
+{
+  // $32 settled — ueber der $30-Warnschwelle, unter der $50-Grenze.
+  const data = kostenBestand({ c1: { billingLocalDate: `${AKTUELLER_MONAT}-05`, state: "settled", maxMicros: 32_000_000, settledMicros: 32_000_000 } });
+  const html = loadRenderer()(data)("2026-09-21");
+  ok(/\$32\.00 \/ \$50\.00/.test(html), `die Summe muss $32.00 zeigen: ${html}`);
+  ok(/Warnschwelle erreicht/i.test(html), "ab $30 muss die Warnung sichtbar sein");
+  ok(!/Monatslimit erreicht/i.test(html), "unter $50 darf nicht gesperrt sein");
+}
+{
+  // $52 (reserved, worst case) — ueber der $50-Grenze: gesperrt.
+  const data = kostenBestand({ c1: { billingLocalDate: `${AKTUELLER_MONAT}-05`, state: "reserved", maxMicros: 52_000_000, settledMicros: 0 } });
+  const html = loadRenderer()(data)("2026-09-21");
+  ok(/\$52\.00 \/ \$50\.00/.test(html), `die Summe muss $52.00 (worst case, reserviert) zeigen: ${html}`);
+  ok(/Monatslimit erreicht/i.test(html), "ab $50 muss die Sperre sichtbar sein");
+}
+{
+  // Ein Anspruch aus einem ANDEREN Kalendermonat zaehlt NICHT zum aktuellen Monat.
+  const data = kostenBestand({ alt: { billingLocalDate: "2000-01-05", state: "settled", maxMicros: 45_000_000, settledMicros: 45_000_000 } });
+  const html = loadRenderer()(data)("2026-09-21");
+  ok(/\$0\.00 \/ \$50\.00/.test(html), `ein Anspruch aus einem anderen Kalendermonat darf nicht mitzaehlen: ${html}`);
+}
+{
+  // "released" zaehlt nicht.
+  const data = kostenBestand({ c1: { billingLocalDate: `${AKTUELLER_MONAT}-05`, state: "released", maxMicros: 45_000_000, settledMicros: 0 } });
+  const html = loadRenderer()(data)("2026-09-21");
+  ok(/\$0\.00 \/ \$50\.00/.test(html), `ein freigegebener (nicht abgerechneter) Anspruch darf nicht mitzaehlen: ${html}`);
+}
+{
+  // Read-only trotz Sperre: die Budgetanzeige bleibt sichtbar, auch OHNE
+  // Lauf des Tages und waehrend die Sperre aktiv ist.
+  const data = kostenBestand({ c1: { billingLocalDate: `${AKTUELLER_MONAT}-05`, state: "settled", maxMicros: 60_000_000, settledMicros: 60_000_000 } });
+  const html = loadRenderer()(data)("2026-09-21");
+  ok(/noch kein automatischer Lauf/i.test(html), "auch bei aktiver Sperre bleibt der ehrliche Hinweis ohne Lauf sichtbar");
+  ok(/Monatslimit erreicht/i.test(html), "die Sperre bleibt trotzdem sichtbar (read-only)");
 }
 
 console.log(`quantus-v3-briefing-status-ui: ${checks} checks passed`);

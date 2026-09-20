@@ -45,6 +45,7 @@ import * as E1 from "../../../netlify/lib/quantus-v3-runtime-state.mjs";
 import { localDate as zurichLocalDate } from "../../../netlify/lib/quantus-v3-runtime-plan.mjs";
 import { HttpError, conflict } from "./errors.mjs";
 import { externalEffectsAllowed } from "./config.mjs";
+import { reserveCostWithMonthlyCap } from "./monthly-cost-cap.mjs";
 
 export const DISPATCH_OUTCOMES = Object.freeze(["settled", "unknown"]);
 /* So viel Fuehrung muss nach dem Anspruch noch uebrig sein, damit der
@@ -169,23 +170,34 @@ function leseAufruf(data, callId) {
   return call && typeof call === "object" ? call : null;
 }
 
-export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseReserveMs = DISPATCH_LEASE_RESERVE_MS } = {}) {
+export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseReserveMs = DISPATCH_LEASE_RESERVE_MS, monthlyCap = null } = {}) {
   const fixture = __allowFixturePolicy === true;
 
   return {
-    /* Reservierung vor dem Aufruf. Sendet nichts. */
+    /* Reservierung vor dem Aufruf. Sendet nichts. Mit `monthlyCap` (additiv,
+     * Standard: aus) wird DIESELBE CAS-Mutation zusaetzlich gegen die
+     * globale Monatsgrenze geprueft (`monthly-cost-cap.mjs`) — atomar, weil
+     * die Pruefung innerhalb desselben, bei einem Konflikt wiederholten
+     * Mutators laeuft wie `E1.reserveCost` selbst. */
     async reserve({ callId, runKey, provider, model, contentHash, inputTokens, outputTokens }) {
       const clock = clockOf(ctx);
       await pruefeFrisch(ctx, "reserve");
       const policy = await ladePolicy(ctx, "reserve");
       // NACH dem Laden: das Laden selbst kann gedauert haben.
       const now = clock.now();
-      const out = await mutiere(ctx, `cost-reserve:${callId}`, (data) => E1.reserveCost(data, {
-        callId, runKey, provider, model, contentHash,
-        inputTokens, outputTokens,
-        now, verifiedScope: ctx.verifiedScope, policy,
-        __allowFixturePolicy: fixture,
-      }));
+      const out = await mutiere(ctx, `cost-reserve:${callId}`, (data) => (monthlyCap
+        ? reserveCostWithMonthlyCap(data, {
+          callId, runKey, provider, model, contentHash,
+          inputTokens, outputTokens,
+          now, verifiedScope: ctx.verifiedScope, policy,
+          __allowFixturePolicy: fixture,
+        }, monthlyCap)
+        : E1.reserveCost(data, {
+          callId, runKey, provider, model, contentHash,
+          inputTokens, outputTokens,
+          now, verifiedScope: ctx.verifiedScope, policy,
+          __allowFixturePolicy: fixture,
+        })));
       if (!out.result.ok) throw conflict("cost_reserve_rejected", { code: out.result.code, detail: out.result.detail ?? null });
       return { callId, maxMicros: out.result.maxMicros, mode: out.result.mode, dispatchAllowed: false };
     },
