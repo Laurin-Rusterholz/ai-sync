@@ -374,7 +374,8 @@ test("F-Review #7: ein alter Arbeiter mit veralteter Fence kann nicht mehr unter
     gmailSource, anthropic, leaseScope, policy: POLICY,
     runtimeConfig: { mode: "live", allowExternalEffects: true, gatesComplete: true },
   });
-  const step1 = await provider.impl.next({ runKey: RUNKEY, sectionId: "gmail", cursor: null, now: clock.value, signal: undefined });
+  const verifiedScopeOld = { holder: "worker-old", fence: acq1.result.fence, scope: leaseScope };
+  const step1 = await provider.impl.next({ runKey: RUNKEY, sectionId: "gmail", cursor: null, now: clock.value, signal: undefined, verifiedScope: verifiedScopeOld });
   assert.equal(step1.done, false);
   assert.equal(step1.cursor.phase, "finalize", JSON.stringify(step1));
   // Die Pacht laeuft ab und geht an einen NEUEN Arbeiter mit hoeherer Fence.
@@ -382,9 +383,10 @@ test("F-Review #7: ein alter Arbeiter mit veralteter Fence kann nicht mehr unter
   const acq2 = F.casMutate(core.store, (data) => E1.acquireLease(data, { now: clock.value, holder: "worker-new", scope: leaseScope, ttlMs: E1.LEASE_TTL_MS }));
   assert.equal(acq2.result.ok, true, JSON.stringify(acq2.result));
   assert.notEqual(acq2.result.fence, acq1.result.fence, "die neue Pacht muss eine hoehere Fence erhalten");
-  // Der ALTE Arbeiter versucht, mit seinem (jetzt veralteten) Fortsetzungsstand weiterzuschreiben.
+  // Der ALTE Arbeiter versucht, mit seinem (jetzt veralteten) Fortsetzungsstand
+  // UND seiner eigenen (unveraenderten) verifizierten Fence weiterzuschreiben.
   await assert.rejects(
-    () => provider.impl.next({ runKey: RUNKEY, sectionId: "finalize", cursor: step1.cursor, now: clock.value, signal: undefined }),
+    () => provider.impl.next({ runKey: RUNKEY, sectionId: "finalize", cursor: step1.cursor, now: clock.value, signal: undefined, verifiedScope: verifiedScopeOld }),
     (err) => { assert.equal(err.status, 409, JSON.stringify(err)); return true; },
     "ein Fortsetzungsversuch unter der alten Fence muss abgelehnt werden, nicht unter der Identitaet des neuen Halters schreiben",
   );
@@ -405,4 +407,88 @@ test("F-Review #6: eine fehlgeschlagene Reservierung bleibt als Ereignis sichtba
   assert.equal(res.status, 200, res.text);
   const run = core.store.snapshot().dailyBriefing.assistantRuns[DATE];
   assert.ok(Array.isArray(run.events) && run.events.some((e) => e.event === "reserve_failed"), "die fehlgeschlagene Reservierung muss als Lauf-Ereignis sichtbar bleiben: " + JSON.stringify(run.events));
+});
+
+/* ── Zweitreview (f2d3f68): Befund 3+4 — das Wasserzeichen wurde bei
+ * vollstaendiger Seitenabdeckung SOFORT (finalize-Zeit) gesetzt, VOR einem
+ * gelungenen Entwurf; ein Kostenfehler/Absturz danach haette unverarbeitete
+ * Mails uebersprungen. Zusaetzlich: ohne Fortschritts-Ledger blieb ein
+ * Mengenlimit-Ueberlauf fuer immer im selben Batch stecken. Jetzt: das
+ * Wasserzeichen wird erst NACH einem wirklich gelungenen, dauerhaft
+ * gespeicherten Entwurf bestaetigt, und bereits entworfene Nachrichten
+ * werden ueber `recentIds` beim naechsten Lauf uebersprungen — der Rest
+ * rueckt nach. ─────────────────────────────────────────────────────────── */
+test("F-Review-2 #3+4: Wasserzeichen erst nach gelungenem Entwurf; ein zweiter Lauf verarbeitet die vom Mengenlimit uebrig gelassenen Nachrichten", async (t) => {
+  const ids1 = Array.from({ length: 25 }, (_, i) => `m${i + 1}`);
+  const ids2 = Array.from({ length: 20 }, (_, i) => `m${i + 26}`);
+  // Der zweite Lauf fragt (mangels vorgerueckten Wasserzeichens) dasselbe
+  // Fenster erneut ab — die Attrappe liefert deshalb dieselben zwei Seiten
+  // ein zweites Mal.
+  const gmail = await gmailServer({ pages: [{ ids: ids1, next: "p2" }, { ids: ids2, next: null }, { ids: ids1, next: "p2" }, { ids: ids2, next: null }] });
+  const captured = [];
+  // Jede Antwort braucht eine EIGENE usageReceiptId — eine echte Anthropic-
+  // Antwort haette nie zweimal dieselbe `id` (E1 sperrt doppelte Belege).
+  let antwortZaehler = 0;
+  const anthropic = await anthropicServer({ captured, respond: () => ({ status: 200, body: { id: `msg_${++antwortZaehler}`, content: [{ type: "text", text: "Zusammenfassung." }], usage: { input_tokens: 500, output_tokens: 50 } } }) });
+  t.after(async () => { await gmail.close(); await anthropic.close(); });
+  const cp = livePolicy();
+  const key = F.createSigningKey();
+  const clock = F.createClock(T_START);
+  const core = F.createCorePort(F.createCasStore(seedCore()));
+  const tasks = F.createTasksPort();
+  const buildWork = () => buildSectionWork({ gmailBase: gmail.base, anthropicBase: anthropic.base, costPolicy: cp }, core, clock);
+  const ports = { clock: clock.port, jwks: F.jwksPort(key), core: core.port, tasks: tasks.port, sectionWork: buildWork(), costPolicy: cp };
+  const service = await F.startService({ role: "worker", ports });
+  t.after(() => service.close());
+
+  // Erster Lauf (Slot 04:00): 40 von 45 Nachrichten werden entworfen, 5
+  // ueberschreiten das Mengenlimit.
+  const startToken1 = F.schedulerToken(key, { audience: F.AUD.slotStart, email: F.SA.schedulerStart, nowMs: clock.value });
+  const erster = await service.post("/v3/slot/start", { token: startToken1, body: { slot: "briefing04" } });
+  assert.equal(erster.status, 200, erster.text);
+  assert.equal(captured.length, 1, "der erste Lauf sendet genau einmal");
+  const check1 = core.store.snapshot().dailyBriefing.assistantRuns[DATE].sourceChecks[SOURCE_ID];
+  assert.equal(check1.outcome, "partial", JSON.stringify(check1));
+  const cursor1 = JSON.parse(check1.cursor);
+  assert.equal(cursor1.sinceMs, null, "das Wasserzeichen darf beim Mengenlimit-Ueberlauf nicht vorruecken");
+  assert.equal(cursor1.recentIds.length, 40, `die 40 ERFOLGREICH entworfenen Nachrichten muessen jetzt ausgeschlossen sein: ${JSON.stringify(cursor1.recentIds)}`);
+  assert.ok(!cursor1.recentIds.includes("m41"), "eine uebersprungene Nachricht darf NICHT in recentIds stehen");
+
+  // Zweiter Lauf (Slot 09:00, selber Tag): dieselben 45 Ids stehen bei
+  // Gmail noch, aber die ersten 40 werden jetzt uebersprungen — die
+  // restlichen 5 werden diesmal entworfen.
+  clock.set(PLAN.wallTimeToMs(DATE, 9, 0) + 1000);
+  const startToken2 = F.schedulerToken(key, { audience: F.AUD.slotStart, email: F.SA.schedulerStart, nowMs: clock.value });
+  const zweiter = await service.post("/v3/slot/start", { token: startToken2, body: { slot: "process09" } });
+  assert.equal(zweiter.status, 200, zweiter.text);
+  assert.equal(captured.length, 2, "der zweite Lauf sendet ein zweites Mal (fuer die UEBRIGEN Nachrichten)");
+  const zweiteAnfrage = captured[1].body.messages[0].content;
+  assert.match(zweiteAnfrage, /evidence="m41"/, "die zuvor uebersprungene Nachricht m41 muss jetzt enthalten sein");
+  assert.equal(zweiteAnfrage.includes('evidence="m1"'), false, "die bereits entworfene Nachricht m1 darf NICHT erneut gesendet werden");
+  const check2 = core.store.snapshot().dailyBriefing.assistantRuns[DATE].sourceChecks[SOURCE_ID];
+  assert.equal(check2.outcome, "ok", "der zweite Lauf deckt den Rest vollstaendig und fehlerfrei ab");
+  const cursor2 = JSON.parse(check2.cursor);
+  assert.ok(Number.isSafeInteger(cursor2.sinceMs), "nach vollstaendiger, gelungener Verarbeitung wandert das Wasserzeichen jetzt weiter");
+  assert.equal(cursor2.recentIds.length, 45, "alle 45 Nachrichten sind jetzt als verarbeitet bekannt");
+});
+
+/* ── Zweitreview (f2d3f68): Befund 3 — ein Kostenfehler NACH einem
+ * sauberen Quellenscan durfte die uebersprungenen Mails nicht dauerhaft
+ * verlieren: das Wasserzeichen bleibt unveraendert, bis ein Entwurf
+ * WIRKLICH gelingt. ───────────────────────────────────────────────────── */
+test("F-Review-2 #3: ein Kostenfehler nach sauberem Scan haelt das Wasserzeichen an — keine Mail wird uebersprungen", async (t) => {
+  const gmail = await gmailServer({ messages: { m1: { id: "m1", threadId: "m1", internalDate: String(T_START), snippet: "teuer", payload: { headers: [] } } } });
+  const anthropic = await anthropicServer({});
+  t.after(async () => { await gmail.close(); await anthropic.close(); });
+  const cp = livePolicy({ callLimitMicros: 1, models: { "anthropic:claude-sonnet-5": { inputMicrosPerMillionTokens: MODEL_PRICING.inputMicrosPerMillionTokens, outputMicrosPerMillionTokens: MODEL_PRICING.outputMicrosPerMillionTokens, maxCallMicros: 1 } } });
+  const { service, core, startToken } = await runSlot((core, clock) => buildSectionWork({ gmailBase: gmail.base, anthropicBase: anthropic.base, costPolicy: cp }, core, clock), cp);
+  t.after(() => service.close());
+  const res = await service.post("/v3/slot/start", { token: startToken(), body: { slot: "briefing04" } });
+  assert.equal(res.status, 200, res.text);
+  const check = core.store.snapshot().dailyBriefing.assistantRuns[DATE].sourceChecks[SOURCE_ID];
+  // Der Quellenscan selbst war sauber ("ok"), aber OHNE gelungenen Entwurf
+  // darf das Wasserzeichen trotzdem nicht vorruecken.
+  assert.equal(check.outcome, "ok", JSON.stringify(check));
+  const cursor = JSON.parse(check.cursor);
+  assert.equal(cursor.sinceMs, null, "ohne gelungenen Entwurf darf das Wasserzeichen nicht vorruecken, auch wenn der Scan sauber war");
 });

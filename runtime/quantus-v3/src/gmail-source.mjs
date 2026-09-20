@@ -23,10 +23,15 @@
  * Mails aussen vor (Review-Befund F/G #4).
  * ═════════════════════════════════════════════════════════════════════════ */
 
+import { MAX_BODY_CHARS } from "./anthropic-transport.mjs";
+
 export const DEFAULT_GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1";
 export const DEFAULT_GMAIL_QUERY = "-in:chats -in:spam -in:trash";
 const MAX_PAGE_SIZE = 25;
-const MAX_BODY_CHARS = 4000;
+// DIESELBE Grenze wie anthropic-transport.mjs — sonst kuerzt der Transport
+// den Koerper ein ZWEITES Mal, still, auf einen anderen Wert (Review-Befund
+// F/G-2 #2: doppelte Kuerzung). Ist der Volltext LAENGER, gilt die Nachricht
+// als `partial` (s. u.) statt als stillschweigend vollstaendig verarbeitet.
 
 function decodeBase64Url(data) {
   if (typeof data !== "string" || !data) return "";
@@ -132,10 +137,14 @@ export function createGmailSourceReader({
       const subject = headers.find((h) => h && h.name === "Subject")?.value ?? "";
       const sammlung = { attachments: [], textParts: [], htmlFallback: [] };
       sammleMimeTeile(res.body.payload, sammlung);
-      const body = (sammlung.textParts.length ? sammlung.textParts.join("\n") : sammlung.htmlFallback.join("\n")).slice(0, MAX_BODY_CHARS);
+      const vollerText = sammlung.textParts.length ? sammlung.textParts.join("\n") : sammlung.htmlFallback.join("\n");
+      const bodyGekuerzt = vollerText.length > MAX_BODY_CHARS;
+      const body = vollerText.slice(0, MAX_BODY_CHARS);
       // Eine attachmentId sagt nur "wir kennen die Kennung", nicht "der
       // Inhalt wurde ausgewertet" — Anhaenge bleiben deshalb IMMER `partial`.
-      const unvollstaendig = sammlung.attachments.length > 0;
+      // Ebenso ein gekuerzter Koerper: eine Kuerzung ist eine BELEGTE
+      // Teilabdeckung, nie ein stillschweigendes "ok" (Review-Befund F/G-2 #2).
+      const unvollstaendig = sammlung.attachments.length > 0 || bodyGekuerzt;
       return {
         ok: true,
         partial: unvollstaendig,
@@ -146,6 +155,7 @@ export function createGmailSourceReader({
           subject: String(subject).slice(0, 500),
           snippet: String(res.body.snippet || "").slice(0, 1000),
           body,
+          bodyTruncated: bodyGekuerzt,
           attachments: sammlung.attachments,
         },
       };

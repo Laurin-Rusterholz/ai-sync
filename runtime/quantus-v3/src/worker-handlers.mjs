@@ -233,7 +233,7 @@ const ABGEBROCHEN = Symbol("sectionWorkAborted");
 /* Ruft `sectionWork.next` mit Abbruchsignal und harter Frist auf. Laeuft
  * der Aufruf darueber hinaus, wird nicht gewartet: sein Ausgang ist
  * unklar und wird NICHT wiederholt. */
-async function callSectionWork(ctx, { runKey, sectionId, cursor, resumedFrom, deadlineAtMs, hardStopAtMs, lease }) {
+async function callSectionWork(ctx, { runKey, sectionId, cursor, resumedFrom, deadlineAtMs, hardStopAtMs, lease, verifiedScope }) {
   const clock = requireTimers(ctx);
   const sectionWork = ctx.ports.require("sectionWork");
   const controller = new AbortController();
@@ -259,7 +259,7 @@ async function callSectionWork(ctx, { runKey, sectionId, cursor, resumedFrom, de
     arbeit = Promise.resolve(sectionWork.next({
       runKey, sectionId, cursor, mode: ctx.config.mode,
       deadlineAtMs, now: jetzt, resumedFrom: resumedFrom ?? null,
-      signal: controller.signal,
+      signal: controller.signal, verifiedScope,
     })).then(
       (v) => { fertig = true; wert = v; },
       (e) => { fertig = true; fehler = e; },
@@ -307,7 +307,7 @@ async function runSection(ctx, { runKey, sectionId, lease, resumedFrom, cursor: 
     const at = clock.now();
     if (at >= deadlineAtMs) { stopReason = "section_deadline"; break; }
 
-    const aufruf = await callSectionWork(ctx, { runKey, sectionId, cursor, resumedFrom, deadlineAtMs, hardStopAtMs: hartAtMs, lease });
+    const aufruf = await callSectionWork(ctx, { runKey, sectionId, cursor, resumedFrom, deadlineAtMs, hardStopAtMs: hartAtMs, lease, verifiedScope: scope });
     if (aufruf.aborted) {
       // Der Aufruf lief ueber die Frist. Ob er etwas bewirkt hat, weiss
       // dieser Prozess nicht — also wird er nicht wiederholt.

@@ -28,7 +28,14 @@ export const DEFAULT_ANTHROPIC_VERSION = "2023-06-01";
 // Nachrichtenverlust (Review-Befund F/G #3) fuehrte.
 export const MAX_SOURCE_BLOCKS = 40;
 const MAX_SNIPPET_CHARS = 600;
-const MAX_BODY_CHARS = 1200;
+// Exportiert: gmail-source.mjs kappt den Volltext auf DENSELBEN Wert, damit
+// nicht ZWEI Stellen still auf unterschiedliche Laengen kuerzen (Review-
+// Befund F/G-2 #2: eine Kuerzung hier UND eine andere dort).
+export const MAX_BODY_CHARS = 1200;
+// Ein bewusst grosszuegiger, aber ENDLICHER Deckel fuer die Antwort — ohne
+// ihn koennte ein Server unter dem Zeitlimit bleiben und trotzdem
+// unbegrenzt viele Bytes langsam nachliefern (Review-Befund F/G-2 #7).
+const MAX_RESPONSE_BYTES = 2_000_000;
 
 const SYSTEM_PROMPT =
   "Du fasst Quellenbelege fuer einen Tagesbriefing-Abschnitt zusammen. " +
@@ -61,12 +68,54 @@ function baueNutzerinhalt(sourceMessages) {
   );
 }
 
-/* Fuer die Kostenreservierung (section-work.mjs): die EXAKTE Zeichenzahl der
- * tatsaechlich gesendeten Anfrage (System + Nutzerinhalt) — keine separate,
- * driftende Naeherung. Reservierung und Sendung teilen sich damit dieselbe
- * Textbasis (Review-Befund F/G #5). */
-export function estimateRequestChars(sourceMessages) {
-  return SYSTEM_PROMPT.length + baueNutzerinhalt(Array.isArray(sourceMessages) ? sourceMessages : []).length;
+// JSON-Rahmen um den Nutzerinhalt (Rollen-/Feldnamen, Fluchtsequenzen fuer
+// Steuerzeichen, Anfuehrungszeichen) — grosszuegig aufgerundet, damit die
+// Schaetzung den TATSAECHLICH gesendeten Rahmen nie unterschreitet.
+const PROTOCOL_OVERHEAD_BYTES = 512;
+
+/* Fuer die Kostenreservierung (section-work.mjs): eine NACHWEISLICH
+ * konservative Token-Obergrenze der tatsaechlich gesendeten Anfrage (System
+ * + Nutzerinhalt), keine driftende Naeherung. "Zeichen/3" (fruehere
+ * Fassung) ist KEINE sichere Obergrenze: mehrbytige UTF-8-Zeichen (Umlaute,
+ * Emoji, CJK) oder dicht tokenisierter Code koennen mehr Tokens pro
+ * JS-"Zeichen" erzeugen, als die Division unterstellt. Sicher ist dagegen:
+ * kein bekannter Byte-Paar-Tokenizer erzeugt MEHR Tokens als UTF-8-BYTES im
+ * Rohtext (im Rueckfall auf Einzelbytes ist ein Byte hoechstens ein Token)
+ * — die Bytezahl selbst ist also eine bewiesen konservative Obergrenze
+ * (Review-Befund F/G-2 #1). Das ueberschaetzt echte Tokenzahlen deutlich,
+ * das ist hier Absicht: eine Budgetreservierung darf nie zu niedrig sein. */
+export function estimateRequestTokenCap(sourceMessages) {
+  const text = SYSTEM_PROMPT + baueNutzerinhalt(Array.isArray(sourceMessages) ? sourceMessages : []);
+  return Buffer.byteLength(text, "utf8") + PROTOCOL_OVERHEAD_BYTES;
+}
+
+/* Liest den Antwortkoerper mit einer harten Bytegrenze — ein Byte mehr, und
+ * abgebrochen wird, statt unbegrenzt weiterzulesen. Faellt ohne Streaming
+ * (manche Testattrappen) auf `.json()` zurueck; die AUSSEN gesetzte Frist
+ * deckt diesen Fall weiterhin ab (Review-Befund F/G-2 #7). */
+async function begrenzterKoerper(antwort, maxBytes) {
+  if (!antwort.body || typeof antwort.body.getReader !== "function") {
+    return antwort.json();
+  }
+  const reader = antwort.body.getReader();
+  const stuecke = [];
+  let gesamt = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      gesamt += value.byteLength;
+      if (gesamt > maxBytes) {
+        try { await reader.cancel(); } catch { /* Verbindung wird ohnehin verworfen */ }
+        throw new Error("response_too_large");
+      }
+      stuecke.push(value);
+    }
+  } finally {
+    try { reader.releaseLock(); } catch { /* bereits freigegeben/abgebrochen */ }
+  }
+  const text = Buffer.concat(stuecke.map((s) => Buffer.from(s))).toString("utf8");
+  return JSON.parse(text);
 }
 
 function micros(tokens, ratePerMillion) {
@@ -110,6 +159,11 @@ export function createAnthropicTransport({
       const eigenerAbbruch = new AbortController();
       const weiter = () => eigenerAbbruch.abort();
       if (signal) { if (signal.aborted) weiter(); else signal.addEventListener("abort", weiter, { once: true }); }
+      // Der Zeitgeber laeuft ueber die GESAMTE Anfrage, EINSCHLIESSLICH des
+      // Antwortkoerpers — nicht nur bis zu den Kopfzeilen. Ein Server kann
+      // die Kopfzeilen sofort schicken und den Koerper nie (oder beliebig
+      // langsam) liefern; `antwort.json()`/das Lesen unten haengt dann ohne
+      // Frist (Review-Befund F/G-2 #7). Erst NACH dem Lesen aufgeraeumt.
       const timer = setTimeout(weiter, timeoutMs);
 
       let antwort;
@@ -137,12 +191,14 @@ export function createAnthropicTransport({
         // stillschweigendes "nicht passiert".
         return { outcome: "unknown", providerRequestId: null, reason: e && e.name === "AbortError" ? "timeout_or_aborted" : "network_error" };
       }
-      clearTimeout(timer);
-      if (signal) signal.removeEventListener("abort", weiter);
 
       const providerRequestId = antwort.headers?.get?.("request-id") || null;
       let body = null;
-      try { body = await antwort.json(); } catch { body = null; }
+      try { body = await begrenzterKoerper(antwort, MAX_RESPONSE_BYTES); } catch { body = null; }
+      // Erst JETZT aufraeumen: der Zeitgeber musste auch das Lesen des
+      // Koerpers noch decken koennen (s. o.).
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener("abort", weiter);
 
       if (!antwort.ok) {
         // 4xx (ausser 429) ist eine ECHTE Ablehnung, kein unklarer Ausgang —
