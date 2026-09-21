@@ -299,7 +299,7 @@ test("Befund 4: renderV3Ueberblick zeigt echte Zaehlwerte je Kategorie und marki
   assert.match(html, /2 aktiv\/in Planung/, "Projektzahl muss aus den echten, bereits berechneten Bestaenden kommen");
   assert.match(html, /2 offen \(Leads 1, Aufgaben 1\)/, "nur der wirklich offene Lead/die wirklich offene Aufgabe zaehlen");
   assert.match(html, /1 überfällig, 2 anstehend/);
-  assert.match(html, /1 heute, 0 diese Woche/, "mit meta.updatedAt (Bestand geladen) duerfen echte Kalenderzahlen erscheinen");
+  assert.match(html, /lokaler Bestand: 1 heute, 0 Meetings diese Woche; Google-Kalender nicht live geprüft/, "Kalenderzeile muss als lokaler Bestand ohne Live-Pruefung gekennzeichnet sein");
   assert.match(html, /nicht erfasst/, "Dokumente/Messwerte duerfen keine erfundene Zahl zeigen");
 });
 
@@ -326,10 +326,13 @@ test("Regressionstest: 5 bereits gelesene, aber offene Leads (u. a. 'wartet') we
   assert.doesNotMatch(html, /KI-Pendente[\s\S]*?0 offen/, "die alte Unread-Logik (faelschlich 0) darf nicht wieder auftreten");
 });
 
-test("Befund 4: ohne echtes Kalender-Signal (kein meta.updatedAt) steht ehrlich 'nicht geprüft', keine erfundene Null", () => {
+// Einzeilige Schlusskorrektur: meta.updatedAt ist ein allgemeiner
+// App-Zeitstempel, KEIN Kalender-Ladesignal — die Kalenderzeile behauptet
+// deshalb nie eine Live-Pruefung, unabhaengig von meta.updatedAt.
+test("Kalenderzeile behauptet nie eine Live-Pruefung, auch ohne meta.updatedAt", () => {
   const mod = loadModule()(appWith({ entities: {} }), {}); // kein meta.updatedAt
   const html = mod.renderV3Ueberblick({ allProjects: [], overdueTasks: [], upcomingTasks: [], calEvents: [], allMeetings: [] });
-  assert.match(html, /Termine[\s\S]*?nicht geprüft/);
+  assert.match(html, /lokaler Bestand: 0 heute, 0 Meetings diese Woche; Google-Kalender nicht live geprüft/);
 });
 
 // ── 4) renderV3Schlusspruefung: nie eine erfundene abgeschlossene Pruefung ──

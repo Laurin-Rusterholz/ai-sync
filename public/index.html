@@ -23802,13 +23802,11 @@ function v3KiPendenteOffen() {
 function renderV3Ueberblick({ allProjects, overdueTasks, upcomingTasks, calEvents, allMeetings }) {
   const ki = v3KiPendenteOffen();
   const kiText = (ki.leads + ki.tasks) + " offen (Leads " + ki.leads + ", Aufgaben " + ki.tasks + ")";
-  // Kalenderzahlen: eine "0" ist nur ehrlich, wenn ueberhaupt schon ein
-  // synchronisierter Datenbestand vorliegt (meta.updatedAt) — sonst waere
-  // eine leere, noch nie geladene Sammlung nicht von "wirklich keine
-  // Termine" zu unterscheiden. Ohne dieses Signal ausdruecklich "nicht
-  // geprüft" statt einer erfundenen Null.
-  const kalenderBekannt = !!(APP.state.data?.meta?.updatedAt);
-  const kalenderText = kalenderBekannt ? (calEvents.length + " heute, " + allMeetings.length + " diese Woche") : "nicht geprüft";
+  // meta.updatedAt ist ein allgemeiner App-Zeitstempel, KEIN Kalender-
+  // Ladesignal — kann deshalb nicht zwischen "wirklich keine Termine" und
+  // "Kalender nicht geladen" unterscheiden. Ehrlich stattdessen immer als
+  // lokalen Bestand kennzeichnen, ohne eine Live-Pruefung zu behaupten.
+  const kalenderText = "lokaler Bestand: " + calEvents.length + " heute, " + allMeetings.length + " Meetings diese Woche; Google-Kalender nicht live geprüft";
   const zeilen = [
     { icon: "\u{1F4E6}", label: "Projekte", text: allProjects.length + " aktiv/in Planung" },
     { icon: "\u{1F916}", label: "KI-Pendente", text: kiText },
