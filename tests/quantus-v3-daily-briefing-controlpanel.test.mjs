@@ -90,6 +90,21 @@ function sliceFn(startMarker, startFrom = 0) {
     assert.match(index, /window\.gcalStatusSnapshot\s*=\s*function/, "gcalStatusSnapshot muss im echten gcal-Modul exportiert sein");
     assert.match(index, /window\.gcalEnsureLoaded\s*=\s*gcalEnsureLoaded/, "gcalEnsureLoaded muss im echten gcal-Modul exportiert sein, sonst startet nie ein Ladevorgang");
   });
+
+  // ── Review-Fix PR267 ────────────────────────────────────────────────────
+  test("Review-Fix PR267: dedizierter Bereichslader gcalEnsureRangeLoaded existiert und gcalStatusSnapshot liefert statusChecked/brRange/brError", () => {
+    assert.match(index, /window\.gcalEnsureRangeLoaded\s*=\s*loadBriefingRange/, "ein von gcalEnsureLoaded getrennter, deduplizierender Bereichslader muss exportiert sein — sonst laedt die Briefing-Kalenderzeile den falschen (View-)Bereich");
+    assert.match(index, /statusChecked:\s*GC\.status\s*!==\s*undefined/, "gcalStatusSnapshot muss 'noch nie geprueft' von 'geprueft und nicht verbunden' unterscheiden");
+    assert.match(index, /brRange:\s*\(GC\._brRangeMin/, "gcalStatusSnapshot muss den tatsaechlich abgedeckten Bereich melden, nicht den View-Bereich");
+    assert.match(index, /brError:\s*GC\._brError/, "gcalStatusSnapshot muss einen Ladefehler melden, statt ihn zu verschweigen");
+  });
+
+  test("Review-Fix PR267: loadBriefingRange schluckt Kalenderfehler nicht (kein reines console.warn wie in loadEvents)", () => {
+    const loaderMatch = index.match(/async function loadBriefingRange\(fromYmd, toYmd\)\{[\s\S]*?\n  \}/);
+    assert.ok(loaderMatch, "loadBriefingRange muss im gcal-Modul existieren");
+    assert.match(loaderMatch[0], /failed\.push\(calId\)/, "fehlgeschlagene Kalenderabrufe muessen erfasst werden");
+    assert.match(loaderMatch[0], /GC\._brError\s*=\s*failed\.length/, "ein Teilfehler muss GC._brError setzen, statt eine vollstaendige leere Liste vorzutaeuschen");
+  });
 }
 
 // ── Extraktion der echten Hilfsfunktionen ──────────────────────────────────
@@ -101,16 +116,24 @@ const addDaysSrc = index.slice(addDaysStart, index.indexOf("};\n", addDaysStart)
 
 const blockStart = index.indexOf("const V3_AMPEL_LABEL = {");
 assert.ok(blockStart > 0, "V3_AMPEL_LABEL wurde nicht gefunden");
-const schluss = sliceFn("function renderV3Schlusspruefung(runV3, selectedDate, dayLogNotes) {", blockStart);
-const blockSrc = index.slice(blockStart, schluss.end);
+// Konzept v2 L: v3FreeSlotsForDay ist die letzte Funktion in diesem Block
+// (nach renderV3ChatgptCockpit/v3PlanningSettings) — Ende dort, sonst bleibt
+// die Einplanungslogik ungetestet.
+const planning = sliceFn("function v3FreeSlotsForDay(durationMin, { busyIntervals = [], timeBlocks = [], windowStart = \"09:00\", windowEnd = \"18:00\", stepMin = 15, allDayBlocksWholeDay = false } = {}) {", blockStart);
+const blockSrc = index.slice(blockStart, planning.end);
 
 function loadModule(extraFns = {}) {
-  const namen = Object.keys(extraFns);
+  // nowIso/fmtDateTime sind echte globale Helfer aus index.html, die ausserhalb
+  // des extrahierten Blocks definiert sind — hier als einfache, deterministische
+  // Stubs bereitgestellt, damit v3RegisterFollowUp/renderV3ChatgptCockpit ohne
+  // ReferenceError laufen; ein Test kann sie ueber extraFns ueberschreiben.
+  const alle = { nowIso: () => new Date().toISOString(), fmtDateTime: (iso) => String(iso || ""), ...extraFns };
+  const namen = Object.keys(alle);
   const fn = new Function("APP", "window", ...namen,
     escSrc + "\n" + todaySrc + "\n" + addDaysSrc + "\n" + blockSrc + "\n"
-    + "return { renderV3ControlPanel, renderV3FaelligeAusnahmen, renderV3Freigaben, renderV3Schlusspruefung, renderV3Ueberblick, v3NextSlotInfo, v3AmpelText, v3AktuelleBewertung, v3SpeicherStatusText };"
+    + "return { renderV3ControlPanel, renderV3FaelligeAusnahmen, renderV3Freigaben, renderV3Schlusspruefung, renderV3Ueberblick, renderV3ChatgptCockpit, v3LeadOperationalState, v3LeadStatus, v3LeadStatusText, v3RegisterFollowUp, v3PlanningSettings, v3FreeSlotsForDay, v3NextSlotInfo, v3AmpelText, v3AktuelleBewertung, v3SpeicherStatusText };"
   );
-  return (app, win) => fn(app, win, ...namen.map((n) => extraFns[n]));
+  return (app, win) => fn(app, win, ...namen.map((n) => alle[n]));
 }
 
 function appWith(data, storage) {
@@ -337,9 +360,8 @@ test("Regressionstest: 5 bereits gelesene, aber offene Leads (u. a. 'wartet') we
 // Ab jetzt liest renderV3Ueberblick den ECHTEN Adapter (window.gcal*). ────
 test("Regressionstest: Google Kalender verbunden und geladen -> echte Live-Zahlen statt lokalem Nullbestand", () => {
   const win = {
-    gcalStatusSnapshot: () => ({ connected: true, booted: true, loading: false }),
-    gcalEventsForDay: (ymd) => (ymd === "2026-09-21" ? new Array(3).fill(0) : []),
-    gcalEventsInRange: (from, to) => (from === "2026-09-21" && to === "2026-09-28" ? new Array(59).fill(0) : []),
+    gcalStatusSnapshot: () => ({ statusChecked: true, connected: true, brBooted: true, brLoading: false, brError: null, brRange: { min: "2026-09-21", max: "2026-09-28" } }),
+    gcalEventsInRange: (from, to) => (from === to ? new Array(3).fill(0) : new Array(59).fill(0)),
   };
   const mod = loadModule()(appWith({ entities: {} }), win);
   const html = mod.renderV3Ueberblick({ allProjects: [], overdueTasks: [], upcomingTasks: [], selectedDate: "2026-09-21", future7Str: "2026-09-28" });
@@ -347,22 +369,83 @@ test("Regressionstest: Google Kalender verbunden und geladen -> echte Live-Zahle
 });
 
 test("Kalenderzeile: nicht verbunden wird ehrlich als 'nicht verbunden' gezeigt, keine erfundene Zahl", () => {
-  const win = { gcalStatusSnapshot: () => ({ connected: false }) };
+  const win = { gcalStatusSnapshot: () => ({ statusChecked: true, connected: false }) };
   const mod = loadModule()(appWith({ entities: {} }), win);
   const html = mod.renderV3Ueberblick({ allProjects: [], overdueTasks: [], upcomingTasks: [], selectedDate: "2026-09-21", future7Str: "2026-09-28" });
   assert.match(html, /Termine[\s\S]*?nicht verbunden/);
 });
 
-test("Kalenderzeile: verbunden, aber noch nicht geladen -> 'wird geladen' UND stoesst gcalEnsureLoaded() an (kein stiller Nullbestand)", () => {
-  let ensureLoadedCalled = false;
+test("Kalenderzeile: verbunden, aber noch nicht geladen -> 'wird geladen' UND stoesst gcalEnsureRangeLoaded() an (kein stiller Nullbestand)", () => {
+  let ensureCalledWith = null;
   const win = {
-    gcalStatusSnapshot: () => ({ connected: true, booted: false, loading: false }),
-    gcalEnsureLoaded: () => { ensureLoadedCalled = true; return Promise.resolve(); },
+    gcalStatusSnapshot: () => ({ statusChecked: true, connected: true, brBooted: false, brLoading: false, brError: null, brRange: null }),
+    gcalEnsureRangeLoaded: (from, to) => { ensureCalledWith = [from, to]; return Promise.resolve(); },
   };
   const mod = loadModule()(appWith({ entities: {} }), win);
   const html = mod.renderV3Ueberblick({ allProjects: [], overdueTasks: [], upcomingTasks: [], selectedDate: "2026-09-21", future7Str: "2026-09-28" });
   assert.match(html, /wird geladen/);
-  assert.ok(ensureLoadedCalled, "das erste Rendern ohne Kalenderbesuch muss den echten Ladevorgang anstossen, sonst bleibt es bei 0");
+  assert.deepEqual(ensureCalledWith, ["2026-09-21", "2026-09-28"], "das erste Rendern ohne Kalenderbesuch muss den echten Ladevorgang fuer GENAU den angefragten Bereich anstossen, sonst bleibt es bei 0");
+});
+
+// ── Review-Fix PR267: Kaltstart VOR jedem Statuscheck darf nicht als
+// "nicht verbunden" erscheinen (GC.status===undefined wurde vorher wie
+// connected:false behandelt) ────────────────────────────────────────────
+test("Kalenderzeile Kaltstart: Verbindungsstatus noch nie geprueft -> 'wird geprüft', NICHT 'nicht verbunden', UND stoesst Laden an", () => {
+  let ensureCalled = false;
+  const win = {
+    gcalStatusSnapshot: () => ({ statusChecked: false }),
+    gcalEnsureRangeLoaded: () => { ensureCalled = true; return Promise.resolve(); },
+  };
+  const mod = loadModule()(appWith({ entities: {} }), win);
+  const html = mod.renderV3Ueberblick({ allProjects: [], overdueTasks: [], upcomingTasks: [], selectedDate: "2026-09-21", future7Str: "2026-09-28" });
+  assert.doesNotMatch(html, /Termine[\s\S]*?nicht verbunden/, "ein ungeprüfter Status ist NICHT dasselbe wie geprüft-und-nicht-verbunden");
+  assert.match(html, /wird geprüft/);
+  assert.ok(ensureCalled, "der Kaltstart muss selbst den Ladevorgang anstossen");
+});
+
+// ── Review-Fix PR267: ein tatsaechlich leerer, aber VOLLSTAENDIG geladener
+// Kalender ist eine echte 0, keine Ladeanzeige ────────────────────────────
+test("Kalenderzeile: verbunden, Bereich vollstaendig geladen, aber wirklich leer -> '0 heute, 0 diese Woche', keine Dauerschleife", () => {
+  let ensureCalls = 0;
+  const win = {
+    gcalStatusSnapshot: () => ({ statusChecked: true, connected: true, brBooted: true, brLoading: false, brError: null, brRange: { min: "2026-09-21", max: "2026-09-28" } }),
+    gcalEventsInRange: () => [],
+    gcalEnsureRangeLoaded: () => { ensureCalls++; return Promise.resolve(); },
+  };
+  const mod = loadModule()(appWith({ entities: {} }), win);
+  const html = mod.renderV3Ueberblick({ allProjects: [], overdueTasks: [], upcomingTasks: [], selectedDate: "2026-09-21", future7Str: "2026-09-28" });
+  assert.match(html, /0 heute, 0 diese Woche \(Google Kalender\)/, "ein wirklich leerer, vollstaendig geladener Kalender ist eine echte Zahl, keine Unbekannte");
+  assert.equal(ensureCalls, 0, "ein bereits vollstaendig geladener Bereich darf keinen erneuten Ladevorgang anstossen (sonst Dauerschleife)");
+});
+
+// ── Review-Fix PR267: ein Ladefehler darf NIE als Zahl (erst recht nicht 0)
+// erscheinen — loadEvents schluckte Fehler bislang komplett ──────────────
+test("Kalenderzeile: Ladefehler wird ehrlich benannt, NIE als 0 oder echte Zahl verkleidet", () => {
+  const win = {
+    gcalStatusSnapshot: () => ({ statusChecked: true, connected: true, brBooted: true, brLoading: false, brError: "Kalenderabruf teilweise fehlgeschlagen (1 von 2 Kalendern) — Zahlen unvollständig", brRange: { min: "2026-09-21", max: "2026-09-28" } }),
+    gcalEventsInRange: () => { throw new Error("darf bei Fehlerzustand nicht aufgerufen werden"); },
+  };
+  const mod = loadModule()(appWith({ entities: {} }), win);
+  const html = mod.renderV3Ueberblick({ allProjects: [], overdueTasks: [], upcomingTasks: [], selectedDate: "2026-09-21", future7Str: "2026-09-28" });
+  assert.match(html, /Kalenderfehler beim Laden/, "ein Ladefehler muss sichtbar benannt werden");
+  assert.doesNotMatch(html, /\d+ heute, \d+ diese Woche/, "bei einem Ladefehler duerfen keine Zahlen behauptet werden");
+});
+
+// ── Review-Fix PR267: der interaktive Kalender-View (Monat/Woche/Agenda)
+// laedt einen eigenen Bereich, der die Briefing-Anfrage NICHT abdecken muss
+// — ein zu eng geladener Bereich darf nie als abgeschlossen gelten ────────
+test("Kalenderzeile: geladener Bereich deckt die Anfrage NICHT ab (zu eng) -> 'wird geladen', kein falscher Nullbestand", () => {
+  let ensureCalledWith = null;
+  const win = {
+    // Nur bis zum 23. geladen (z.B. interaktiver Wochen-View), Anfrage geht bis zum 28.
+    gcalStatusSnapshot: () => ({ statusChecked: true, connected: true, brBooted: true, brLoading: false, brError: null, brRange: { min: "2026-09-21", max: "2026-09-23" } }),
+    gcalEventsInRange: () => { throw new Error("darf bei nicht abgedecktem Bereich nicht als Zahl gelesen werden"); },
+    gcalEnsureRangeLoaded: (from, to) => { ensureCalledWith = [from, to]; return Promise.resolve(); },
+  };
+  const mod = loadModule()(appWith({ entities: {} }), win);
+  const html = mod.renderV3Ueberblick({ allProjects: [], overdueTasks: [], upcomingTasks: [], selectedDate: "2026-09-21", future7Str: "2026-09-28" });
+  assert.match(html, /wird geladen/, "ein zu eng geladener Bereich darf nicht als vollstaendig gelten");
+  assert.deepEqual(ensureCalledWith, ["2026-09-21", "2026-09-28"], "es muss der tatsaechlich fehlende, volle Bereich nachgeladen werden");
 });
 
 // ── 4) renderV3Schlusspruefung: nie eine erfundene abgeschlossene Pruefung ──
@@ -428,6 +511,227 @@ test("v3NextSlotInfo: nach 23:00 rollt der naechste Lauf auf 04:00 morgen", () =
   const info = mod.v3NextSlotInfo(t);
   assert.equal(info.stunde, 4);
   assert.equal(info.morgen, true);
+});
+
+// ── Konzept v2: Betriebsmodell fuer ChatGPT-Leads (v3LeadStatus/renderV3ChatgptCockpit) ──
+// Diese Tests pruefen die vom Nutzer explizit vorgegebenen Regeln: Gruen
+// heisst nicht "erledigt", sondern "vollstaendig dokumentiertes, nicht
+// ueberfaelliges Warten/Delegieren"; ein ungeprueft er Cowork-Ruecklauf und
+// fehlende Pflichtfelder bleiben immer Rot.
+
+test("WartenGruen: externes Warten mit allen vier Pflichtfeldern und nicht ueberfaelligem Termin ist gruen", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const lead = {
+    operationalState: "waiting_external",
+    waitingOn: "Kunde X", waitingSince: "2026-09-20T09:00:00.000Z",
+    nextAction: "Nachfassen", followUpAt: "2026-09-25T09:00:00.000Z",
+  };
+  assert.equal(mod.v3LeadStatus(lead, { nowMs: Date.parse("2026-09-21T10:00:00.000Z") }), "green");
+});
+
+test("fehlFollowupRot: externes Warten OHNE Termin/naechsten Schritt ist rot, nicht gelb oder gruen", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const lead = { operationalState: "waiting_external", waitingOn: "Kunde X" }; // waitingSince/nextAction/followUpAt fehlen
+  assert.equal(mod.v3LeadStatus(lead, { nowMs: Date.parse("2026-09-21T10:00:00.000Z") }), "red");
+});
+
+test("fehlFollowupRot: ueberfaelliger Follow-up-Termin ist rot", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const lead = {
+    operationalState: "waiting_external", waitingOn: "Kunde X", waitingSince: "2026-09-10T09:00:00.000Z",
+    nextAction: "Nachfassen", followUpAt: "2026-09-15T09:00:00.000Z",
+  };
+  assert.equal(mod.v3LeadStatus(lead, { nowMs: Date.parse("2026-09-21T10:00:00.000Z") }), "red");
+});
+
+test("Deferrals>=3: dreimalige Verschiebung ohne echten Fortschritt setzt information_required und eine Frage fuer morgen vor", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const lead = { lastAction: "Erstkontakt" };
+  mod.v3RegisterFollowUp(lead, { newLastAction: "Erstkontakt", followUpAt: "2026-09-22T09:00:00.000Z", morgenIsoStr: "2026-09-22T04:00:00.000Z" });
+  mod.v3RegisterFollowUp(lead, { newLastAction: "Erstkontakt", followUpAt: "2026-09-23T09:00:00.000Z", morgenIsoStr: "2026-09-23T04:00:00.000Z" });
+  assert.equal(lead.followUpDeferrals, 2, "zwei Verschiebungen ohne Fortschritt sind noch keine Eskalation");
+  mod.v3RegisterFollowUp(lead, { newLastAction: "Erstkontakt", followUpAt: "2026-09-24T09:00:00.000Z", morgenIsoStr: "2026-09-24T04:00:00.000Z" });
+  assert.equal(lead.followUpDeferrals, 3);
+  assert.equal(lead.operationalState, "information_required", "ab der dritten Verschiebung ohne Fortschritt wird daraus eine Frage an Laurin");
+  assert.equal(lead.questionForBriefingAt, "2026-09-24T04:00:00.000Z");
+});
+
+test("Deferrals: ein ECHTER neuer lastAction setzt den Zaehler zurueck, statt zu eskalieren", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const lead = { lastAction: "Erstkontakt", followUpDeferrals: 2 };
+  mod.v3RegisterFollowUp(lead, { newLastAction: "Kunde hat geantwortet, Angebot verschickt", followUpAt: "2026-09-25T09:00:00.000Z" });
+  assert.equal(lead.followUpDeferrals, 0);
+  assert.notEqual(lead.operationalState, "information_required");
+});
+
+test("CoworkUngeprueftKeinGruen: Cowork-Ruecklauf ohne Pruefung ist rot, obwohl der Rueckalauftermin eingehalten wurde", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const lead = {
+    operationalState: "delegated_cowork", handoverAt: "2026-09-18T09:00:00.000Z",
+    expectedReturnAt: "2026-09-20T18:00:00.000Z", returnedAt: "2026-09-20T15:00:00.000Z", returnChecked: false,
+  };
+  assert.equal(mod.v3LeadStatus(lead, { nowMs: Date.parse("2026-09-21T10:00:00.000Z") }), "red", "ein ungeprueft er Ruecklauf darf nie automatisch gruen werden");
+});
+
+test("Cowork: mit Rueckalauftermin, noch nicht faellig und noch nicht zurueck, ist gruen (Delegation gilt als tagesgruen)", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const lead = { operationalState: "delegated_cowork", handoverAt: "2026-09-20T09:00:00.000Z", expectedReturnAt: "2026-09-25T18:00:00.000Z" };
+  assert.equal(mod.v3LeadStatus(lead, { nowMs: Date.parse("2026-09-21T10:00:00.000Z") }), "green");
+});
+
+test("Cowork ohne Rueckalauftermin ist rot (fehlender naechster Schritt), auch ohne Ueberfaelligkeit", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const lead = { operationalState: "delegated_cowork", handoverAt: "2026-09-20T09:00:00.000Z" };
+  assert.equal(mod.v3LeadStatus(lead, { nowMs: Date.parse("2026-09-21T10:00:00.000Z") }), "red");
+});
+
+// ── renderV3ChatgptCockpit: A (Entscheidungen), B (Fragen/Fragemorgen), E, F ──
+test("Fragemorgen: eine fuer morgen vorgemerkte Frage erscheint HEUTE nicht im Briefing", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const leads = [{ id: "l1", title: "Anfrage Meier", operationalState: "information_required", pendingQuestion: { text: "Preis ok?" }, questionForBriefingAt: "2026-09-22T04:00:00.000Z" }];
+  const html = mod.renderV3ChatgptCockpit(leads, { nowMs: Date.parse("2026-09-21T10:00:00.000Z") });
+  assert.match(html, /Fragen von ChatGPT[\s\S]*?\(0\)/, "eine erst morgen faellige Frage darf heute nicht gezaehlt werden");
+  assert.doesNotMatch(html, /Preis ok\?/, "der Fragetext darf vor Faelligkeit nicht erscheinen");
+});
+
+test("Fragemorgen: nach Ablauf der Frist (heute >= questionForBriefingAt) erscheint dieselbe Frage sichtbar mit Antwortfeld", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const leads = [{ id: "l1", title: "Anfrage Meier", operationalState: "information_required", pendingQuestion: { text: "Preis ok?", options: ["Ja", "Nein"], recommendation: "Ja" }, questionForBriefingAt: "2026-09-21T04:00:00.000Z" }];
+  const html = mod.renderV3ChatgptCockpit(leads, { nowMs: Date.parse("2026-09-21T10:00:00.000Z") });
+  assert.match(html, /Fragen von ChatGPT[\s\S]*?\(1\)/);
+  assert.match(html, /Preis ok\?/);
+  assert.match(html, /Optionen: Ja, Nein/);
+  assert.match(html, /data-action="cgl-answer-question" data-id="l1"/, "die Antwort muss ueber die echte, einmalig verarbeitbare Aktion auf demselben Lead laufen");
+});
+
+test("renderV3ChatgptCockpit: Entscheidungen (A) erscheinen getrennt von Fragen (B) und zeigen die Empfehlung", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const leads = [{ id: "l2", title: "Vertragsentscheid", operationalState: "decision_required", pendingQuestion: { text: "Vertrag X unterschreiben?", recommendation: "Ja, Konditionen passen" }, questionForBriefingAt: "2026-09-21T04:00:00.000Z" }];
+  const html = mod.renderV3ChatgptCockpit(leads, { nowMs: Date.parse("2026-09-21T10:00:00.000Z") });
+  assert.match(html, /Entscheidungen gefragt[\s\S]*?\(1\)/);
+  assert.match(html, /Empfehlung: Ja, Konditionen passen/);
+});
+
+test("renderV3ChatgptCockpit: erledigte/stornierte Leads erscheinen in keinem der Panels", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const leads = [
+    { id: "l3", title: "Alt", status: "abgeschlossen" },
+    { id: "l4", title: "Storniert", status: "abgeschlossen", closedBy: "laurin", obsolete: true },
+  ];
+  const html = mod.renderV3ChatgptCockpit(leads, { nowMs: Date.parse("2026-09-21T10:00:00.000Z") });
+  assert.match(html, /Pendent bei ChatGPT[\s\S]*?\(0\)/, "erledigte/stornierte Leads zaehlen nicht als pendent");
+});
+
+test("renderV3ChatgptCockpit: Cowork-Panel zeigt einen ungeprueften Ruecklauf mit Rueckhol-Aktion, keine gruene Vortaeuschung", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const leads = [{ id: "l5", title: "Recherche X", operationalState: "review", handoverAt: "2026-09-18T09:00:00.000Z", returnedAt: "2026-09-20T15:00:00.000Z", returnChecked: false }];
+  const html = mod.renderV3ChatgptCockpit(leads, { nowMs: Date.parse("2026-09-21T10:00:00.000Z") });
+  assert.match(html, /Bei Cowork[\s\S]*?\(1\)/);
+  assert.match(html, /Rücklauf ungeprüft/);
+  assert.match(html, /data-action="cgl-cowork-return-check" data-id="l5"/);
+});
+
+// ── Item G: Delegation genau EINES Originaltasks, echte Checkbox ──────────
+// Diese Tests pruefen den echten Quelltext (handleClick laesst sich wegen
+// vieler verschachtelter Closures nicht sauber per new Function() isolieren,
+// siehe CLAUDE.md "Modulgrenzen sind echt") — gezielte Struktur-Assertions
+// an genau der Stelle, an der frueher ein Fehler moeglich war.
+test("DelegationEinLead: task-delegate-chatgpt aendert NUR assignee auf demselben Task (kein createEntity, keine Kopie)", () => {
+  const caseMatch = index.match(/case "task-delegate-chatgpt": \{[\s\S]*?\n\}/);
+  assert.ok(caseMatch, "der Delegations-Handler muss im echten handleClick existieren");
+  const src = caseMatch[0];
+  assert.match(src, /getEntity\("task", taskId\)/, "muss auf DASSELBE Originaltask lesen");
+  assert.match(src, /updateEntity\("task", taskId, \{ assignee:/, "darf nur das assignee-Feld auf dem Original aendern");
+  assert.doesNotMatch(src, /createEntity/, "die Delegation darf keine Kopie/neuen Eintrag erzeugen");
+});
+
+test("Originalcheckbox: das neue 'Meine Aufgaben'-Panel im DailyBriefing nutzt denselben quick-complete-task-Mechanismus wie die echte Aufgabenliste", () => {
+  const meineAufgabenStart = index.indexOf("Meine Aufgaben <span");
+  assert.ok(meineAufgabenStart > 0, "das 'Meine Aufgaben'-Panel muss in viewDailyBriefing() existieren");
+  const meineAufgabenSrc = index.slice(meineAufgabenStart, meineAufgabenStart + 2500);
+  assert.match(meineAufgabenSrc, /data-action="quick-complete-task"/, "muss dieselbe echte Checkbox-Aktion wie die Aufgabenliste verwenden, kein eigener Fake-Toggle");
+  assert.match(meineAufgabenSrc, /data-action="task-delegate-chatgpt"/, "muss den echten Delegations-Button anbieten");
+});
+
+test("Antwortreaktiviert: cgl-answer-question setzt operationalState zurueck auf 'doing' und markiert die Frage als beantwortet (einmalig)", () => {
+  const caseMatch = index.match(/case "cgl-answer-question": \{[\s\S]*?\n    \}/);
+  assert.ok(caseMatch, "der Antwort-Handler muss existieren");
+  const src = caseMatch[0];
+  assert.match(src, /l\.pendingQuestion\.answeredAt\)\s*return;/, "eine bereits beantwortete Frage darf kein zweites Mal verarbeitet werden");
+  assert.match(src, /l\.pendingQuestion\.answer = antwort/, "die Antwort muss am ORIGINALLEAD gespeichert werden");
+  assert.match(src, /l\.operationalState = "doing"/, "nach der Antwort macht der Assistent weiter (doing), keine Endlosschlaufe in decision_required");
+});
+
+// ── Konzept v2 L: Kalender-Einplanung — Vorschlag statt Automatik ──────────
+test("v3PlanningSettings: Standardwerte sind Autoplan AUS, Mo-Fr, 09:00-18:00, 30 Minuten", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const ps = mod.v3PlanningSettings({});
+  assert.equal(ps.autoplanEnabled, false, "Autoplan muss standardmaessig aus sein");
+  assert.deepEqual(ps.allowedDays, [1, 2, 3, 4, 5]);
+  assert.equal(ps.windowStart, "09:00");
+  assert.equal(ps.windowEnd, "18:00");
+  assert.equal(ps.defaultDurationMin, 30);
+});
+
+test("v3PlanningSettings: gespeicherte Werte (inkl. explizit aktiviertem Autoplan) werden uebernommen", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const ps = mod.v3PlanningSettings({ planningSettings: { autoplanEnabled: true, windowStart: "07:30", windowEnd: "20:00", defaultDurationMin: 45, allowedDays: [1, 3, 5] } });
+  assert.equal(ps.autoplanEnabled, true);
+  assert.equal(ps.windowStart, "07:30");
+  assert.deepEqual(ps.allowedDays, [1, 3, 5]);
+});
+
+test("v3FreeSlotsForDay: findet den ersten freien Slot zwischen zwei Terminen, ueberspringt Konflikte", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const slots = mod.v3FreeSlotsForDay(30, {
+    busyIntervals: [{ startMin: 9 * 60, endMin: 10 * 60 }, { startMin: 10 * 60 + 15, endMin: 11 * 60 }],
+    windowStart: "09:00", windowEnd: "12:00", stepMin: 15,
+  });
+  assert.ok(slots.length > 0, "es muss mindestens ein freier Slot gefunden werden");
+  assert.equal(slots[0].start, "11:00", "der erste WIRKLICH freie Slot beginnt erst nach beiden Terminen");
+  // keine Ueberschneidung mit einem der beiden Termine:
+  slots.forEach((s) => {
+    assert.ok(!(s.startMin < 10 * 60 && s.endMin > 9 * 60), "kein Slot darf den ersten Termin ueberschneiden");
+    assert.ok(!(s.startMin < 11 * 60 && s.endMin > 10 * 60 + 15), "kein Slot darf den zweiten Termin ueberschneiden");
+  });
+});
+
+test("v3FreeSlotsForDay: interne timeBlocks blockieren genauso wie echte Kalendertermine", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const slots = mod.v3FreeSlotsForDay(30, {
+    busyIntervals: [], timeBlocks: [{ startTime: "09:00", endTime: "17:30" }],
+    windowStart: "09:00", windowEnd: "18:00", stepMin: 15,
+  });
+  assert.equal(slots.length, 1, "nur genau der Rest nach dem internen Zeitblock darf frei sein");
+  assert.equal(slots[0].start, "17:30");
+});
+
+test("v3FreeSlotsForDay: ein ganztaegiger Termin blockiert den gesamten Tag (allDayBlocksWholeDay)", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const slots = mod.v3FreeSlotsForDay(30, { allDayBlocksWholeDay: true, windowStart: "09:00", windowEnd: "18:00" });
+  assert.deepEqual(slots, [], "ein ganztaegiger Termin darf niemals einen freien Slot vorschlagen");
+});
+
+test("v3FreeSlotsForDay: kein Konflikt -> der gesamte Fenster-Anfang ist als Slot verfuegbar (keine erfundene Bloackade)", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const slots = mod.v3FreeSlotsForDay(30, { windowStart: "09:00", windowEnd: "10:00", stepMin: 15 });
+  assert.equal(slots[0].start, "09:00");
+});
+
+// ── Item L: Autoplan-Schalter/Buttons existieren wirklich im DailyBriefing ──
+test("Konzept v2 L: die Einplanungs-Einstellungen (Autoplan-Checkbox, Zeitfenster, Dauer) sind wirklich im DailyBriefing verdrahtet", () => {
+  assert.match(index, /id="dbV3PlanningSettings"/, "der Einstellungsbereich muss in viewDailyBriefing() existieren");
+  assert.match(index, /planningSettings\.autoplanEnabled\s*=\s*this\.checked/, "die Autoplan-Checkbox muss den echten Bestand schreiben");
+  assert.match(index, /window\.dbPlanTaskSlot\s*=\s*function/, "der Vorschlags-Handler fuer 'Termin vorschlagen' muss existieren");
+});
+
+test("Konzept v2 L: dbPlanTaskSlot schreibt NIE direkt, sondern oeffnet immer den echten Kalender-Editor zur Bestaetigung", () => {
+  const fnMatch = index.match(/window\.dbPlanTaskSlot = function\([\s\S]*?\n\};/);
+  assert.ok(fnMatch, "dbPlanTaskSlot muss existieren");
+  const src = fnMatch[0];
+  assert.doesNotMatch(src, /gcApi\("POST"|gcApi\('POST'/, "die Vorschlagsfunktion selbst darf niemals einen Kalender-Eintrag schreiben");
+  assert.match(src, /gcalEventFromTask\(/, "die Bestaetigung muss ueber den bestehenden echten Kalender-Editor laufen");
+  assert.match(src, /allowedDays\.includes\(weekday\)/, "der erlaubte Wochentag muss tatsaechlich geprueft werden, nicht nur gespeichert werden");
 });
 
 console.log("quantus-v3-daily-briefing-controlpanel: alle Pruefungen bestanden");
