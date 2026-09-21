@@ -699,9 +699,11 @@ test("Antwortreaktiviert: cgl-answer-question setzt operationalState zurueck auf
   const caseMatch = index.match(/case "cgl-answer-question": \{[\s\S]*?\n    \}/);
   assert.ok(caseMatch, "der Antwort-Handler muss existieren");
   const src = caseMatch[0];
-  assert.match(src, /l\.pendingQuestion\.answeredAt\)\s*return;/, "eine bereits beantwortete Frage darf kein zweites Mal verarbeitet werden");
+  assert.match(src, /l\.pendingQuestion\.answeredAt \|\| l\.status === "abgeschlossen"\)\s*return;/, "eine bereits beantwortete Frage ODER ein abgeschlossener Lead darf kein zweites Mal/gar nicht verarbeitet werden");
   assert.match(src, /l\.pendingQuestion\.answer = antwort/, "die Antwort muss am ORIGINALLEAD gespeichert werden");
   assert.match(src, /l\.operationalState = "doing"/, "nach der Antwort macht der Assistent weiter (doing), keine Endlosschlaufe in decision_required");
+  // Funktionaler Nachweis (kein reiner String-Check) in tests/chatgpt-lead-wiedereroeffnen.test.mjs
+  // Abschnitt 8: fuehrt den echten Handler gegen einen abgeschlossenen Lead aus.
 });
 
 // ── Konzept v2 L: Kalender-Einplanung — Vorschlag statt Automatik ──────────

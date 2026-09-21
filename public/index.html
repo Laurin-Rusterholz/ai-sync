@@ -51793,7 +51793,9 @@ function chatgptModuleHandleAction(action, el, e) {
     // Rücklauf blockiert Grün) — kein automatisches Gruen nur durch returnedAt.
     case "cgl-cowork-return-check": {
       stop();
-      const l = ownEntity(leads, id); if (!l || !l.returnedAt) return;
+      // Review-Fix (einheitlich auf allen Clients): ein abgeschlossener Lead
+      // wird durch die Ruecklaufpruefung nicht reaktiviert.
+      const l = ownEntity(leads, id); if (!l || !l.returnedAt || l.status === "abgeschlossen") return;
       l.returnChecked = true;
       l.operationalState = "doing";
       l.lastAction = "Cowork-Rücklauf geprüft";
@@ -51879,7 +51881,9 @@ function chatgptModuleHandleAction(action, el, e) {
     // gespeichert, Zustand geht zurueck auf "doing" (der Assistent macht weiter).
     case "cgl-answer-question": {
       stop();
-      const l = ownEntity(leads, id); if (!l || !l.pendingQuestion || l.pendingQuestion.answeredAt) return; // einmalig
+      // Review-Fix (einheitlich auf allen Clients): ein abgeschlossener Lead
+      // wird durch eine Antwort nicht reaktiviert.
+      const l = ownEntity(leads, id); if (!l || !l.pendingQuestion || l.pendingQuestion.answeredAt || l.status === "abgeschlossen") return; // einmalig
       const antwort = String((document.getElementById("cglAnswerText_" + id) || {}).value || "").trim();
       if (!antwort) { toast("warn", "Antwort fehlt", "Ohne Text keine Antwort."); return; }
       l.pendingQuestion.answer = antwort;
