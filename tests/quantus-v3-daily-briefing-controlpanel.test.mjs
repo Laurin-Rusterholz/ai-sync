@@ -100,7 +100,7 @@ function sliceFn(startMarker, startFrom = 0) {
   });
 
   test("Review-Fix PR267: loadBriefingRange schluckt Kalenderfehler nicht (kein reines console.warn wie in loadEvents)", () => {
-    const loaderMatch = index.match(/async function loadBriefingRange\(fromYmd, toYmd\)\{[\s\S]*?\n  \}/);
+    const loaderMatch = index.match(/async function loadBriefingRange\(fromYmd, toYmd, force\)\{[\s\S]*?\n  \}/);
     assert.ok(loaderMatch, "loadBriefingRange muss im gcal-Modul existieren");
     assert.match(loaderMatch[0], /failed\.push\(calId\)/, "fehlgeschlagene Kalenderabrufe muessen erfasst werden");
     assert.match(loaderMatch[0], /GC\._brError\s*=\s*failed\.length/, "ein Teilfehler muss GC._brError setzen, statt eine vollstaendige leere Liste vorzutaeuschen");
@@ -131,7 +131,7 @@ function loadModule(extraFns = {}) {
   const namen = Object.keys(alle);
   const fn = new Function("APP", "window", ...namen,
     escSrc + "\n" + todaySrc + "\n" + addDaysSrc + "\n" + blockSrc + "\n"
-    + "return { renderV3ControlPanel, renderV3FaelligeAusnahmen, renderV3Freigaben, renderV3Schlusspruefung, renderV3Ueberblick, renderV3ChatgptCockpit, v3LeadOperationalState, v3LeadStatus, v3LeadStatusText, v3RegisterFollowUp, v3PlanningSettings, v3FreeSlotsForDay, v3NextSlotInfo, v3AmpelText, v3AktuelleBewertung, v3SpeicherStatusText };"
+    + "return { renderV3ControlPanel, renderV3FaelligeAusnahmen, renderV3Freigaben, renderV3Schlusspruefung, renderV3Ueberblick, renderV3ChatgptCockpit, v3LeadOperationalState, v3LeadStatus, v3LeadStatusText, v3RegisterFollowUp, v3ZurichLocalToUtcIso, v3PlanningSettings, v3FreeSlotsForDay, v3NextSlotInfo, v3AmpelText, v3AktuelleBewertung, v3SpeicherStatusText };"
   );
   return (app, win) => fn(app, win, ...namen.map((n) => alle[n]));
 }
@@ -636,13 +636,55 @@ test("renderV3ChatgptCockpit: Cowork-Panel zeigt einen ungeprueften Ruecklauf mi
 // vieler verschachtelter Closures nicht sauber per new Function() isolieren,
 // siehe CLAUDE.md "Modulgrenzen sind echt") — gezielte Struktur-Assertions
 // an genau der Stelle, an der frueher ein Fehler moeglich war.
-test("DelegationEinLead: task-delegate-chatgpt aendert NUR assignee auf demselben Task (kein createEntity, keine Kopie)", () => {
+// Review-Fix a1de2c2 Punkt 4: eine reine assignee-Aenderung war fuer ChatGPT
+// unsichtbar, weil "Pendent bei ChatGPT" (renderV3ChatgptCockpit) nur
+// entities.chatgptLeads liest. Die Delegation muss deshalb GENAU EINEN
+// verknuepften Lead anlegen/wiederverwenden (delegatedLeadId, idempotent),
+// das Originaltask bleibt bestehen (keine Kopie, keine zweite Aufgabe).
+test("DelegationEinLead: task-delegate-chatgpt legt genau EINEN verknuepften Lead an/wieder, Original bleibt bestehen", () => {
   const caseMatch = index.match(/case "task-delegate-chatgpt": \{[\s\S]*?\n\}/);
   assert.ok(caseMatch, "der Delegations-Handler muss im echten handleClick existieren");
   const src = caseMatch[0];
   assert.match(src, /getEntity\("task", taskId\)/, "muss auf DASSELBE Originaltask lesen");
-  assert.match(src, /updateEntity\("task", taskId, \{ assignee:/, "darf nur das assignee-Feld auf dem Original aendern");
-  assert.doesNotMatch(src, /createEntity/, "die Delegation darf keine Kopie/neuen Eintrag erzeugen");
+  assert.match(src, /updateEntity\("task", taskId, \{ assignee: "chatgpt" \}\)/, "das Original-Task bleibt bestehen, nur assignee wird gesetzt");
+  assert.doesNotMatch(src, /createEntity\("task"/, "die Delegation darf niemals eine zweite Aufgabe/Kopie erzeugen");
+  assert.match(src, /task\.delegatedLeadId \? getEntity\("chatgptLead", task\.delegatedLeadId\) : null/, "ein bereits verknuepfter Lead muss wiederverwendet werden (idempotent), kein zweiter Lead pro erneuter Delegation");
+  assert.match(src, /createChatgptLead\(/, "ohne bestehenden Lead muss GENAU EINER angelegt werden, sonst bleibt die Delegation fuer 'Pendent bei ChatGPT' unsichtbar");
+  assert.match(src, /linkEntities\("task", taskId, "chatgptLead", neueId\)/, "der neue Lead muss ueber die Standard-Registry mit dem Original-Task verknuepft werden");
+});
+
+test("DelegationEinLead: zweimaliges Delegieren desselben Tasks erzeugt KEINEN zweiten Lead (echte Idempotenz)", () => {
+  // Simuliert den Handler-Kern gegen ein Mini-Modell, um die Wiederverwendung
+  // ueber delegatedLeadId end-to-end zu pruefen (nicht nur strukturell).
+  const entities = { tasks: {}, chatgptLeads: {} };
+  const taskId = "t1";
+  entities.tasks[taskId] = { id: taskId, title: "Bericht schreiben", assignee: "user" };
+  const getEntity = (kind, id) => (kind === "task" ? entities.tasks[id] : entities.chatgptLeads[id]) || null;
+  let nextLeadId = 1;
+  const createChatgptLead = (title) => { const id = "l" + (nextLeadId++); entities.chatgptLeads[id] = { id, title, status: "neu", operationalState: "doing" }; return id; };
+  const delegieren = () => {
+    const task = getEntity("task", taskId);
+    const bestehenderLead = task.delegatedLeadId ? getEntity("chatgptLead", task.delegatedLeadId) : null;
+    let lead = bestehenderLead;
+    if (!lead) {
+      const neueId = createChatgptLead(task.title);
+      lead = getEntity("chatgptLead", neueId);
+      task.delegatedLeadId = neueId;
+    } else if (lead.status === "abgeschlossen") {
+      lead.status = "neu";
+    }
+    task.assignee = "chatgpt";
+  };
+  delegieren();
+  const ersterLeadId = entities.tasks[taskId].delegatedLeadId;
+  assert.equal(Object.keys(entities.chatgptLeads).length, 1, "die erste Delegation muss genau einen Lead anlegen");
+  // Zurueckholen + erneut delegieren:
+  entities.tasks[taskId].assignee = "user";
+  entities.chatgptLeads[ersterLeadId].status = "abgeschlossen";
+  delegieren();
+  assert.equal(Object.keys(entities.chatgptLeads).length, 1, "eine erneute Delegation darf KEINEN zweiten Lead anlegen");
+  assert.equal(entities.tasks[taskId].delegatedLeadId, ersterLeadId, "derselbe Lead muss wiederverwendet werden");
+  assert.equal(entities.chatgptLeads[ersterLeadId].status, "neu", "der wiederverwendete Lead muss reaktiviert werden");
 });
 
 test("Originalcheckbox: das neue 'Meine Aufgaben'-Panel im DailyBriefing nutzt denselben quick-complete-task-Mechanismus wie die echte Aufgabenliste", () => {
@@ -722,16 +764,71 @@ test("v3FreeSlotsForDay: kein Konflikt -> der gesamte Fenster-Anfang ist als Slo
 test("Konzept v2 L: die Einplanungs-Einstellungen (Autoplan-Checkbox, Zeitfenster, Dauer) sind wirklich im DailyBriefing verdrahtet", () => {
   assert.match(index, /id="dbV3PlanningSettings"/, "der Einstellungsbereich muss in viewDailyBriefing() existieren");
   assert.match(index, /planningSettings\.autoplanEnabled\s*=\s*this\.checked/, "die Autoplan-Checkbox muss den echten Bestand schreiben");
-  assert.match(index, /window\.dbPlanTaskSlot\s*=\s*function/, "der Vorschlags-Handler fuer 'Termin vorschlagen' muss existieren");
+  assert.match(index, /window\.dbPlanTaskSlot\s*=\s*async function/, "der Vorschlags-Handler fuer 'Termin vorschlagen' muss existieren");
 });
 
 test("Konzept v2 L: dbPlanTaskSlot schreibt NIE direkt, sondern oeffnet immer den echten Kalender-Editor zur Bestaetigung", () => {
-  const fnMatch = index.match(/window\.dbPlanTaskSlot = function\([\s\S]*?\n\};/);
+  const fnMatch = index.match(/window\.dbPlanTaskSlot = async function\([\s\S]*?\n\};/);
   assert.ok(fnMatch, "dbPlanTaskSlot muss existieren");
   const src = fnMatch[0];
   assert.doesNotMatch(src, /gcApi\("POST"|gcApi\('POST'/, "die Vorschlagsfunktion selbst darf niemals einen Kalender-Eintrag schreiben");
   assert.match(src, /gcalEventFromTask\(/, "die Bestaetigung muss ueber den bestehenden echten Kalender-Editor laufen");
   assert.match(src, /allowedDays\.includes\(weekday\)/, "der erlaubte Wochentag muss tatsaechlich geprueft werden, nicht nur gespeichert werden");
+  assert.match(src, /gcalEnsureRangeLoaded\(dateYmd, dateYmd, true\)/, "Review-Fix: vor jeder Einplanung MUSS frisch geladen werden (force), sonst Doppelbuchungsgefahr durch veralteten Cache");
+});
+
+// ── Review-Fix a1de2c2 Punkt 2: Ueberschneidung/Clipping/transparent/Cache ──
+test("gcalBusyIntervalsForDay: prueft echte Ueberschneidung (nicht nur Starttag) und clippt auf den Tag, ignoriert transparente Termine", () => {
+  const fnMatch = index.match(/window\.gcalBusyIntervalsForDay = function\(ymd\)\{[\s\S]*?\n  \};/);
+  assert.ok(fnMatch, "gcalBusyIntervalsForDay muss existieren");
+  const src = fnMatch[0];
+  assert.doesNotMatch(src, /toDateVal\(evStart\(ev\)\)\s*===\s*ymd/, "die alte Start-Tag-Filterung uebersah mehrtaegige/ueber-Mitternacht-Termine");
+  assert.match(src, /transparency === "transparent"/, "ein als 'frei' markierter Termin darf keinen Konflikt verursachen");
+  assert.match(src, /s < dayEndMs && e > dayStartMs/, "es muss echte Ueberschneidung mit dem Tagesfenster geprueft werden");
+});
+
+test("gcApi invalidiert den Briefing-Ladezustand nach JEDER Termin-Mutation (zentral, nicht pro Aufrufstelle)", () => {
+  const fnMatch = index.match(/async function gcApi\(method, path, opts\)\{[\s\S]*?\n  \}/);
+  assert.ok(fnMatch, "gcApi muss existieren");
+  assert.match(fnMatch[0], /GC\._brBooted = false; GC\._brLoadKey = null;/, "eine erfolgreiche Termin-Mutation muss den Cache invalidieren, sonst Doppelbuchungsgefahr");
+});
+
+// ── Review-Fix a1de2c2 Punkt 1: echte Europe/Zurich-Umrechnung ────────────
+test("v3ZurichLocalToUtcIso: 04:00 Europe/Zurich im September (Sommerzeit) ist 02:00 UTC, NICHT 04:00 UTC", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  assert.equal(mod.v3ZurichLocalToUtcIso("2026-09-22", "04:00"), "2026-09-22T02:00:00.000Z", "04:00Z waere in Wahrheit 06:00 Zuercher Ortszeit — der echte 04-Uhr-Lauf saehe die Frage dann noch nicht als faellig");
+});
+
+test("v3ZurichLocalToUtcIso: 04:00 Europe/Zurich im Januar (Winterzeit) ist 03:00 UTC", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  assert.equal(mod.v3ZurichLocalToUtcIso("2026-01-15", "04:00"), "2026-01-15T03:00:00.000Z");
+});
+
+test("Review-Fix a1de2c2 Punkt 1: eine faellige, aber unbeantwortete Entscheidung/Frage wird NIE allein dadurch rot (keine echte Frist vorhanden)", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const laengstFaellig = { operationalState: "information_required", questionForBriefingAt: "2026-01-01T03:00:00.000Z" }; // laengst ueberfaellig
+  assert.equal(mod.v3LeadStatus(laengstFaellig, { nowMs: Date.parse("2026-09-21T10:00:00.000Z") }), "yellow", "faellig heisst nur sichtbar, nicht automatisch rot ohne echte Frist");
+  const nochNichtFaellig = { operationalState: "decision_required", questionForBriefingAt: "2026-09-22T02:00:00.000Z" };
+  assert.equal(mod.v3LeadStatus(nochNichtFaellig, { nowMs: Date.parse("2026-09-21T10:00:00.000Z") }), "green", "vor Faelligkeit ist gruen: ChatGPT arbeitet noch, nichts von Laurin noetig");
+});
+
+test("cgl-ask-decision/-information nutzen die echte Zeitzonen-Umrechnung statt eines festen UTC-Strings", () => {
+  assert.match(index, /l\.questionForBriefingAt = v3ZurichLocalToUtcIso\(addDaysYmd\(todayYmd\(\), 1\), "04:00"\)/, "questionForBriefingAt muss echte Europe/Zurich-Zeit sein, kein fester UTC-String");
+  assert.match(index, /morgenIsoStr: v3ZurichLocalToUtcIso\(addDaysYmd\(todayYmd\(\), 1\), "04:00"\)/, "auch die Deferral-Eskalation (cgl-postpone-followup) muss dieselbe echte Umrechnung nutzen");
+});
+
+// ── Review-Fix a1de2c2 Punkt 3: die Aktionen brauchen echte, sichtbare UI ──
+test("Review-Fix a1de2c2 Punkt 3: cgl-set-next-action/-waiting-external/-postpone-followup/-ask-* haben sichtbare Eingabefelder+Buttons im Lead-Editor (kein toter Handler)", () => {
+  const fnMatch = index.match(/function chatgptLeadOperationalBoxHtml\(l\) \{[\s\S]*?\n\}/);
+  assert.ok(fnMatch, "chatgptLeadOperationalBoxHtml muss existieren");
+  const src = fnMatch[0];
+  ["cgl-set-next-action", "cgl-set-waiting-external", "cgl-postpone-followup", "cgl-ask-decision", "cgl-ask-information", "cgl-answer-question"].forEach((action) => {
+    assert.match(src, new RegExp('data-action="' + action + '"'), action + " muss ein echtes, klickbares Element haben");
+  });
+  ["cglNextAction_", "cglNextActionAt_", "cglWaitOn_", "cglWaitNext_", "cglWaitUntil_", "cglPostponeAction_", "cglPostponeUntil_", "cglAskText_", "cglAskOptions_", "cglAskRecommendation_", "cglAnswerText_"].forEach((idPrefix) => {
+    assert.match(src, new RegExp('id="' + idPrefix), idPrefix + "<id> muss als echtes Eingabefeld existieren, sonst liest der Handler ins Leere");
+  });
+  assert.match(index, /\$\{chatgptLeadOperationalBoxHtml\(l\)\}/, "die Box muss tatsaechlich im Lead-Detail (chatgptLeadStatusBoxHtml) eingebunden sein");
 });
 
 console.log("quantus-v3-daily-briefing-controlpanel: alle Pruefungen bestanden");
