@@ -1,13 +1,20 @@
 /*
- * DailyBriefing-Umbau nach Konzept v3 S13/S16/S18 §11.3: ganz oben nur
- * Arbeitsdeckung, Betriebszustand, letzte bestätigte Prüfung, nächster Lauf
- * und zwingende Handlungen; darunter fällige Ausnahmen und echte
- * persönliche Freigaben mit vorbereitetem Ergebnis; alles Weitere bleibt
- * kompakt/eingeklappt. Keine erfundene grüne Prüfung — fehlt eine
- * Bestätigung, muss das ausdrücklich "offen"/"noch nicht geprüft" heissen.
- * Verweise auf Aufgaben/Entscheidungen zeigen auf die echten Originalobjekte
- * (data-action="open-entity"), es gibt keinen zweiten Aufgabenbestand, und
- * nichts davon darf Habits (dailyBriefing.routines) anfassen.
+ * DailyBriefing-Umbau nach Konzept v3 S13/S16/S18 §11.3, korrigiert nach
+ * Review 94fd75f:
+ *
+ * 1) finalEvaluation ist eine HISTORISCHE Momentaufnahme (assistant-
+ *    abschluss.mjs closeRun) — sie gilt nur als aktuell, wenn phase==="final",
+ *    keine invalidatedAt UND die (einzige ohne Server-Policy pruefbare)
+ *    Revision uebereinstimmt. Sonst ausdruecklich "historisch/ungeprüft",
+ *    NIE ein gruenes aktuelles Label (S13).
+ * 2) storage.status wird u. a. rein aus countEntities() gesetzt — niemals
+ *    als "Server bestätigt" ausgeben, nur "lokal synchronisiert/unbekannt".
+ * 3) Keine neue Abstimmungs-Mutation ohne Nutzeridentitaet/Version — Ja/Nein
+ *    wurde entfernt, "Freigaben" verlinkt nur auf die echte Entscheidung.
+ *    Eine Beschreibung allein macht daraus keine erfundene "Freigabe".
+ * 4) Ein sichtbarer, kompakter Ueberblick (Projekte, KI-Pendente, eigene
+ *    Aufgaben, Termine, Dokumente/Messwerte) ergaenzt das eingeklappte
+ *    "Weitere Bereiche" — echte Zahlen, unbekannte explizit gekennzeichnet.
  *
  * Diese Tests extrahieren die ECHTEN Funktionen aus public/index.html.
  */
@@ -40,14 +47,21 @@ function sliceFn(startMarker, startFrom = 0) {
   const posAusnahmen = vdbSrc.indexOf('id="dbV3Ausnahmen"');
   const posStatus = vdbSrc.indexOf('id="dbV3Status"');
   const posSchluss = vdbSrc.indexOf('id="dbV3Schlusspruefung"');
+  const posUeberblick = vdbSrc.indexOf('id="dbV3Ueberblick"');
   const posSecondary = vdbSrc.indexOf('id="dbSecondarySections"');
   const posTagesziele = vdbSrc.indexOf("<!-- Tagesziele -->");
   const posVergangeneTage = vdbSrc.indexOf("<!-- Vergangene Tage -->");
 
   test("Kontrollbereich steht ganz oben, vor allem anderen v3-Material (S18 §11.3)", () => {
-    assert.ok([posKontrolle, posAusnahmen, posStatus, posSchluss, posSecondary].every((p) => p > 0), "eine der neuen Sektionen fehlt in viewDailyBriefing()");
-    assert.ok(posKontrolle < posAusnahmen && posAusnahmen < posStatus && posStatus < posSchluss && posSchluss < posSecondary,
-      "Reihenfolge muss Kontrollbereich -> Ausnahmen/Freigaben -> Automatisches Tagesbriefing -> Schlussprüfung -> Weitere Bereiche sein");
+    assert.ok([posKontrolle, posAusnahmen, posStatus, posSchluss, posUeberblick, posSecondary].every((p) => p > 0), "eine der neuen Sektionen fehlt in viewDailyBriefing()");
+    assert.ok(posKontrolle < posAusnahmen && posAusnahmen < posStatus && posStatus < posSchluss && posSchluss < posUeberblick && posUeberblick < posSecondary,
+      "Reihenfolge muss Kontrollbereich -> Ausnahmen/Freigaben -> Automatisches Tagesbriefing -> Schlussprüfung -> Ueberblick -> Weitere Bereiche sein");
+  });
+
+  test("Befund 4: der Ueberblick ist SICHTBAR (kein <details>), nicht im eingeklappten Bereich versteckt", () => {
+    const stueck = vdbSrc.slice(posUeberblick - 20, posUeberblick + 20);
+    assert.doesNotMatch(stueck, /<details/, "der Ueberblick muss ausserhalb des eingeklappten <details> sichtbar sein");
+    assert.ok(posUeberblick < posSecondary, "der Ueberblick muss vor dem eingeklappten Bereich stehen");
   });
 
   test("die 'Weitere Bereiche' sind wirklich eingeklappt (<details>) und liegen NACH dem Kontrollbereich", () => {
@@ -66,6 +80,10 @@ function sliceFn(startMarker, startFrom = 0) {
     assert.ok(!/routines/.test(vorSecondary), "der neue Kontroll-/Ausnahmen-/Schlusspruefungs-Bereich darf Habits (dailyBriefing.routines) nicht anfassen");
     assert.ok(!/toggleHabitToday|toggleHabitSubUnit|incHabitToday/.test(vorSecondary), "keine Habit-Toggle-Funktionen im neuen Bereich");
   });
+
+  test("Befund 3: keine neue Abstimmungs-Mutation mehr im Datei — dbDecideDecision/votes.push wurde entfernt", () => {
+    assert.ok(!/dbDecideDecision/.test(index), "dbDecideDecision darf nach Review 94fd75f nicht mehr existieren");
+  });
 }
 
 // ── Extraktion der echten Hilfsfunktionen ──────────────────────────────────
@@ -80,12 +98,13 @@ assert.ok(blockStart > 0, "V3_AMPEL_LABEL wurde nicht gefunden");
 const schluss = sliceFn("function renderV3Schlusspruefung(runV3, selectedDate) {", blockStart);
 const blockSrc = index.slice(blockStart, schluss.end);
 
-function loadModule() {
-  const fn = new Function("APP", "window",
+function loadModule(extraFns = {}) {
+  const namen = Object.keys(extraFns);
+  const fn = new Function("APP", "window", ...namen,
     escSrc + "\n" + todaySrc + "\n" + addDaysSrc + "\n" + blockSrc + "\n"
-    + "return { renderV3ControlPanel, renderV3FaelligeAusnahmen, renderV3Freigaben, renderV3Schlusspruefung, v3NextSlotInfo, v3AmpelText, dbDecideDecision: window.dbDecideDecision };"
+    + "return { renderV3ControlPanel, renderV3FaelligeAusnahmen, renderV3Freigaben, renderV3Schlusspruefung, renderV3Ueberblick, v3NextSlotInfo, v3AmpelText, v3AktuelleBewertung, v3SpeicherStatusText };"
   );
-  return fn;
+  return (app, win) => fn(app, win, ...namen.map((n) => extraFns[n]));
 }
 
 function appWith(data, storage) {
@@ -106,14 +125,49 @@ test("renderV3ControlPanel: ohne jeden Lauf -> 'noch nicht geprüft'/'noch nicht
   assert.match(html, /Keine zwingenden Handlungen/);
 });
 
-test("renderV3ControlPanel: mit echter finalEvaluation werden Arbeitsdeckung/Betriebszustand korrekt getrennt gezeigt (S13)", () => {
+// ── Befund 1: finalEvaluation ist historisch — nur bei phase=final, keiner
+// Invalidierung UND uebereinstimmender automation.dataRevision aktuell. ────
+test("Befund 1: finalEvaluation OHNE phase=final gilt als historisch — kein gruenes aktuelles Label", () => {
   const win = {};
-  const runV3 = { finalEvaluation: { coverage: "green", operations: "yellow" }, finalAt: "2026-09-21T23:10:00.000Z", closureRevision: 7 };
-  const mod = loadModule()(appWith({ entities: {} }), win);
+  // Dieselbe Bewertung wie im 'aktuellen' Test unten, aber OHNE phase:"final".
+  const runV3 = { finalEvaluation: { coverage: "green", operations: "yellow", evaluatedRevision: 5 }, finalAt: "2026-09-21T23:10:00.000Z", closureRevision: 7 };
+  const data = { entities: {}, automation: { dataRevision: 5 } };
+  const mod = loadModule()(appWith(data), win);
   const html = mod.renderV3ControlPanel("2026-09-21", runV3, []);
-  assert.match(html, /🟢 in Ordnung/, "Arbeitsdeckung (coverage) muss gruen erscheinen");
+  assert.doesNotMatch(html, /🟢|🟡/, "ohne phase='final' darf niemals ein farbiges aktuelles Label erscheinen");
+  assert.match(html, /historisch \(nicht mehr aktuell\)/);
+});
+
+test("Befund 1: finalEvaluation MIT phase=final, aber veraenderter automation.dataRevision seither -> historisch, nie gruen", () => {
+  const win = {};
+  const runV3 = { phase: "final", finalEvaluation: { coverage: "green", operations: "green", evaluatedRevision: 5 }, finalAt: "2026-09-21T23:10:00.000Z", closureRevision: 7 };
+  const data = { entities: {}, automation: { dataRevision: 9 } }; // Bestand hat sich seither geaendert
+  const mod = loadModule()(appWith(data), win);
+  const html = mod.renderV3ControlPanel("2026-09-21", runV3, []);
+  assert.doesNotMatch(html, /🟢/, "eine veraenderte Revision darf niemals eine gruene Bewertung zeigen");
+  assert.match(html, /historisch \(nicht mehr aktuell\)/);
+  assert.match(html, /Bestand hat sich seither geändert/);
+});
+
+test("Befund 1: ein WIDERRUFENER Abschluss (invalidatedAt gesetzt) gilt niemals als aktuell", () => {
+  const win = {};
+  const runV3 = { phase: "exception_open", invalidatedAt: "2026-09-21T23:50:00.000Z", finalEvaluation: { coverage: "green", operations: "green", evaluatedRevision: 5 } };
+  const data = { entities: {}, automation: { dataRevision: 5 } };
+  const mod = loadModule()(appWith(data), win);
+  const html = mod.renderV3ControlPanel("2026-09-21", runV3, []);
+  assert.doesNotMatch(html, /🟢/, "ein widerrufener Abschluss darf niemals gruen erscheinen");
+});
+
+test("Befund 1: phase=final MIT uebereinstimmender Revision UND ohne Widerruf -> Arbeitsdeckung/Betriebszustand duerfen als aktuell (getrennt) gezeigt werden (S13)", () => {
+  const win = {};
+  const runV3 = { phase: "final", finalEvaluation: { coverage: "green", operations: "yellow", evaluatedRevision: 5 }, finalAt: "2026-09-21T23:10:00.000Z", closureRevision: 7 };
+  const data = { entities: {}, automation: { dataRevision: 5 } }; // gleiche Revision wie evaluatedRevision
+  const mod = loadModule()(appWith(data), win);
+  const html = mod.renderV3ControlPanel("2026-09-21", runV3, []);
+  assert.match(html, /🟢 in Ordnung/, "Arbeitsdeckung (coverage) darf bei echter, aktueller Bewertung gruen erscheinen");
   assert.match(html, /🟡 zu prüfen/, "Betriebszustand (operations) muss GETRENNT von coverage gelb erscheinen, nicht gruen");
   assert.match(html, /Revision 7/);
+  assert.doesNotMatch(html, /historisch/);
 });
 
 test("renderV3ControlPanel: ueberfaellige Aufgabe erscheint als zwingende Handlung MIT Verweis auf das echte Originalobjekt", () => {
@@ -142,6 +196,24 @@ test("renderV3ControlPanel: fehlende Mail-Pruefung heute wird als zwingende Hand
   assert.equal(typeof html, "string");
 });
 
+// ── Befund 2: storage.status niemals als "Server bestätigt" ausgeben ──────
+test("Befund 2: storage.status='saved' (auch reine countEntities-Vermutung) wird NIE als 'Server bestätigt' ausgegeben", () => {
+  const mod = loadModule()(appWith({ entities: {} }, { status: "saved" }), {});
+  const text = mod.v3SpeicherStatusText();
+  assert.doesNotMatch(text, /Server bestätigt/);
+  assert.match(text, /Lokal synchronisiert.*unbekannt/);
+});
+test("Befund 2: 'idle'/'warning'/unbekannter Status ebenfalls nie 'Server bestätigt'", () => {
+  for (const s of ["idle", "warning", undefined, "irgendwas"]) {
+    const mod = loadModule()(appWith({ entities: {} }, { status: s }), {});
+    assert.doesNotMatch(mod.v3SpeicherStatusText(), /Server bestätigt/, `Status '${s}' darf nicht als bestätigt gelten`);
+  }
+});
+test("Befund 2: 'offline'/'error'/'auth_required' bleiben ehrlich als nicht synchronisiert erkennbar", () => {
+  assert.match(loadModule()(appWith({ entities: {} }, { status: "offline" }), {}).v3SpeicherStatusText(), /nicht synchronisiert/);
+  assert.match(loadModule()(appWith({ entities: {} }, { status: "error" }), {}).v3SpeicherStatusText(), /Nicht synchronisiert/);
+});
+
 // ── 2) renderV3FaelligeAusnahmen: S13 fehlende Pflichtquelle bleibt offen/rot ──
 test("renderV3FaelligeAusnahmen: ohne Ausnahmen ein ehrlicher Leerzustand", () => {
   const mod = loadModule()(appWith({ entities: {} }), {});
@@ -164,45 +236,68 @@ test("renderV3FaelligeAusnahmen: bald faellige (aber nicht ueberfaellige) Entsch
   assert.match(html, /Reise buchen/);
 });
 
-// ── 3) renderV3Freigaben: Originalobjekte, kein zweiter Bestand ────────────
-test("renderV3Freigaben: ohne vorbereitete Entscheidung ein ehrlicher Leerzustand", () => {
+// ── Befund 3: Freigaben nur noch Verweis auf Originalentscheidung, keine
+// neue Mutation, keine erfundene "Freigabe" nur wegen Beschreibungstext. ────
+test("Befund 3: renderV3Freigaben ohne offene Entscheidung ein ehrlicher Leerzustand", () => {
   const mod = loadModule()(appWith({ entities: {} }), {});
-  assert.match(mod.renderV3Freigaben(), /Keine vorbereiteten Freigaben/);
+  assert.match(mod.renderV3Freigaben(), /Keine offenen Freigaben/);
 });
 
-test("renderV3Freigaben: offene Entscheidung MIT Beschreibung erscheint mit Ja/Nein, die das Originalobjekt aendern", () => {
-  const data = { entities: { decisions: { d1: { id: "d1", title: "Budget erhoehen?", description: "Antrag liegt vor.", status: "open", votes: [] } } } };
+test("Befund 3: eine offene Entscheidung OHNE Beschreibung erscheint trotzdem — Beschreibung ist kein Kriterium mehr", () => {
+  const data = { entities: { decisions: { d1: { id: "d1", title: "Ohne Beschreibungstext", status: "open" } } } };
+  const mod = loadModule()(appWith(data), {});
+  const html = mod.renderV3Freigaben();
+  assert.match(html, /Ohne Beschreibungstext/, "eine fehlende Beschreibung darf eine echte offene Entscheidung nicht ausblenden");
+});
+
+test("Befund 3: KEIN Ja/Nein-Knopf, KEINE dbDecideDecision-Mutation mehr — nur Verweis auf die echte Entscheidung", () => {
+  const data = { entities: { decisions: { d1: { id: "d1", title: "Budget erhoehen?", description: "Antrag liegt vor.", status: "open", votes: [{ vote: "yes" }] } } } };
   const mod = loadModule()(appWith(data), {});
   const html = mod.renderV3Freigaben();
   assert.match(html, /Budget erhoehen\?/);
-  assert.match(html, /window\.dbDecideDecision\('d1','yes'\)/);
-  assert.match(html, /window\.dbDecideDecision\('d1','no'\)/);
-  assert.match(html, /data-action="open-entity" data-kind="decision" data-id="d1"/);
+  assert.match(html, /data-action="open-entity" data-kind="decision" data-id="d1"/, "muss auf die bestehende, bereits geprüfte Bearbeitung verlinken");
+  assert.doesNotMatch(html, /dbDecideDecision|👍|👎|<button/, "keine neue Abstimmungs-UI mehr");
+  assert.match(html, /1 Stimme/, "bestehende echte Stimmen duerfen weiter angezeigt werden");
 });
 
-test("renderV3Freigaben: eine Entscheidung OHNE Beschreibung gilt nicht als 'vorbereitet' und erscheint nicht", () => {
-  const data = { entities: { decisions: { d1: { id: "d1", title: "Ohne Inhalt", status: "open" } } } };
+test("Befund 3: ueberfaellige/bald faellige Entscheidungen werden hier NICHT doppelt gezeigt (stehen schon bei Handlungen/Ausnahmen)", () => {
+  const heute = new Date().toISOString().slice(0, 10);
+  const data = { entities: { decisions: {
+    ueberfaellig: { id: "ueberfaellig", title: "Laengst faellig", status: "open", deadline: "2000-01-01" },
+    baldFaellig: { id: "baldFaellig", title: "Bald faellig", status: "open", deadline: heute },
+    normal: { id: "normal", title: "Ohne Eile", status: "open" },
+  } } };
   const mod = loadModule()(appWith(data), {});
-  assert.doesNotMatch(mod.renderV3Freigaben(), /Ohne Inhalt/);
+  const html = mod.renderV3Freigaben();
+  assert.doesNotMatch(html, /Laengst faellig/);
+  assert.doesNotMatch(html, /Bald faellig/);
+  assert.match(html, /Ohne Eile/);
 });
 
-test("dbDecideDecision schreibt DIREKT ins Originalobjekt (entities.decisions), kein zweiter Bestand, kein Habit-Write", () => {
-  const dc = { id: "d1", title: "x", votes: [] };
-  const data = { entities: { decisions: { d1: dc } } };
-  let saved = false, rendered = false;
-  const win = {};
-  const getEntity = (kind, id) => (kind === "decision" ? data.entities.decisions[id] : null);
-  const scheduleSave = () => { saved = true; };
-  const render = () => { rendered = true; };
-  const nowIso = () => "2026-09-21T10:00:00.000Z";
-  const fn = new Function("APP", "window", "getEntity", "scheduleSave", "render", "nowIso",
-    escSrc + "\n" + todaySrc + "\n" + addDaysSrc + "\n" + blockSrc + "\nreturn window.dbDecideDecision;");
-  const decide = fn(appWith(data), win, getEntity, scheduleSave, render, nowIso);
-  decide("d1", "yes");
-  assert.equal(dc.votes.length, 1, "das ECHTE Objekt aus entities.decisions muss veraendert werden");
-  assert.equal(dc.votes[0].vote, "yes");
-  assert.ok(saved && rendered, "scheduleSave() und render() muessen aufgerufen werden");
-  assert.equal(data.dailyBriefing, undefined, "dbDecideDecision darf niemals dailyBriefing.routines (Habits) beruehren");
+// ── Befund 4: sichtbarer, kompakter Ueberblick — echte Zahlen, Unbekanntes markiert ──
+test("Befund 4: renderV3Ueberblick zeigt echte Zaehlwerte je Kategorie und markiert Dokumente/Messwerte ehrlich als nicht erfasst", () => {
+  const mod = loadModule({
+    chatgptLeadsUnreadCount: () => 2,
+    chatgptTasksOpenCount: () => 3,
+  })(appWith({ entities: {} }), {});
+  const html = mod.renderV3Ueberblick({
+    allProjects: [{ id: "p1" }, { id: "p2" }],
+    overdueTasks: [{ id: "t1" }],
+    upcomingTasks: [{ id: "t2" }, { id: "t3" }],
+    calEvents: [{ id: "c1" }],
+    allMeetings: [],
+  });
+  assert.match(html, /2 aktiv\/in Planung/, "Projektzahl muss aus den echten, bereits berechneten Bestaenden kommen");
+  assert.match(html, /5 offen \(Leads 2, Aufgaben 3\)/, "KI-Pendente muessen die bestehenden echten Zaehlfunktionen nutzen");
+  assert.match(html, /1 überfällig, 2 anstehend/);
+  assert.match(html, /1 heute, 0 diese Woche/);
+  assert.match(html, /nicht erfasst/, "Dokumente/Messwerte duerfen keine erfundene Zahl zeigen");
+});
+
+test("Befund 4: fehlen die KI-Zaehlfunktionen, wird ehrlich 'unbekannt' gezeigt statt einer geratenen Zahl", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {}); // keine chatgptLeadsUnreadCount/chatgptTasksOpenCount uebergeben
+  const html = mod.renderV3Ueberblick({ allProjects: [], overdueTasks: [], upcomingTasks: [], calEvents: [], allMeetings: [] });
+  assert.match(html, /KI-Pendente[\s\S]*?unbekannt/);
 });
 
 // ── 4) renderV3Schlusspruefung: nie eine erfundene abgeschlossene Pruefung ──
