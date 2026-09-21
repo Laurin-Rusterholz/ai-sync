@@ -35,10 +35,11 @@ const ok = (condition, message) => { assert.ok(condition, message); checks++; };
 function loadRenderer() {
   const start = index.indexOf("const V3_MONTHLY_CAP_MICROS = 50_000_000;");
   ok(start > 0, "die Betriebs-Kostenfreigabe (V3_MONTHLY_CAP_MICROS) wurde nicht gefunden");
-  // Endet VOR dem manuellen Auslöser-Knopf (`dbRunV3EmailBriefing`, referenziert
-  // `window`, das hier nicht bereitgestellt wird) — dieser wird eigenstaendig in
-  // tests/quantus-v3-email-briefing-button.test.mjs geprueft.
-  const end = index.indexOf("\nasync function dbRunV3EmailBriefing() {", start);
+  // Endet VOR dem Kontrollbereich/Schlusspruefung-Block und dem manuellen
+  // Auslöser-Knopf (beide referenzieren `window`, das hier nicht bereitgestellt
+  // wird) — die werden eigenstaendig in tests/quantus-v3-daily-briefing-controlpanel.test.mjs
+  // bzw. tests/quantus-v3-email-briefing-button.test.mjs geprueft.
+  const end = index.indexOf("\n/* ══ Kontrollbereich, Ausnahmen/Freigaben, Schlussprüfung", start);
   ok(end > start, "Ende von renderV3AutomationStatus() nicht bestimmbar");
   const escStart = index.indexOf("\nfunction esc(s){");
   ok(escStart > 0, "die top-level esc()-Funktion wurde nicht gefunden");
