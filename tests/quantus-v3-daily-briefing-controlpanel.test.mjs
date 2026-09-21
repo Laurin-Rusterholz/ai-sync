@@ -146,7 +146,6 @@ test("Befund 1: finalEvaluation MIT phase=final, aber veraenderter automation.da
   const html = mod.renderV3ControlPanel("2026-09-21", runV3, []);
   assert.doesNotMatch(html, /🟢/, "eine veraenderte Revision darf niemals eine gruene Bewertung zeigen");
   assert.match(html, /historisch \(nicht mehr aktuell\)/);
-  assert.match(html, /Bestand hat sich seither geändert/);
 });
 
 test("Befund 1: ein WIDERRUFENER Abschluss (invalidatedAt gesetzt) gilt niemals als aktuell", () => {
@@ -158,16 +157,22 @@ test("Befund 1: ein WIDERRUFENER Abschluss (invalidatedAt gesetzt) gilt niemals 
   assert.doesNotMatch(html, /🟢/, "ein widerrufener Abschluss darf niemals gruen erscheinen");
 });
 
-test("Befund 1: phase=final MIT uebereinstimmender Revision UND ohne Widerruf -> Arbeitsdeckung/Betriebszustand duerfen als aktuell (getrennt) gezeigt werden (S13)", () => {
+// Sicherheitsnachtrag (nach ad84f54): ein Revisionsvergleich allein reicht
+// NICHT — Fristen/Quellen koennen rein durch Zeitablauf (validUntil) altern,
+// ohne dass sich automation.dataRevision aendert. Ohne echte Serverpolicy
+// darf deshalb selbst eine UNVERAENDERTE Revision niemals "aktuell gruen"
+// ergeben — jede finalEvaluation bleibt ausschliesslich historisch.
+test("Sicherheitsnachtrag: phase=final, invalidatedAt fehlt, UNVERAENDERTE Revision — trotzdem niemals aktuell/gruen (Zeitablauf nicht pruefbar)", () => {
   const win = {};
   const runV3 = { phase: "final", finalEvaluation: { coverage: "green", operations: "yellow", evaluatedRevision: 5 }, finalAt: "2026-09-21T23:10:00.000Z", closureRevision: 7 };
-  const data = { entities: {}, automation: { dataRevision: 5 } }; // gleiche Revision wie evaluatedRevision
+  const data = { entities: {}, automation: { dataRevision: 5 } }; // exakt gleiche Revision wie evaluatedRevision
   const mod = loadModule()(appWith(data), win);
   const html = mod.renderV3ControlPanel("2026-09-21", runV3, []);
-  assert.match(html, /🟢 in Ordnung/, "Arbeitsdeckung (coverage) darf bei echter, aktueller Bewertung gruen erscheinen");
-  assert.match(html, /🟡 zu prüfen/, "Betriebszustand (operations) muss GETRENNT von coverage gelb erscheinen, nicht gruen");
+  assert.doesNotMatch(html, /🟢|🟡 zu prüfen/, "eine unveraenderte Revision allein darf ohne Server-Policy niemals als aktuell/gruen/gelb gelten");
+  assert.match(html, /historisch \(nicht mehr aktuell\)/, "muss trotz gleicher Revision als historisch gekennzeichnet sein");
+  // Das Datum des echten letzten Abschlusses bleibt trotzdem sichtbar.
   assert.match(html, /Revision 7/);
-  assert.doesNotMatch(html, /historisch/);
+  assert.match(html, /nur historischer Stand/);
 });
 
 test("renderV3ControlPanel: ueberfaellige Aufgabe erscheint als zwingende Handlung MIT Verweis auf das echte Originalobjekt", () => {
