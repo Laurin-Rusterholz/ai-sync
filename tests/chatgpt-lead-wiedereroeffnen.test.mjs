@@ -39,7 +39,16 @@ function schnitt(vonText, bisText, wasIst) {
 const meta = schnitt("const CGL_STATUS_META = {", "function chatgptLeadCard", "die Lead-Grunddaten");
 const boxen = schnitt("function chatgptLeadCloseHistory(l) {", "// Bewertung & Zuweisung als eigener Schritt",
   "der Abschluss-Kasten");
-const statusBox = schnitt("function chatgptLeadStatusBoxHtml(l) {", "function chatgptLeadCloseHistory(l) {",
+// Review-Fix (Konzept v2): chatgptLeadOperationalBoxHtml() braucht die echten
+// Betriebsmodell-Funktionen (v3LeadOperationalState/v3LeadStatus/-Text) — sie
+// stehen weiter oben in derselben Datei und werden hier separat ausgeschnitten.
+const v3Modell = schnitt("const V3_OPERATIONAL_STATES = Object.freeze([",
+  "function v3LeadStatusText(l, opts) { return V3_STATUS_LABEL[v3LeadStatus(l, opts)] || V3_STATUS_LABEL.unknown; }",
+  "das Betriebsmodell (v3LeadStatus)") + 'function v3LeadStatusText(l, opts) { return V3_STATUS_LABEL[v3LeadStatus(l, opts)] || V3_STATUS_LABEL.unknown; }\n';
+// chatgptLeadStatusBoxHtml ruft zusaetzlich chatgptLeadOperationalBoxHtml(l)
+// auf (Betriebsmodell-Aktionen) — die Definition liegt unmittelbar davor und
+// muss mit ausgeschnitten werden, sonst ReferenceError beim Bauen des Test-Scopes.
+const statusBox = schnitt("function chatgptLeadOperationalBoxHtml(l) {", "function chatgptLeadCloseHistory(l) {",
   "der Status-Kasten");
 const feldHandler = schnitt("  if (action === \"cgl-status\") {", "\n  return false;\n}",
   "der Statuswechsel");
@@ -82,7 +91,7 @@ function bauen(lead) {
   const namen = Object.keys(scope);
   // eslint-disable-next-line no-new-func
   const zugriff = new Function(...namen,
-    "with (window) {\n" + meta + "\n" + statusBox + "\n" + boxen + "\n" + handler +
+    "with (window) {\n" + meta + "\n" + v3Modell + "\n" + statusBox + "\n" + boxen + "\n" + handler +
     "\nfunction statusWechsel(el){ const action = \"cgl-status\"; const leads = window.__leads; "
     + feldHandler + "\n return false; }" +
     "\nreturn { closeBox: chatgptLeadCloseBoxHtml, statusBox: chatgptLeadStatusBoxHtml,"
@@ -200,11 +209,18 @@ const BRIEFING = () => ({
   eq(t.lead.title, "Gmail-Briefing 01.08.–01.09.2026", "der Titel wurde verändert");
 
   // Und der Lead lässt sich erneut abschliessen und erneut öffnen — reversibel.
+  // Review-Fix a1de2c2 Punkt 5: operationalState ist fuehrend und wird NICHT
+  // mehr aus status abgeleitet, sobald es einmal gesetzt wurde — ohne
+  // explizites Nachziehen in cgl-close/cgl-reopen-do bliebe hier ein
+  // veralteter Zustand stehen, obwohl status sich laengst geaendert hat.
+  t.lead.operationalState = "waiting_external"; // simuliert einen zuvor gesetzten Spezialzustand
   t.klick("cgl-close");
   eq(t.lead.status, "abgeschlossen", "der wieder geöffnete Lead liess sich nicht erneut abschliessen");
+  eq(t.lead.operationalState, "done", "operationalState muss beim Abschliessen auf 'done' nachgezogen werden, sonst bleibt ein alter Zustand stehen");
   t.klick("cgl-reopen-ask");
   t.klick("cgl-reopen-do", { cglReopenStatus: "wartet", cglReopenGrund: "Nochmals offen", cglReopenBlocked: "Antwort der Bank" });
   eq(t.lead.status, "wartet", "die zweite Wiedereröffnung schlug fehl");
+  eq(t.lead.operationalState, "doing", "eine Wiedereroeffnung muss operationalState zuruecksetzen, sonst bleibt 'done' stehen, obwohl der Lead wieder aktiv ist");
   eq(t.lead.blockedReason, "Antwort der Bank", "„Wartet“ hat nicht festgehalten, was fehlt");
   eq(t.lead.closeHistory.length, 2, "die Historie sammelt nicht");
 }
@@ -224,10 +240,12 @@ const BRIEFING = () => ({
   eq(t.lead.status, "abgeschlossen", "der Ausnahmeweg schliesst nicht mehr");
   eq(t.lead.closedBy, "laurin", "die Ausnahme wird nicht als Laurins vermerkt");
   eq(t.lead.obsoleteReason, "Anfrage hat sich erledigt", "der Grund wurde nicht vermerkt");
+  eq(t.lead.operationalState, "cancelled", "Review-Fix a1de2c2 Punkt 5: 'hinfällig geschlossen' muss operationalState auf 'cancelled' setzen, nicht 'done' oder unveraendert lassen");
   // Auch das ist umkehrbar — und der Grund bleibt in der Historie.
   t.klick("cgl-reopen-ask");
   t.klick("cgl-reopen-do", { cglReopenStatus: "neu", cglReopenGrund: "doch noch aktuell", cglReopenBlocked: "" });
   eq(t.lead.status, "neu", "ein hinfällig geschlossener Lead liess sich nicht wieder öffnen");
+  eq(t.lead.operationalState, "doing", "auch nach dem hinfaellig-Weg muss die Wiedereroeffnung operationalState zuruecksetzen");
   eq(t.lead.obsoleteReason, null, "der Hinfälligkeitsgrund steht weiterhin als aktuell da");
   eq(t.lead.closeHistory[0].obsoleteReason, "Anfrage hat sich erledigt",
     "der Hinfälligkeitsgrund ging verloren statt in die Historie zu wandern");
