@@ -84,6 +84,12 @@ function sliceFn(startMarker, startFrom = 0) {
   test("Befund 3: keine neue Abstimmungs-Mutation mehr im Datei — dbDecideDecision/votes.push wurde entfernt", () => {
     assert.ok(!/dbDecideDecision/.test(index), "dbDecideDecision darf nach Review 94fd75f nicht mehr existieren");
   });
+
+  test("Kalender-Live-Fix: das echte gcal-Modul exportiert gcalEventsInRange/gcalStatusSnapshot/gcalEnsureLoaded", () => {
+    assert.match(index, /window\.gcalEventsInRange\s*=\s*function/, "gcalEventsInRange muss im echten gcal-Modul exportiert sein, sonst bleibt renderV3Ueberblick beim Nullbestand");
+    assert.match(index, /window\.gcalStatusSnapshot\s*=\s*function/, "gcalStatusSnapshot muss im echten gcal-Modul exportiert sein");
+    assert.match(index, /window\.gcalEnsureLoaded\s*=\s*gcalEnsureLoaded/, "gcalEnsureLoaded muss im echten gcal-Modul exportiert sein, sonst startet nie ein Ladevorgang");
+  });
 }
 
 // ── Extraktion der echten Hilfsfunktionen ──────────────────────────────────
@@ -286,20 +292,18 @@ test("Befund 4: renderV3Ueberblick zeigt echte Zaehlwerte je Kategorie und marki
       chatgptLeads: { l1: { status: "neu" }, l2: { status: "abgeschlossen" } },
       chatgptTasks: { t1: { state: "offen" }, t2: { state: "erledigt" } },
     },
-    meta: { updatedAt: "2026-09-21T08:00:00.000Z" },
   };
-  const mod = loadModule()(appWith(data), {});
+  const win = { gcalStatusSnapshot: () => ({ connected: false }) };
+  const mod = loadModule()(appWith(data), win);
   const html = mod.renderV3Ueberblick({
     allProjects: [{ id: "p1" }, { id: "p2" }],
     overdueTasks: [{ id: "t1" }],
     upcomingTasks: [{ id: "t2" }, { id: "t3" }],
-    calEvents: [{ id: "c1" }],
-    allMeetings: [],
+    selectedDate: "2026-09-21", future7Str: "2026-09-28",
   });
   assert.match(html, /2 aktiv\/in Planung/, "Projektzahl muss aus den echten, bereits berechneten Bestaenden kommen");
   assert.match(html, /2 offen \(Leads 1, Aufgaben 1\)/, "nur der wirklich offene Lead/die wirklich offene Aufgabe zaehlen");
   assert.match(html, /1 überfällig, 2 anstehend/);
-  assert.match(html, /lokaler Bestand: 1 heute, 0 Meetings diese Woche; Google-Kalender nicht live geprüft/, "Kalenderzeile muss als lokaler Bestand ohne Live-Pruefung gekennzeichnet sein");
   assert.match(html, /nicht erfasst/, "Dokumente/Messwerte duerfen keine erfundene Zahl zeigen");
 });
 
@@ -320,19 +324,45 @@ test("Regressionstest: 5 bereits gelesene, aber offene Leads (u. a. 'wartet') we
       chatgptTasks: {},
     },
   };
-  const mod = loadModule()(appWith(data), {});
-  const html = mod.renderV3Ueberblick({ allProjects: [], overdueTasks: [], upcomingTasks: [], calEvents: [], allMeetings: [] });
+  const win = { gcalStatusSnapshot: () => ({ connected: false }) };
+  const mod = loadModule()(appWith(data), win);
+  const html = mod.renderV3Ueberblick({ allProjects: [], overdueTasks: [], upcomingTasks: [], selectedDate: "2026-09-21", future7Str: "2026-09-28" });
   assert.match(html, /5 offen \(Leads 5, Aufgaben 0\)/, "5 gelesene, aber offene Leads (inkl. 'wartet') duerfen nicht verschwiegen werden");
   assert.doesNotMatch(html, /KI-Pendente[\s\S]*?0 offen/, "die alte Unread-Logik (faelschlich 0) darf nicht wieder auftreten");
 });
 
-// Einzeilige Schlusskorrektur: meta.updatedAt ist ein allgemeiner
-// App-Zeitstempel, KEIN Kalender-Ladesignal — die Kalenderzeile behauptet
-// deshalb nie eine Live-Pruefung, unabhaengig von meta.updatedAt.
-test("Kalenderzeile behauptet nie eine Live-Pruefung, auch ohne meta.updatedAt", () => {
-  const mod = loadModule()(appWith({ entities: {} }), {}); // kein meta.updatedAt
-  const html = mod.renderV3Ueberblick({ allProjects: [], overdueTasks: [], upcomingTasks: [], calEvents: [], allMeetings: [] });
-  assert.match(html, /lokaler Bestand: 0 heute, 0 Meetings diese Woche; Google-Kalender nicht live geprüft/);
+// ── Konzept v2 H, konkreter Bug (Live-Test 21.09.): Kalender zeigte 0 statt
+// 59 echter Termine, weil entities.calendarEvents/meetings nie vom echten
+// Google-Sync befuellt werden (der lebt in der Modulvariable GC.events).
+// Ab jetzt liest renderV3Ueberblick den ECHTEN Adapter (window.gcal*). ────
+test("Regressionstest: Google Kalender verbunden und geladen -> echte Live-Zahlen statt lokalem Nullbestand", () => {
+  const win = {
+    gcalStatusSnapshot: () => ({ connected: true, booted: true, loading: false }),
+    gcalEventsForDay: (ymd) => (ymd === "2026-09-21" ? new Array(3).fill(0) : []),
+    gcalEventsInRange: (from, to) => (from === "2026-09-21" && to === "2026-09-28" ? new Array(59).fill(0) : []),
+  };
+  const mod = loadModule()(appWith({ entities: {} }), win);
+  const html = mod.renderV3Ueberblick({ allProjects: [], overdueTasks: [], upcomingTasks: [], selectedDate: "2026-09-21", future7Str: "2026-09-28" });
+  assert.match(html, /3 heute, 59 diese Woche \(Google Kalender\)/, "die echten Google-Kalender-Zahlen muessen erscheinen, kein lokaler Nullbestand");
+});
+
+test("Kalenderzeile: nicht verbunden wird ehrlich als 'nicht verbunden' gezeigt, keine erfundene Zahl", () => {
+  const win = { gcalStatusSnapshot: () => ({ connected: false }) };
+  const mod = loadModule()(appWith({ entities: {} }), win);
+  const html = mod.renderV3Ueberblick({ allProjects: [], overdueTasks: [], upcomingTasks: [], selectedDate: "2026-09-21", future7Str: "2026-09-28" });
+  assert.match(html, /Termine[\s\S]*?nicht verbunden/);
+});
+
+test("Kalenderzeile: verbunden, aber noch nicht geladen -> 'wird geladen' UND stoesst gcalEnsureLoaded() an (kein stiller Nullbestand)", () => {
+  let ensureLoadedCalled = false;
+  const win = {
+    gcalStatusSnapshot: () => ({ connected: true, booted: false, loading: false }),
+    gcalEnsureLoaded: () => { ensureLoadedCalled = true; return Promise.resolve(); },
+  };
+  const mod = loadModule()(appWith({ entities: {} }), win);
+  const html = mod.renderV3Ueberblick({ allProjects: [], overdueTasks: [], upcomingTasks: [], selectedDate: "2026-09-21", future7Str: "2026-09-28" });
+  assert.match(html, /wird geladen/);
+  assert.ok(ensureLoadedCalled, "das erste Rendern ohne Kalenderbesuch muss den echten Ladevorgang anstossen, sonst bleibt es bei 0");
 });
 
 // ── 4) renderV3Schlusspruefung: nie eine erfundene abgeschlossene Pruefung ──
