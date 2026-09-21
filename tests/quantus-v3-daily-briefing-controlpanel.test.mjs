@@ -95,7 +95,7 @@ const addDaysSrc = index.slice(addDaysStart, index.indexOf("};\n", addDaysStart)
 
 const blockStart = index.indexOf("const V3_AMPEL_LABEL = {");
 assert.ok(blockStart > 0, "V3_AMPEL_LABEL wurde nicht gefunden");
-const schluss = sliceFn("function renderV3Schlusspruefung(runV3, selectedDate) {", blockStart);
+const schluss = sliceFn("function renderV3Schlusspruefung(runV3, selectedDate, dayLogNotes) {", blockStart);
 const blockSrc = index.slice(blockStart, schluss.end);
 
 function loadModule(extraFns = {}) {
@@ -281,10 +281,14 @@ test("Befund 3: ueberfaellige/bald faellige Entscheidungen werden hier NICHT dop
 
 // ── Befund 4: sichtbarer, kompakter Ueberblick — echte Zahlen, Unbekanntes markiert ──
 test("Befund 4: renderV3Ueberblick zeigt echte Zaehlwerte je Kategorie und markiert Dokumente/Messwerte ehrlich als nicht erfasst", () => {
-  const mod = loadModule({
-    chatgptLeadsUnreadCount: () => 2,
-    chatgptTasksOpenCount: () => 3,
-  })(appWith({ entities: {} }), {});
+  const data = {
+    entities: {
+      chatgptLeads: { l1: { status: "neu" }, l2: { status: "abgeschlossen" } },
+      chatgptTasks: { t1: { state: "offen" }, t2: { state: "erledigt" } },
+    },
+    meta: { updatedAt: "2026-09-21T08:00:00.000Z" },
+  };
+  const mod = loadModule()(appWith(data), {});
   const html = mod.renderV3Ueberblick({
     allProjects: [{ id: "p1" }, { id: "p2" }],
     overdueTasks: [{ id: "t1" }],
@@ -293,24 +297,57 @@ test("Befund 4: renderV3Ueberblick zeigt echte Zaehlwerte je Kategorie und marki
     allMeetings: [],
   });
   assert.match(html, /2 aktiv\/in Planung/, "Projektzahl muss aus den echten, bereits berechneten Bestaenden kommen");
-  assert.match(html, /5 offen \(Leads 2, Aufgaben 3\)/, "KI-Pendente muessen die bestehenden echten Zaehlfunktionen nutzen");
+  assert.match(html, /2 offen \(Leads 1, Aufgaben 1\)/, "nur der wirklich offene Lead/die wirklich offene Aufgabe zaehlen");
   assert.match(html, /1 überfällig, 2 anstehend/);
-  assert.match(html, /1 heute, 0 diese Woche/);
+  assert.match(html, /lokaler Bestand: 1 heute, 0 Meetings diese Woche; Google-Kalender nicht live geprüft/, "Kalenderzeile muss als lokaler Bestand ohne Live-Pruefung gekennzeichnet sein");
   assert.match(html, /nicht erfasst/, "Dokumente/Messwerte duerfen keine erfundene Zahl zeigen");
 });
 
-test("Befund 4: fehlen die KI-Zaehlfunktionen, wird ehrlich 'unbekannt' gezeigt statt einer geratenen Zahl", () => {
-  const mod = loadModule()(appWith({ entities: {} }), {}); // keine chatgptLeadsUnreadCount/chatgptTasksOpenCount uebergeben
+// Regressionstest (Computer-Use-Abnahme, PR265 live): 5 LEADS SIND OFFEN,
+// aber bereits gelesen (readAt gesetzt) und teils im Status "wartet" — die
+// alte chatgptLeadsUnreadCount()-Logik haette hier faelschlich 0 gezeigt.
+test("Regressionstest: 5 bereits gelesene, aber offene Leads (u. a. 'wartet') werden trotzdem als offen gezaehlt", () => {
+  const data = {
+    entities: {
+      chatgptLeads: {
+        l1: { status: "neu", readAt: "2026-09-20T08:00:00.000Z" },
+        l2: { status: "verstanden", readAt: "2026-09-20T08:00:00.000Z" },
+        l3: { status: "in_arbeit", readAt: "2026-09-20T08:00:00.000Z" },
+        l4: { status: "wartet", readAt: "2026-09-20T08:00:00.000Z" },
+        l5: { status: "wartet", readAt: "2026-09-20T08:00:00.000Z" },
+        l6: { status: "abgeschlossen", readAt: "2026-09-20T08:00:00.000Z" }, // zaehlt nicht
+      },
+      chatgptTasks: {},
+    },
+  };
+  const mod = loadModule()(appWith(data), {});
   const html = mod.renderV3Ueberblick({ allProjects: [], overdueTasks: [], upcomingTasks: [], calEvents: [], allMeetings: [] });
-  assert.match(html, /KI-Pendente[\s\S]*?unbekannt/);
+  assert.match(html, /5 offen \(Leads 5, Aufgaben 0\)/, "5 gelesene, aber offene Leads (inkl. 'wartet') duerfen nicht verschwiegen werden");
+  assert.doesNotMatch(html, /KI-Pendente[\s\S]*?0 offen/, "die alte Unread-Logik (faelschlich 0) darf nicht wieder auftreten");
+});
+
+// Einzeilige Schlusskorrektur: meta.updatedAt ist ein allgemeiner
+// App-Zeitstempel, KEIN Kalender-Ladesignal — die Kalenderzeile behauptet
+// deshalb nie eine Live-Pruefung, unabhaengig von meta.updatedAt.
+test("Kalenderzeile behauptet nie eine Live-Pruefung, auch ohne meta.updatedAt", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {}); // kein meta.updatedAt
+  const html = mod.renderV3Ueberblick({ allProjects: [], overdueTasks: [], upcomingTasks: [], calEvents: [], allMeetings: [] });
+  assert.match(html, /lokaler Bestand: 0 heute, 0 Meetings diese Woche; Google-Kalender nicht live geprüft/);
 });
 
 // ── 4) renderV3Schlusspruefung: nie eine erfundene abgeschlossene Pruefung ──
-test("renderV3Schlusspruefung: ohne Lauf ein ehrlicher Hinweis, keine Pruefung behauptet", () => {
+// Nutzerklarstellung nach PR265-Live-Test: 95% Computer-Use, kein durchgehend
+// API-gebundener Leitungsagent — ein fehlender Server-Lauf darf deshalb
+// NICHT "keine Schlussprüfung möglich" behaupten. Primär zaehlen die echten
+// Tagesnotizen (dailyBriefing.dailyLog[date].notes).
+test("Regressionstest: OHNE Server-Lauf, aber MIT Tagesnotizen -> Notiz unveraendert sichtbar, NIE 'keine Schlussprüfung möglich'", () => {
   const mod = loadModule()(appWith({ entities: {} }), {});
-  const html = mod.renderV3Schlusspruefung(undefined, "2026-09-21");
-  assert.match(html, /noch kein Lauf vor/);
+  const html = mod.renderV3Schlusspruefung(undefined, "2026-09-21", "Alle Mails geprüft, Kalender kontrolliert.");
+  assert.doesNotMatch(html, /keine Schlussprüfung möglich/i, "ein fehlender Server-Lauf darf die Schlussprüfung nicht für unmöglich erklären");
+  assert.match(html, /Alle Mails geprüft, Kalender kontrolliert\./, "die echte Tagesnotiz muss unveraendert erscheinen");
+  assert.match(html, /Noch kein technischer Laufnachweis/, "der fehlende technische Nachweis wird separat, ehrlich benannt");
 });
+
 
 test("renderV3Schlusspruefung: Lauf vorhanden, aber NICHT final -> ausdruecklich 'noch keine abgeschlossene Schlussprüfung', nie ein Haekchen", () => {
   const mod = loadModule()(appWith({ entities: {} }), {});
