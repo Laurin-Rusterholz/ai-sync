@@ -116,11 +116,10 @@ const addDaysSrc = index.slice(addDaysStart, index.indexOf("};\n", addDaysStart)
 
 const blockStart = index.indexOf("const V3_AMPEL_LABEL = {");
 assert.ok(blockStart > 0, "V3_AMPEL_LABEL wurde nicht gefunden");
-// Konzept v2 L: v3FreeSlotsForDay ist die letzte Funktion in diesem Block
-// (nach renderV3ChatgptCockpit/v3PlanningSettings) — Ende dort, sonst bleibt
-// die Einplanungslogik ungetestet.
-const planning = sliceFn("function v3FreeSlotsForDay(durationMin, { busyIntervals = [], timeBlocks = [], windowStart = \"09:00\", windowEnd = \"18:00\", stepMin = 15, allDayBlocksWholeDay = false } = {}) {", blockStart);
-const blockSrc = index.slice(blockStart, planning.end);
+// Konzept v2 C: v3ProjectLineText ist die letzte Funktion in diesem Block
+// (nach v3FreeSlotsForDay) — Ende dort, sonst bleibt die Projektzeile ungetestet.
+const projectLine = sliceFn("function v3ProjectLineText(p, offeneAufgaben) {", blockStart);
+const blockSrc = index.slice(blockStart, projectLine.end);
 
 function loadModule(extraFns = {}) {
   // nowIso/fmtDateTime sind echte globale Helfer aus index.html, die ausserhalb
@@ -131,7 +130,7 @@ function loadModule(extraFns = {}) {
   const namen = Object.keys(alle);
   const fn = new Function("APP", "window", ...namen,
     escSrc + "\n" + todaySrc + "\n" + addDaysSrc + "\n" + blockSrc + "\n"
-    + "return { renderV3ControlPanel, renderV3FaelligeAusnahmen, renderV3Freigaben, renderV3Schlusspruefung, renderV3Ueberblick, renderV3ChatgptCockpit, v3LeadOperationalState, v3LeadStatus, v3LeadStatusText, v3RegisterFollowUp, v3ZurichLocalToUtcIso, v3PlanningSettings, v3FreeSlotsForDay, v3NextSlotInfo, v3AmpelText, v3AktuelleBewertung, v3SpeicherStatusText };"
+    + "return { renderV3ControlPanel, renderV3FaelligeAusnahmen, renderV3Freigaben, renderV3Schlusspruefung, renderV3Ueberblick, renderV3ChatgptCockpit, renderV3IntakeQueue, renderV3AppProgress, v3LeadOperationalState, v3LeadStatus, v3LeadStatusText, v3RegisterFollowUp, v3ZurichLocalToUtcIso, v3PlanningSettings, v3FreeSlotsForDay, v3ProjectLineText, v3NextSlotInfo, v3AmpelText, v3AktuelleBewertung, v3SpeicherStatusText };"
   );
   return (app, win) => fn(app, win, ...namen.map((n) => alle[n]));
 }
@@ -831,6 +830,100 @@ test("Review-Fix a1de2c2 Punkt 3: cgl-set-next-action/-waiting-external/-postpon
     assert.match(src, new RegExp('id="' + idPrefix), idPrefix + "<id> muss als echtes Eingabefeld existieren, sonst liest der Handler ins Leere");
   });
   assert.match(index, /\$\{chatgptLeadOperationalBoxHtml\(l\)\}/, "die Box muss tatsaechlich im Lead-Detail (chatgptLeadStatusBoxHtml) eingebunden sein");
+});
+
+// ── Konzept v2 C: Projektzeile (Eingang/naechster Schritt), keine Mailliste ──
+test("v3ProjectLineText: zeigt den letzten Kommentar als Eingang und die faelligste offene Aufgabe als naechsten Schritt", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const p = { comments: [{ text: "Alt" }, { text: "Kunde hat Feedback geschickt" }] };
+  const aufgaben = [{ title: "Vertrag pruefen", dueDate: "2026-09-25" }, { title: "Angebot senden", dueDate: "2026-09-20" }];
+  const zeile = mod.v3ProjectLineText(p, aufgaben);
+  assert.match(zeile, /Eingang: Kunde hat Feedback geschickt/, "muss den LETZTEN (nicht ersten) Kommentar zeigen");
+  assert.match(zeile, /Nächster Schritt: Angebot senden \(2026-09-20\)/, "muss die frueheste faellige offene Aufgabe als naechsten Schritt zeigen, nicht irgendeine");
+});
+
+test("v3ProjectLineText: ehrlich ohne Kommentare/Aufgaben, keine erfundenen Werte", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const zeile = mod.v3ProjectLineText({}, []);
+  assert.match(zeile, /Eingang: keine neue Rückmeldung/);
+  assert.match(zeile, /Nächster Schritt: keiner hinterlegt/);
+});
+
+test("Konzept v2 C: die Projektzeile ist wirklich im DailyBriefing verdrahtet (keine volle Mailliste)", () => {
+  assert.match(index, /v3ProjectLineText\(p, pt\)/, "die Projektzeile muss im Projekte-Abschnitt des DailyBriefing aufgerufen werden");
+});
+
+// ── Konzept v2 K: Intake-Queue (client-seitig, idempotente Lead-Verknuepfung) ──
+test("renderV3IntakeQueue: zeigt offene und verknuepfte Anfragen korrekt, kein zweiter Lead-Knopf nach Verknuepfung", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const queue = [
+    { id: "i1", text: "Bitte Angebot für Firma Y prüfen", createdAt: "2026-09-20T08:00:00.000Z", linkedLeadId: null },
+    { id: "i2", text: "Alte Anfrage", createdAt: "2026-09-18T08:00:00.000Z", linkedLeadId: "l99" },
+  ];
+  const html = mod.renderV3IntakeQueue(queue);
+  assert.match(html, /Anfrage einreichen[\s\S]*?\(1 offen\)/, "nur unverknuepfte Anfragen zaehlen als offen");
+  assert.match(html, /data-action="intake-to-lead" data-id="i1"/, "eine offene Anfrage muss den Lead-erstellen-Knopf haben");
+  assert.doesNotMatch(html, /data-action="intake-to-lead" data-id="i2"/, "eine bereits verknuepfte Anfrage darf keinen zweiten Lead-Knopf mehr anbieten");
+  assert.match(html, /Bitte Angebot für Firma Y prüfen/);
+});
+
+test("Konzept v2 K: intake-to-lead verknuepft genau einmal (linkedLeadId als Sperre), kein zweiter Lead beim erneuten Klick", () => {
+  const caseMatch = index.match(/case "intake-to-lead": \{[\s\S]*?\n\}/);
+  assert.ok(caseMatch, "der intake-to-lead-Handler muss im echten handleClick existieren");
+  const src = caseMatch[0];
+  assert.match(src, /if \(!item \|\| item\.linkedLeadId\) break;/, "eine bereits verknuepfte Anfrage darf nicht erneut verarbeitet werden");
+  assert.match(src, /item\.linkedLeadId = neueId/, "die Verknuepfung muss auf der ORIGINAL-Anfrage vermerkt werden");
+  assert.match(src, /createChatgptLead\(/, "es muss ein echter Lead ueber den bestehenden Erstellungsweg entstehen");
+});
+
+test("Konzept v2 K: dbIntakeAdd schreibt ins client-seitige intakeQueue, NICHT in automation.intakeById (keine zweite Server-Wahrheit)", () => {
+  const fnMatch = index.match(/window\.dbIntakeAdd = function\(\) \{[\s\S]*?\n\};/);
+  assert.ok(fnMatch, "dbIntakeAdd muss existieren");
+  assert.match(fnMatch[0], /db\.intakeQueue\.push/, "muss in dailyBriefing.intakeQueue schreiben");
+  assert.doesNotMatch(fnMatch[0], /automation\.intake/, "darf NICHT automation.intakeById beruehren (CAS-geschuetzter Serverkern)");
+});
+
+// ── Konzept v2 I: App-Fortschritt/Updates — ehrlich, kein Raten ───────────
+test("renderV3AppProgress: ohne jede echte Datenquelle ist alles ehrlich 'nicht verfügbar', keine erfundene Zahl", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const html = mod.renderV3AppProgress();
+  assert.match(html, /RecallLab[\s\S]*?nicht verfügbar/);
+  assert.match(html, /Smarter[\s\S]*?nicht verfügbar/);
+  assert.match(html, /Morgen-PDF[\s\S]*?nicht verfügbar/);
+  assert.doesNotMatch(html, /\d+ Karte/, "ohne echte RecallLab-Daten darf keine Kartenzahl erscheinen");
+});
+
+test("renderV3AppProgress: mit echten RecallLab-Daten (localStorage) zeigt die wirkliche Kartenzahl/Streak", () => {
+  const mod = loadModule({ getRecallLabData: () => ({ cards: [{}, {}, {}], user: { streak: 5 } }) })(appWith({ entities: {} }), {});
+  const html = mod.renderV3AppProgress();
+  assert.match(html, /RecallLab[\s\S]*?3 Karte\(n\), Streak 5 Tage/);
+});
+
+test("renderV3AppProgress: Smarter zeigt nur eine Zahl, wenn das Modul in dieser Sitzung tatsaechlich geladen wurde", () => {
+  const mod = loadModule({ SMARTER: { loaded: true, archive: { docs: { a: 1, b: 2 } } } })(appWith({ entities: {} }), {});
+  const html = mod.renderV3AppProgress();
+  assert.match(html, /Smarter[\s\S]*?2 Dokument\(e\) im Archiv/);
+});
+
+test("Konzept v2 I: der App-Fortschritt ist wirklich im DailyBriefing eingeklappt verdrahtet", () => {
+  assert.match(index, /id="dbV3AppProgress"/, "der Abschnitt muss in viewDailyBriefing() existieren");
+  assert.match(index, /<details class="db-section" id="dbV3AppProgress">/, "der Abschnitt muss standardmaessig eingeklappt sein (details, kein offenes div)");
+});
+
+// ── Konzept v2 D: echter Dokumenten-Upload direkt im Briefing ─────────────
+test("renderV3ChatgptCockpit: 'Pendent bei ChatGPT' bindet die ECHTE Anhangs-Pipeline (renderFileAttachments) pro Lead ein, keine eigene Upload-Logik", () => {
+  let aufgerufenMit = null;
+  const win = { renderFileAttachments: (kind, id) => { aufgerufenMit = [kind, id]; return "<div>ECHTE-PIPELINE</div>"; } };
+  const mod = loadModule({ renderFileAttachments: win.renderFileAttachments })(appWith({ entities: {} }), {});
+  const leads = [{ id: "l1", title: "Anfrage", operationalState: "doing", nextAction: "x", files: [{ id: "f1" }, { id: "f2" }] }];
+  const html = mod.renderV3ChatgptCockpit(leads, { nowMs: Date.parse("2026-09-21T10:00:00.000Z") });
+  assert.deepEqual(aufgerufenMit, ["chatgptLead", "l1"], "muss dieselbe Funktion mit derselben Sammlung/ID wie das Lead-Detail aufrufen");
+  assert.match(html, /ECHTE-PIPELINE/, "das Ergebnis der echten Pipeline muss tatsaechlich eingebunden werden");
+  assert.match(html, /Dokumente \(2\)/, "die echte Dateianzahl muss angezeigt werden, keine erfundene Zahl");
+});
+
+test("Konzept v2 D: kein neues/erfundenes 'processedAt'-Feld — nur die bestehenden echten Statusfelder (textExtractStatus/textExtracted) werden verwendet", () => {
+  assert.doesNotMatch(index, /processedAt\s*=/, "es darf kein neues processedAt-Feld eingefuehrt werden, das schon beim Hochladen faelschlich 'verarbeitet' behauptet");
 });
 
 console.log("quantus-v3-daily-briefing-controlpanel: alle Pruefungen bestanden");
