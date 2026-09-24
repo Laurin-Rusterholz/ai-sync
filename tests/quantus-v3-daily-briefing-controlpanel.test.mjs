@@ -853,6 +853,28 @@ test("Konzept v2 C: die Projektzeile ist wirklich im DailyBriefing verdrahtet (k
   assert.match(index, /v3ProjectLineText\(p, pt\)/, "die Projektzeile muss im Projekte-Abschnitt des DailyBriefing aufgerufen werden");
 });
 
+// Review PR268 (24.09.2026): "".localeCompare(echtesDatum) sortiert eine leere
+// dueDate faelschlich VOR jede echte Frist — eine fristlose Aufgabe erschien
+// als "naechster Schritt" statt der wirklich faelligsten.
+test("v3ProjectLineText: eine Aufgabe ohne dueDate darf eine echte Frist nicht als naechsten Schritt verdraengen", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const aufgaben = [{ title: "Ohne Frist", dueDate: "" }, { title: "Vertrag pruefen", dueDate: "2026-09-25" }];
+  const zeile = mod.v3ProjectLineText({}, aufgaben);
+  assert.match(zeile, /Nächster Schritt: Vertrag pruefen \(2026-09-25\)/,
+    "eine fristlose Aufgabe wird faelschlich vor der echten Frist gezeigt");
+});
+test("v3ProjectLineText: mehrere fristlose Aufgaben aendern nichts an der Reihenfolge nach Frist", () => {
+  const mod = loadModule()(appWith({ entities: {} }), {});
+  const aufgaben = [
+    { title: "Ohne A", dueDate: null },
+    { title: "Spaeter", dueDate: "2026-10-01" },
+    { title: "Ohne B", dueDate: undefined },
+    { title: "Frueher", dueDate: "2026-09-22" },
+  ];
+  const zeile = mod.v3ProjectLineText({}, aufgaben);
+  assert.match(zeile, /Nächster Schritt: Frueher \(2026-09-22\)/);
+});
+
 // ── Konzept v2 K: Intake-Queue (client-seitig, idempotente Lead-Verknuepfung) ──
 test("renderV3IntakeQueue: zeigt offene und verknuepfte Anfragen korrekt, kein zweiter Lead-Knopf nach Verknuepfung", () => {
   const mod = loadModule()(appWith({ entities: {} }), {});
@@ -897,6 +919,16 @@ test("renderV3AppProgress: mit echten RecallLab-Daten (localStorage) zeigt die w
   const mod = loadModule({ getRecallLabData: () => ({ cards: [{}, {}, {}], user: { streak: 5 } }) })(appWith({ entities: {} }), {});
   const html = mod.renderV3AppProgress();
   assert.match(html, /RecallLab[\s\S]*?3 Karte\(n\), Streak 5 Tage/);
+});
+
+// Review PR268 (24.09.2026): ein echtes, aber LEERES Kartenarray (RecallLab
+// ist geladen, hat aber 0 Karten) wurde durch den .length-Falsy-Check zu
+// "nicht verfügbar" verschluckt — ununterscheidbar von "keine Datenquelle".
+test("renderV3AppProgress: ein echtes leeres RecallLab-Array zeigt 0, nicht 'nicht verfügbar'", () => {
+  const mod = loadModule({ getRecallLabData: () => ({ cards: [], user: { streak: 0 } }) })(appWith({ entities: {} }), {});
+  const html = mod.renderV3AppProgress();
+  assert.match(html, /RecallLab[\s\S]*?0 Karte\(n\), Streak 0 Tage/,
+    "eine echte, leere Kartensammlung muss als 0 erscheinen, nicht als 'nicht verfügbar'");
 });
 
 test("renderV3AppProgress: Smarter zeigt nur eine Zahl, wenn das Modul in dieser Sitzung tatsaechlich geladen wurde", () => {
