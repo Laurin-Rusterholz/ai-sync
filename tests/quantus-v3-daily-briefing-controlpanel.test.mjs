@@ -894,7 +894,7 @@ test("Konzept v2 K: intake-to-lead verknuepft genau einmal (linkedLeadId als Spe
   assert.ok(caseMatch, "der intake-to-lead-Handler muss im echten handleClick existieren");
   const src = caseMatch[0];
   assert.match(src, /if \(!item \|\| item\.linkedLeadId\) break;/, "eine bereits verknuepfte Anfrage darf nicht erneut verarbeitet werden");
-  assert.match(src, /item\.linkedLeadId = neueId/, "die Verknuepfung muss auf der ORIGINAL-Anfrage vermerkt werden");
+  assert.match(src, /item\.linkedLeadId = leadId/, "die Verknuepfung muss auf der ORIGINAL-Anfrage vermerkt werden");
   assert.match(src, /createChatgptLead\(/, "es muss ein echter Lead ueber den bestehenden Erstellungsweg entstehen");
 });
 
