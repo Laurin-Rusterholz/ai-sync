@@ -139,7 +139,7 @@ function archivierer() {
 // Das war der gemeldete Fall: No-Braine aktivierte alte Routinen wieder.
 {
   const quelle = funktion("reconcileHabits", "  function ");
-  const routinen = [HABIT({ nbHabitId: "nb1", archived: true, archivedByUser: true, updatedAt: "2026-09-20T08:00:00.000Z" })];
+  const routinen = [HABIT({ id: "rt_nb_nb1", nbHabitId: "nb1", archived: true, archivedByUser: true, updatedAt: "2026-09-20T08:00:00.000Z" })];
   const b = { routines: routinen };
   const S = { defs: { nb1: { name: "Wasser trinken", icon: "💧", aktiv: true } }, log: {} };
   const fn = new Function("S", "brief", "window", "Date", "Number", "Object", "Array", "Math",
@@ -157,7 +157,7 @@ function archivierer() {
 // vor dem Reaktivierungs-Zweig, sonst ist sie zufaellig statt strukturell.)
 {
   const quelle = funktion("reconcileHabits", "  function ");
-  const routinen = [HABIT({ nbHabitId: "nb1", text: "Alter Name", archived: true, archivedByUser: true, updatedAt: "2026-09-20T08:00:00.000Z" })];
+  const routinen = [HABIT({ id: "rt_nb_nb1", nbHabitId: "nb1", text: "Alter Name", archived: true, archivedByUser: true, updatedAt: "2026-09-20T08:00:00.000Z" })];
   const b = { routines: routinen };
   const S = { defs: { nb1: { name: "Neuer Name", icon: "💧", aktiv: false } }, log: {} };
   const fn = new Function("S", "brief", "window", "Date", "Number", "Object", "Array", "Math",
@@ -172,7 +172,7 @@ function archivierer() {
 //      weiterhin normal archiviert (die Sperre ist kein Freifahrtschein) ────
 {
   const quelle = funktion("reconcileHabits", "  function ");
-  const routinen = [HABIT({ nbHabitId: "nb1", archived: false })];
+  const routinen = [HABIT({ id: "rt_nb_nb1", nbHabitId: "nb1", archived: false })];
   const b = { routines: routinen };
   const S = { defs: { nb1: { name: "Wasser trinken", icon: "💧", aktiv: false } }, log: {} };
   const fn = new Function("S", "brief", "window", "Date", "Number", "Object", "Array", "Math",
