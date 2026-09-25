@@ -61,10 +61,20 @@ export default async (req) => {
     const ergebnis = await runDailyBriefing({ now: Date.now() });
     return new Response(JSON.stringify(ergebnis), { status: ergebnis.ok ? 200 : 200, headers: { "Content-Type": "application/json" } });
   } catch (err) {
-    // Nie den Fehler eines fremden Aufrufs (der einen Schluesselwert
-    // enthalten koennte) unveraendert nach aussen reichen.
-    console.error("[quantus-v3-daily-briefing-run] Lauf gescheitert:", err && err.code, err && err.status);
-    return new Response(JSON.stringify({ ok: false, error: "run_failed" }), { status: 500, headers: { "Content-Type": "application/json" } });
+    // Review-Fix (25.09.2026, belegter Fehler): runDailyBriefing() faengt
+    // seit diesem Fix JEDEN bekannten Fehlschlagspunkt selbst ab (siehe
+    // mitPhase() in quantus-v3-daily-briefing.mjs) und gibt IMMER ein
+    // strukturiertes { ok:false, blocked, code } zurueck — dieser Zweig
+    // erreicht daher nur noch einen wirklich unklassifizierten
+    // Programmierfehler. Trotzdem gilt weiterhin: nie den Fehler eines
+    // fremden Aufrufs (der einen Schluesselwert oder Mailinhalt enthalten
+    // koennte) unveraendert nach aussen reichen — nur ein sicherer, kurzer
+    // Code, nie err.message.
+    const code = (err && typeof err.code === "string" && /^[a-zA-Z][a-zA-Z0-9_]{1,60}$/.test(err.code)) ? err.code
+      : (err && typeof err.name === "string" && /^[a-zA-Z][a-zA-Z0-9]{1,60}$/.test(err.name)) ? err.name
+      : "unknown_error";
+    console.error("[quantus-v3-daily-briefing-run] Lauf gescheitert (unklassifiziert):", code, err && err.status);
+    return new Response(JSON.stringify({ ok: false, error: "run_failed", phase: "unclassified", code }), { status: 500, headers: { "Content-Type": "application/json" } });
   }
 };
 

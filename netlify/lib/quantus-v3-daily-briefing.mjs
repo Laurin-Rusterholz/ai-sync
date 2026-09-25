@@ -144,6 +144,36 @@ function worseOutcome(a, b) {
   return (rang[b] ?? 1) > (rang[a] ?? 0) ? b : a;
 }
 
+/* Sicherer, kurzer Fehlercode fuer die OEFFENTLICHE Antwort — NIE err.message
+ * (koennte HTTP-Antworttexte fremder APIs, Kontonamen oder sonstige Details
+ * enthalten, s. netlify/lib/firebase-admin.mjs). Nur ein bereits vom
+ * werfenden Code vergebenes .code (z. B. "credentials_missing",
+ * "cas_exhausted") oder der generische Fehlername (TypeError, Error, ...)
+ * wird durchgereicht — beides beschreibt die FehlerART, nie deren Inhalt. */
+function sichererFehlercode(err) {
+  if (err && typeof err.code === "string" && /^[a-zA-Z][a-zA-Z0-9_]{1,60}$/.test(err.code)) return err.code;
+  if (err && typeof err.name === "string" && /^[a-zA-Z][a-zA-Z0-9]{1,60}$/.test(err.name)) return err.name;
+  return "unknown_error";
+}
+
+/* Faengt einen unerwarteten Wurf (Netzwerk-/Firebase-Admin-Ausnahme — siehe
+ * CLAUDE.md "invalid_rapt": ab dann antworten ALLE Netlify-Funktionen mit
+ * 500) an GENAU DER STELLE ab, an der er entsteht, und macht daraus denselben
+ * sicheren { ok:false, blocked, code }-Vertrag wie jeder andere Fehlschlag in
+ * diesem Modul — statt ihn ungefangen bis zur Netlify Function durchfallen zu
+ * lassen, wo er zu einem undurchsichtigen "run_failed" ohne jede Phase/
+ * Ursache wurde (belegter Fehler, 25.09.2026: Auth und Konfigurationspruefung
+ * werden passiert, der Lauf selbst scheitert unklassifiziert). KEINE zweite
+ * Orchestrierung: reine Fehlerklassifizierung an bereits bestehenden
+ * Aufrufstellen, kein zusaetzlicher Aufruf, keine zweite Fehlerquelle. */
+async function mitPhase(phase, aufruf) {
+  try {
+    return { ok: true, value: await aufruf() };
+  } catch (err) {
+    return { ok: false, blocked: `unexpected_error:${phase}`, code: sichererFehlercode(err) };
+  }
+}
+
 /**
  * Ein einziger, beschraenkter, headless-faehiger Tagesbriefing-Lauf. Wird
  * NIE zweimal gleichzeitig ausgefuehrt (echte E1-Pacht) und blockiert JEDE
@@ -170,7 +200,9 @@ export async function runDailyBriefing({
   const tenant = String(envRead("QUANTUS_V3_TENANT")).trim();
   const policy = loadAssistantPolicy(envRead).policy;
 
-  const coreDoc = await readCore(CORE_KEY);
+  const coreRead = await mitPhase("core_read", () => readCore(CORE_KEY));
+  if (!coreRead.ok) return coreRead;
+  const coreDoc = coreRead.value;
   if (!coreDoc.exists || !coreDoc.parsed) return { ok: false, blocked: "core_unavailable" };
   // NIE geloggt, NIE zurueckgegeben — verlaesst diese Funktion nur als
   // Authorization-Header an Anthropic (anthropic-transport.mjs). Absichtlich
@@ -181,7 +213,9 @@ export async function runDailyBriefing({
 
   const date = zurichLocalDate(now);
   const leaseScope = `${tenant}:${LEASE_SCOPE_SUFFIX}`;
-  const acquire = await mutateCore(CORE_KEY, (data) => E1.acquireLease(data, { holder: LEASE_HOLDER, scope: leaseScope, ttlMs: LEASE_TTL_MS, now }));
+  const acquireWrap = await mitPhase("lease_acquire", () => mutateCore(CORE_KEY, (data) => E1.acquireLease(data, { holder: LEASE_HOLDER, scope: leaseScope, ttlMs: LEASE_TTL_MS, now })));
+  if (!acquireWrap.ok) return acquireWrap;
+  const acquire = acquireWrap.value;
   if (!acquire.result.ok) return { ok: false, blocked: `lease_conflict:${acquire.result.code}` };
   if (acquire.result.duplicate === true) {
     // Dieselbe (noch nicht abgelaufene) Zustellung — kein zweiter Lauf,
@@ -192,7 +226,15 @@ export async function runDailyBriefing({
 
   const costPolicyPort = createEnvCostPolicyPort(envRead);
   try {
-    return await einLauf({ now, date, tenant, policy, costPolicyPort, model, inputRate, outputRate, apiKey, mutateCore, fetchImpl, getGmailToken, leaseScope, fence, gmailApiBase, anthropicApiBase, clock });
+    try {
+      return await einLauf({ now, date, tenant, policy, costPolicyPort, model, inputRate, outputRate, apiKey, mutateCore, fetchImpl, getGmailToken, leaseScope, fence, gmailApiBase, anthropicApiBase, clock });
+    } catch (err) {
+      // Sicherheitsnetz: jeder BEKANNTE Fehlschlagspunkt in einLauf() ist
+      // bereits ueber mitPhase() abgefangen (s.u.) — dieser Zweig faengt nur
+      // einen wirklich unklassifizierten Wurf, damit er nie ungefangen bis
+      // zur Netlify Function durchfaellt.
+      return { ok: false, blocked: "unexpected_error:run_body", code: sichererFehlercode(err) };
+    }
   } finally {
     await mutateCore(CORE_KEY, (data) => E1.releaseLease(data, { holder: LEASE_HOLDER, scope: leaseScope, fence, now: clock() })).catch(() => {});
   }
@@ -200,7 +242,9 @@ export async function runDailyBriefing({
 
 async function einLauf({ now, date, tenant, policy, costPolicyPort, model, inputRate, outputRate, apiKey, mutateCore, fetchImpl, getGmailToken, leaseScope, fence, gmailApiBase, anthropicApiBase, clock }) {
   const ensureId = `ensure-run:${date}`;
-  const ensureOut = await mutateCore(CORE_KEY, fencedCommand("ensureRun", { date }, now, ensureId, policy, leaseScope, fence, clock));
+  const ensureWrap = await mitPhase("ensure_run", () => mutateCore(CORE_KEY, fencedCommand("ensureRun", { date }, now, ensureId, policy, leaseScope, fence, clock)));
+  if (!ensureWrap.ok) return ensureWrap;
+  const ensureOut = ensureWrap.value;
   if (!ensureOut.result.ok) return { ok: false, blocked: `ensure_run:${ensureOut.result.code ?? ensureOut.result.error ?? "failed"}` };
 
   // ── Quelle: Gmail, EIN beschraenkter Durchlauf ──────────────────────────
@@ -256,7 +300,9 @@ async function einLauf({ now, date, tenant, policy, costPolicyPort, model, input
   // abgebrochen, statt mit einer veralteten `now` weiterzurechnen, die eine
   // in Wirklichkeit bereits abgelaufene Pacht faelschlich gueltig erscheinen
   // liesse (Review-Befund #1).
-  const renewOut = await mutateCore(CORE_KEY, (data) => E1.renewLease(data, { holder: LEASE_HOLDER, scope: leaseScope, fence, ttlMs: LEASE_TTL_MS, now: clock() }));
+  const renewWrap = await mitPhase("lease_renew", () => mutateCore(CORE_KEY, (data) => E1.renewLease(data, { holder: LEASE_HOLDER, scope: leaseScope, fence, ttlMs: LEASE_TTL_MS, now: clock() })));
+  if (!renewWrap.ok) return renewWrap;
+  const renewOut = renewWrap.value;
   if (!renewOut.result.ok) return { ok: false, blocked: `lease_lost_during_scan:${renewOut.result.code}` };
 
   // Das Wasserzeichen wandert NUR vorgezogen, wenn nichts zu entwerfen ist
@@ -264,11 +310,13 @@ async function einLauf({ now, date, tenant, policy, costPolicyPort, model, input
   // Entwurf (s. u.), genau wie section-work.mjs (Review-Befund F/G-2 #3).
   const wasserzeichenSofort = messages.length === 0 && wirklichVollstaendig ? { sinceMs: now } : { sinceMs };
   const checkId = `source-check:${date}:${SOURCE_ID}`;
-  const checkOut = await mutateCore(CORE_KEY, fencedCommand(
+  const checkWrap = await mitPhase("source_check", () => mutateCore(CORE_KEY, fencedCommand(
     "recordSourceCheck",
     { date, sourceId: SOURCE_ID, cursor: JSON.stringify(wasserzeichenSofort), outcome, detail: `pages=${pagesSeen}` },
     clock(), checkId, policy, leaseScope, fence, clock,
-  ));
+  )));
+  if (!checkWrap.ok) return checkWrap;
+  const checkOut = checkWrap.value;
   if (!checkOut.result.ok) return { ok: false, blocked: `source_check:${checkOut.result.code}` };
 
   if (messages.length === 0) return { ok: true, sourceOutcome: outcome, drafted: false };
@@ -285,7 +333,9 @@ async function einLauf({ now, date, tenant, policy, costPolicyPort, model, input
   // QUANTUS_V3_TAGESBRIEFING_POLICY_JSON) — zwei getrennte Vertraege, wie
   // auch in cost-adapter.mjs. Frisch geladen, unmittelbar vor der
   // Reservierung (kein Zwischenspeicher, ein Widerruf muss sofort greifen).
-  const costPolicy = await costPolicyPort.impl.load();
+  const costPolicyWrap = await mitPhase("cost_policy_load", () => costPolicyPort.impl.load());
+  if (!costPolicyWrap.ok) return { ...costPolicyWrap, sourceOutcome: outcome };
+  const costPolicy = costPolicyWrap.value;
   if (!costPolicy) return { ok: false, blocked: "cost_policy_unavailable", sourceOutcome: outcome };
   const jetztVorReservierung = clock();
   const anthropic = createAnthropicTransport({ apiKey, model, modelPricing: { inputMicrosPerMillionTokens: inputRate, outputMicrosPerMillionTokens: outputRate }, fetchImpl, ...(anthropicApiBase ? { apiBase: anthropicApiBase } : {}) });
@@ -301,20 +351,24 @@ async function einLauf({ now, date, tenant, policy, costPolicyPort, model, input
   const callId = `daily:${date}`;
   const tokenObergrenze = estimateRequestTokenCap(messages);
   const contentHash = await stableHash(tokenObergrenze + "|" + JSON.stringify(messages));
-  const reserveOut = await mutateCore(CORE_KEY, (data) => reserveCostWithMonthlyCap(data, {
+  const reserveWrap = await mitPhase("reserve_cost", () => mutateCore(CORE_KEY, (data) => reserveCostWithMonthlyCap(data, {
     callId, runKey, provider: "anthropic", model,
     contentHash, inputTokens: tokenObergrenze, outputTokens: anthropic.maxOutputTokens,
     now: jetztVorReservierung, verifiedScope: { holder: LEASE_HOLDER, fence, scope: leaseScope }, policy: costPolicy,
-  }, { capMicros: MONTHLY_CAP_MICROS }));
+  }, { capMicros: MONTHLY_CAP_MICROS })));
+  if (!reserveWrap.ok) return { ...reserveWrap, sourceOutcome: outcome };
+  const reserveOut = reserveWrap.value;
   if (!reserveOut.result.ok) return { ok: false, blocked: `reserve:${reserveOut.result.code}`, sourceOutcome: outcome };
 
   // Frisch, unmittelbar vor dem Anspruch UND vor der eigentlichen Sendung —
   // dieselbe Disziplin wie cost-adapter.mjs ("Zeit kommt bei jedem Schritt
   // frisch aus dem Uhrport, ausdruecklich NACH jedem gewarteten I/O").
   const claimId = `${callId}:1`;
-  const claimOut = await mutateCore(CORE_KEY, (data) => E1.claimCostDispatch(data, {
+  const claimWrap = await mitPhase("claim_cost", () => mutateCore(CORE_KEY, (data) => E1.claimCostDispatch(data, {
     callId, claimId, now: clock(), verifiedScope: { holder: LEASE_HOLDER, fence, scope: leaseScope }, policy: costPolicy,
-  }));
+  })));
+  if (!claimWrap.ok) return { ...claimWrap, sourceOutcome: outcome };
+  const claimOut = claimWrap.value;
   if (!claimOut.result.ok || claimOut.result.dispatchAllowed !== true) {
     return { ok: false, blocked: `claim:${claimOut.result.code ?? "not_allowed"}`, sourceOutcome: outcome };
   }
@@ -324,7 +378,7 @@ async function einLauf({ now, date, tenant, policy, costPolicyPort, model, input
     antwort = await anthropic.dispatch({ sourceMessages: messages, requestId: callId });
   } catch (e) {
     await mutateCore(CORE_KEY, (data) => E1.markCostOutcomeUnknown(data, { callId, reason: "dispatch_threw", now: clock(), verifiedScope: { holder: LEASE_HOLDER, fence, scope: leaseScope } })).catch(() => {});
-    return { ok: false, blocked: "dispatch_failed", sourceOutcome: outcome };
+    return { ok: false, blocked: "dispatch_failed", code: sichererFehlercode(e), sourceOutcome: outcome };
   }
   if (antwort.outcome !== "settled") {
     await mutateCore(CORE_KEY, (data) => E1.markCostOutcomeUnknown(data, { callId, reason: antwort.reason || "unknown", providerRequestId: antwort.providerRequestId ?? null, now: clock(), verifiedScope: { holder: LEASE_HOLDER, fence, scope: leaseScope } }));
@@ -336,25 +390,37 @@ async function einLauf({ now, date, tenant, policy, costPolicyPort, model, input
   const noteId = `v3-draft:${runKey}`;
   const noteCommandId = `draft-note:${date}`;
   const text = `Quelle ${SOURCE_ID} (${outcome}), ${messages.length} Beleg(e): ${antwort.draftText}`;
-  const noteOut = await mutateCore(CORE_KEY, fencedCommand("appendRunNote", { date, noteId, text: text.slice(0, 4000) }, clock(), noteCommandId, policy, leaseScope, fence, clock));
-  if (!noteOut.result.ok) {
+  const noteWrap = await mitPhase("note_persist", () => mutateCore(CORE_KEY, fencedCommand("appendRunNote", { date, noteId, text: text.slice(0, 4000) }, clock(), noteCommandId, policy, leaseScope, fence, clock)));
+  if (!noteWrap.ok || !noteWrap.value.result.ok) {
+    // Ob der Schreibversuch selbst geworfen hat ODER nur ok:false meldete —
+    // in beiden Faellen bleibt der Anthropic-Anspruch offen: der Ausgang
+    // dieses Laufs muss als unklar markiert werden, sonst haengt er
+    // faelschlich als "beansprucht, nie abgerechnet".
     await mutateCore(CORE_KEY, (data) => E1.markCostOutcomeUnknown(data, { callId, reason: "note_persist_failed", now: clock(), verifiedScope: { holder: LEASE_HOLDER, fence, scope: leaseScope } })).catch(() => {});
-    return { ok: false, blocked: `note_persist:${noteOut.result.code}`, sourceOutcome: outcome };
+    if (!noteWrap.ok) return { ...noteWrap, sourceOutcome: outcome };
+    return { ok: false, blocked: `note_persist:${noteWrap.value.result.code}`, sourceOutcome: outcome };
   }
+  const noteOut = noteWrap.value;
 
-  const settleOut = await mutateCore(CORE_KEY, (data) => E1.settleCost(data, {
+  const settleWrap = await mitPhase("settle_cost", () => mutateCore(CORE_KEY, (data) => E1.settleCost(data, {
     callId, actualMicros: antwort.actualMicros, usageReceiptId: antwort.usageReceiptId ?? null, providerRequestId: antwort.providerRequestId ?? null,
     now: clock(), verifiedScope: { holder: LEASE_HOLDER, fence, scope: leaseScope },
-  }));
+  })));
+  if (!settleWrap.ok) return { ...settleWrap, sourceOutcome: outcome, noteWritten: true };
+  const settleOut = settleWrap.value;
   if (!settleOut.result.ok) return { ok: false, blocked: `settle:${settleOut.result.code}`, sourceOutcome: outcome, noteWritten: true };
 
   // Erst NACH dem wirklich gelungenen, dauerhaft gespeicherten Entwurf wird
   // das Wasserzeichen bestaetigt (Review-Befund F/G-2 #3+#4).
-  const advanceOut = await mutateCore(CORE_KEY, fencedCommand(
+  const advanceWrap = await mitPhase("source_check_advance", () => mutateCore(CORE_KEY, fencedCommand(
     "recordSourceCheck",
     { date, sourceId: SOURCE_ID, cursor: JSON.stringify(wirklichVollstaendig ? { sinceMs: now } : { sinceMs }), outcome, detail: `pages=${pagesSeen}` },
     clock(), `source-check-advance:${date}:${SOURCE_ID}`, policy, leaseScope, fence, clock,
-  ));
+  )));
 
-  return { ok: true, sourceOutcome: outcome, drafted: true, watermarkAdvanced: wirklichVollstaendig && advanceOut.result.ok === true };
+  // Ein Fehlschlag hier ist NICHT fatal — der Entwurf wurde bereits
+  // dauerhaft gespeichert und abgerechnet (s.o.); hoechstens wandert das
+  // Wasserzeichen nicht (der naechste Lauf scannt etwas mehr erneut, kein
+  // Datenverlust).
+  return { ok: true, sourceOutcome: outcome, drafted: true, watermarkAdvanced: wirklichVollstaendig && advanceWrap.ok && advanceWrap.value.result.ok === true };
 }

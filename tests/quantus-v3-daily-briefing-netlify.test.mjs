@@ -387,3 +387,71 @@ test("Befund 5: ohne Anthropic-Schluessel wird trotzdem ein ehrlicher Gmail-Quel
   assert.ok(check, "der Gmail-Quellenstatus muss trotzdem gespeichert sein — 'kein Schluessel' heisst nicht 'gar nichts sichtbar'");
   assert.equal(check.outcome, "ok", JSON.stringify(check));
 });
+
+// ── Review-Fix (25.09.2026, belegter Fehler): der Knopf endete oeffentlich
+// mit einem opaken "run_failed", NICHT mit GESPERRT — Auth und Konfigurations-
+// pruefung waren also laengst durchlaufen. Ursache: readCore()/mutateCore()
+// (z. B. eine Firebase-Admin-Ausnahme wie CLAUDE.md "invalid_rapt") waren an
+// den meisten Aufrufstellen NICHT abgefangen und fielen ungefangen bis zur
+// Netlify Function durch, die den Grund verschluckte. Fix: JEDE dieser
+// Aufrufstellen ist jetzt ueber mitPhase() abgesichert und liefert ein
+// sicheres, strukturiertes { ok:false, blocked:"unexpected_error:<phase>",
+// code } zurueck — nie einen ungefangenen Wurf, nie ein Geheimnis/Mailinhalt
+// im code (nur err.code oder err.name).
+test("Befund (25.09.2026): ein werfendes readCore() (z. B. invalid_rapt) fuehrt NICHT zu einem ungefangenen Wurf, sondern zu einem sicheren, phasenmarkierten Fehlschlag", async () => {
+  const readCore = async () => { throw Object.assign(new Error("Firebase Admin OAuth fehlgeschlagen: invalid_rapt"), { code: "firebase_oauth_refresh_failed" }); };
+  const mutateCore = async () => { throw new Error("darf hier nie aufgerufen werden"); };
+  await assert.doesNotReject(
+    runDailyBriefing({ now: T0, envRead: envReadFrom(baseEnv()), mutateCore, readCore, clock: () => T0 }),
+    "runDailyBriefing() darf niemals ungefangen werfen — das erzeugt das opake 'run_failed' ohne jede Phase/Ursache",
+  );
+  const ergebnis = await runDailyBriefing({ now: T0, envRead: envReadFrom(baseEnv()), mutateCore, readCore, clock: () => T0 });
+  assert.equal(ergebnis.ok, false);
+  assert.equal(ergebnis.blocked, "unexpected_error:core_read", `die Phase muss den Fehlschlagspunkt benennen: ${JSON.stringify(ergebnis)}`);
+  assert.equal(ergebnis.code, "firebase_oauth_refresh_failed", "der sichere, bereits vergebene Fehlercode muss durchgereicht werden");
+  assert.ok(!JSON.stringify(ergebnis).includes("invalid_rapt"), "die rohe Fehlermeldung (err.message) darf NIE in der oeffentlichen Antwort landen");
+});
+
+test("Befund (25.09.2026): ein werfender mutateCore()-Aufruf mitten im Lauf (z. B. beim Pacht-Erwerb) wird ebenfalls sicher klassifiziert, nicht ungefangen durchgereicht", async () => {
+  const store = createCasStore(seedCore());
+  let aufrufNr = 0;
+  const mutateCore = async (key, mutator) => {
+    aufrufNr++;
+    if (aufrufNr === 1) throw Object.assign(new Error("RTDB-Verbindung abgebrochen"), { code: "rtdb_transaction_failed" });
+    return casMutate(store, mutator);
+  };
+  const readCore = fakeCoreAccess(store).readCore;
+  const ergebnis = await runDailyBriefing({ now: T0, envRead: envReadFrom(baseEnv()), mutateCore, readCore, clock: () => T0 });
+  assert.equal(ergebnis.ok, false);
+  assert.equal(ergebnis.blocked, "unexpected_error:lease_acquire", `die Phase muss den Fehlschlagspunkt (Pacht-Erwerb) benennen: ${JSON.stringify(ergebnis)}`);
+  assert.equal(ergebnis.code, "rtdb_transaction_failed");
+});
+
+test("Befund (25.09.2026): ein Wurf spaeter im Lauf (nach dem Pacht-Erwerb) wird trotzdem ehrlich freigegeben (finally) und sicher klassifiziert", async () => {
+  const store = createCasStore(seedCore());
+  let aufrufNr = 0;
+  let releaseAufgerufen = false;
+  const mutateCore = async (key, mutator) => {
+    aufrufNr++;
+    if (aufrufNr === 2) throw new TypeError("unerwarteter interner Fehler");
+    const ergebnis = await casMutate(store, mutator);
+    // Der 3. mutateCore-Aufruf im echten Ablauf ist releaseLease() (finally) —
+    // hier grob am Aufrufmuster erkannt: kein result.ok-Feld mehr benoetigt.
+    if (aufrufNr >= 3) releaseAufgerufen = true;
+    return ergebnis;
+  };
+  const readCore = fakeCoreAccess(store).readCore;
+  const gmail = await gmailServer({ ids: ["m1"] });
+  try {
+    const ergebnis = await runDailyBriefing({
+      now: T0, envRead: envReadFrom(baseEnv()), mutateCore, readCore,
+      gmailApiBase: gmail.base, getGmailToken: async () => ({ token: "test-token" }), clock: () => T0,
+    });
+    assert.equal(ergebnis.ok, false);
+    assert.equal(ergebnis.blocked, "unexpected_error:ensure_run", `die Phase muss den Fehlschlagspunkt (ensureRun) benennen: ${JSON.stringify(ergebnis)}`);
+    assert.equal(ergebnis.code, "TypeError");
+    assert.ok(releaseAufgerufen, "die Pacht muss trotz Wurf im finally freigegeben werden — sonst blockiert sie den naechsten Lauf");
+  } finally {
+    await gmail.close();
+  }
+});
