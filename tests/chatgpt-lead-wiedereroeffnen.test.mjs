@@ -334,4 +334,43 @@ const BRIEFING = () => ({
     "das Auswahlfeld wird nicht auf den bisherigen Stand zurückgesetzt");
 }
 
+/* ══ 8. Review-Fix a1de2c2/PR267-Nachfolge: geschlossene Leads werden durch
+   cgl-answer-question/cgl-cowork-return-check NICHT reaktiviert ═══════════
+   Funktionaler Test (kein reiner String-Check): der echte Handler wird
+   gegen einen abgeschlossenen Lead ausgefuehrt, das Ergebnis am Datensatz
+   geprueft — nicht nur, dass ein Muster im Quelltext vorkommt. */
+{
+  const geschlossenMitFrage = Object.assign(BRIEFING(), {
+    status: "abgeschlossen", closedAt: "2026-09-10T09:00:00.000Z", closedBy: "assistant",
+    pendingQuestion: { text: "Zu spät?", options: [], recommendation: null, askedAt: "2026-09-10T08:00:00.000Z", answeredAt: null, answer: null },
+  });
+  const t = bauen(geschlossenMitFrage);
+  t.klick("cgl-answer-question", { ["cglAnswerText_" + t.lead.id]: "Antwort auf Geschlossenes" });
+  ok(!t.lead.pendingQuestion.answeredAt, "eine Antwort auf einen abgeschlossenen Lead wurde trotzdem verarbeitet (answeredAt gesetzt)");
+  ok(t.lead.status === "abgeschlossen", "ein abgeschlossener Lead wurde durch eine Antwort wieder geoeffnet");
+  ok(t.gezeichnet() === 0, "eine abgelehnte Antwort hat trotzdem neu gezeichnet");
+
+  const geschlossenMitRuecklauf = Object.assign(BRIEFING(), {
+    status: "abgeschlossen", closedAt: "2026-09-10T09:00:00.000Z", closedBy: "assistant",
+    assignee: "cowork", handoverAt: "2026-09-08T08:00:00.000Z",
+    returnedAt: "2026-09-09T09:00:00.000Z", returnChecked: false,
+  });
+  const t2 = bauen(geschlossenMitRuecklauf);
+  t2.klick("cgl-cowork-return-check");
+  ok(t2.lead.returnChecked === false, "ein Ruecklauf auf einem abgeschlossenen Lead liess sich pruefen");
+  ok(t2.lead.status === "abgeschlossen", "ein abgeschlossener Lead wurde durch die Ruecklaufpruefung wieder geoeffnet");
+  ok(t2.gezeichnet() === 0, "eine abgelehnte Ruecklaufpruefung hat trotzdem neu gezeichnet");
+
+  // Gegenprobe: auf einem NICHT geschlossenen Lead funktionieren beide
+  // Aktionen weiterhin wie vorgesehen (der Guard ist nicht zu weit gefasst).
+  const offenMitFrage = Object.assign(BRIEFING(), {
+    status: "in_arbeit", closedAt: null, closedBy: null,
+    pendingQuestion: { text: "Format?", options: ["A", "B"], recommendation: "A", askedAt: "2026-09-10T08:00:00.000Z", answeredAt: null, answer: null },
+  });
+  const t3 = bauen(offenMitFrage);
+  t3.klick("cgl-answer-question", { ["cglAnswerText_" + t3.lead.id]: "A bitte" });
+  ok(t3.lead.pendingQuestion.answeredAt && t3.lead.pendingQuestion.answer === "A bitte", "eine Antwort auf einen offenen Lead wird faelschlich abgelehnt");
+  ok(t3.lead.operationalState === "doing", "operationalState wechselt bei einer angenommenen Antwort nicht auf 'doing'");
+}
+
 console.log(`chatgpt lead wiedereroeffnen: ok (${checks} Pruefungen)`);

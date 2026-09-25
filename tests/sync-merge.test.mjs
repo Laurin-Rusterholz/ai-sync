@@ -429,4 +429,47 @@ function gepflegteUnterstrichWurzeln() {
     "der bestehende Auffangzweig wurde veraendert");
 }
 
+// ── 13. dailyBriefing.intakeQueue (Konzept v2 K, Review PR268) ────────────
+// Fehlte bislang komplett im Merge — ein auf einem Geraet eingereichter oder
+// mit einem Lead verknuepfter Eintrag ging beim naechsten Abgleich verloren,
+// und zwei Geraete legten unabhaengig je einen eigenen Lead fuer dieselbe
+// Anfrage an, weil keine Seite von der Verknuepfung der anderen erfuhr.
+{
+  // 13a. Ein nur auf dem Server vorhandener Eintrag darf nicht verschwinden.
+  const lokal = { entities: { tasks: {} }, dailyBriefing: { intakeQueue: [] } };
+  const server = { entities: { tasks: {} }, dailyBriefing: {
+    intakeQueue: [{ id: "intake_1", text: "Vom Handy eingereicht", createdAt: "2026-09-24T08:00:00.000Z", updatedAt: "2026-09-24T08:00:00.000Z", linkedLeadId: null }],
+  } };
+  const m1 = mergeData(lokal, server);
+  ok(Array.isArray(m1.dailyBriefing?.intakeQueue) && m1.dailyBriefing.intakeQueue.some((it) => it.id === "intake_1"),
+    "ein nur auf dem Server vorhandener intakeQueue-Eintrag geht beim Merge verloren");
+
+  // 13b. Eine auf dem anderen Geraet vorgenommene Verknuepfung (linkedLeadId,
+  // gleiche id, gleicher createdAt — nur updatedAt ist neuer) setzt sich
+  // durch, statt vom lokalen unverknuepften Stand ueberschrieben zu werden.
+  const lokalUnverknuepft = { entities: { tasks: {} }, dailyBriefing: {
+    intakeQueue: [{ id: "intake_2", text: "Anfrage X", createdAt: "2026-09-24T08:00:00.000Z", linkedLeadId: null }],
+  } };
+  const serverVerknuepft = { entities: { tasks: {} }, dailyBriefing: {
+    intakeQueue: [{ id: "intake_2", text: "Anfrage X", createdAt: "2026-09-24T08:00:00.000Z", updatedAt: "2026-09-24T09:00:00.000Z", linkedLeadId: "lead_abc" }],
+  } };
+  const m2 = mergeData(lokalUnverknuepft, serverVerknuepft);
+  const eintrag2 = m2.dailyBriefing?.intakeQueue?.find((it) => it.id === "intake_2");
+  ok(eintrag2 && eintrag2.linkedLeadId === "lead_abc",
+    "eine auf dem anderen Geraet vorgenommene Lead-Verknuepfung geht beim Pull verloren — beide Geraete legen dann eigene, doppelte Leads an");
+
+  // 13c. Und umgekehrt: die lokale, neuere Verknuepfung setzt sich gegen
+  // einen aelteren, noch unverknuepften Serverstand durch.
+  const lokalVerknuepft = { entities: { tasks: {} }, dailyBriefing: {
+    intakeQueue: [{ id: "intake_3", text: "Anfrage Y", createdAt: "2026-09-24T08:00:00.000Z", updatedAt: "2026-09-24T09:00:00.000Z", linkedLeadId: "lead_xyz" }],
+  } };
+  const serverAlt = { entities: { tasks: {} }, dailyBriefing: {
+    intakeQueue: [{ id: "intake_3", text: "Anfrage Y", createdAt: "2026-09-24T08:00:00.000Z", linkedLeadId: null }],
+  } };
+  const m3 = mergeData(lokalVerknuepft, serverAlt);
+  const eintrag3 = m3.dailyBriefing?.intakeQueue?.find((it) => it.id === "intake_3");
+  ok(eintrag3 && eintrag3.linkedLeadId === "lead_xyz",
+    "die lokale, neuere Lead-Verknuepfung wird durch den aelteren Serverstand rueckgaengig gemacht");
+}
+
 console.log(`sync merge: ok (${checks} Pruefungen)`);
