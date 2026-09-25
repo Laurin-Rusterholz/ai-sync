@@ -527,4 +527,38 @@ test("Befund (25.09.2026): ein teilweise migrierter, aber struktuell kaputter v3
   assert.equal(ergebnis.ok, false);
   assert.equal(ergebnis.blocked, "unexpected_error:core_migrate", `ein struktuell kaputter v3-Bestand muss sichtbar scheitern, nicht als vollstaendig gelten: ${JSON.stringify(ergebnis)}`);
   assert.equal(ergebnis.code, "CORE_PARTIAL_V3");
+
+  // Befund (25.09.2026, echter Knopflauf NACH diesem Fix): CORE_PARTIAL_V3
+  // allein sagt nicht, WELCHES Feld fehlt/kaputt ist — pruefeKernStruktur()
+  // (assistant-migration.mjs) berechnet das laengst, es muss nur sicher
+  // durchgereicht werden (nur code+path, nie ein Feldwert).
+  assert.ok(Array.isArray(ergebnis.violations) && ergebnis.violations.length > 0,
+    `der struktuell kaputte Bestand muss die konkreten Feldpfade nennen, nicht nur den Sammelcode: ${JSON.stringify(ergebnis)}`);
+  for (const v of ergebnis.violations) {
+    assert.equal(Object.keys(v).sort().join(","), "code,path", `ein violations-Eintrag traegt mehr als code+path: ${JSON.stringify(v)}`);
+    assert.equal(typeof v.code, "string");
+    assert.equal(typeof v.path, "string");
+  }
+  assert.ok(ergebnis.violations.some((v) => v.path === "dailyBriefing.assistantRuns"),
+    `die fehlende dailyBriefing.assistantRuns-Struktur (der eigentliche Defekt dieses Bestands) fehlt in violations: ${JSON.stringify(ergebnis.violations)}`);
+});
+
+test("Befund (25.09.2026): sichereViolations() verwirft alles ausser code/path — auch falls ein Fehler versehentlich mehr mitbringt", async () => {
+  const { sichereViolations } = await import("../netlify/lib/quantus-v3-daily-briefing.mjs");
+  const fehler = Object.assign(new Error("x"), {
+    violations: [
+      { code: "CORE_NOT_MIGRATED", path: "automation", geheimwert: "darf niemals ankommen" },
+      { code: 123, path: null },
+      "kein-objekt",
+      null,
+    ],
+  });
+  const ergebnis = sichereViolations(fehler);
+  assert.equal(ergebnis.length, 2, `nicht-objektartige Eintraege ("kein-objekt", null) muessen entfernt werden, objektartige mit falschem Feldtyp bleiben (sanitisiert): ${JSON.stringify(ergebnis)}`);
+  assert.deepEqual(Object.keys(ergebnis[0]).sort(), ["code", "path"], "ein zusaetzliches Feld (geheimwert) wird durchgereicht");
+  assert.equal(ergebnis[0].code, "CORE_NOT_MIGRATED");
+  assert.equal(ergebnis[1].code, "unknown", "ein nicht-string code wird nicht auf einen sicheren Platzhalter abgebildet");
+  assert.equal(ergebnis[1].path, "", "ein nicht-string path wird nicht auf einen sicheren Platzhalter abgebildet");
+  assert.equal(sichereViolations({}), null, "ein Fehler ohne violations liefert nicht null");
+  assert.equal(sichereViolations(Object.assign(new Error("y"), { violations: [] })), null, "eine leere violations-Liste liefert nicht null");
 });

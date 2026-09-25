@@ -30,7 +30,7 @@
  * {ok:false, blocked:"missing_configuration", missing:[...]} bei fehlender
  * Konfiguration — nie ein Geheimnis, nur Namen.
  * ═════════════════════════════════════════════════════════════════════════ */
-import { runDailyBriefing, checkDailyBriefingConfig } from "../lib/quantus-v3-daily-briefing.mjs";
+import { runDailyBriefing, checkDailyBriefingConfig, sichereViolations } from "../lib/quantus-v3-daily-briefing.mjs";
 import { zugangPruefen } from "../lib/mail-queue-endpunkt.mjs";
 
 function pruefeZugang(req) {
@@ -73,8 +73,9 @@ export default async (req) => {
     const code = (err && typeof err.code === "string" && /^[a-zA-Z][a-zA-Z0-9_]{1,60}$/.test(err.code)) ? err.code
       : (err && typeof err.name === "string" && /^[a-zA-Z][a-zA-Z0-9]{1,60}$/.test(err.name)) ? err.name
       : "unknown_error";
+    const violations = sichereViolations(err);
     console.error("[quantus-v3-daily-briefing-run] Lauf gescheitert (unklassifiziert):", code, err && err.status);
-    return new Response(JSON.stringify({ ok: false, error: "run_failed", phase: "unclassified", code }), { status: 500, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ ok: false, error: "run_failed", phase: "unclassified", code, ...(violations ? { violations } : {}) }), { status: 500, headers: { "Content-Type": "application/json" } });
   }
 };
 

@@ -23,7 +23,17 @@ import {
 import { isoAus, istLokalDatum } from "./assistant-zeit.mjs";
 
 export class CoreDocumentError extends Error {
-  constructor(code, message) { super(message || code); this.code = code; this.status = 503; this.coreDocument = true; }
+  // violations (optional): die STRUKTURIERTE Fassung von pruefeKernStruktur()
+  // — eine Liste von { code, path } ohne jeden Feldwert. message traegt
+  // dieselbe Information nur als Freitext (fuer Logs); .violations ist fuer
+  // eine SICHERE, maschinenlesbare Weitergabe an einen Aufrufer gedacht, der
+  // niemals err.message nach aussen reichen darf (siehe
+  // quantus-v3-daily-briefing.mjs sichererFehlercode()).
+  constructor(code, message, violations = null) {
+    super(message || code);
+    this.code = code; this.status = 503; this.coreDocument = true;
+    this.violations = Array.isArray(violations) ? violations : null;
+  }
 }
 
 function istKarte(v) {
@@ -145,7 +155,7 @@ export function migrateCore(input, { now } = {}) {
   const spuren = v3Spuren(data);
   if (spuren.length) {
     const f = pruefeKernStruktur(data);
-    if (f.length) throw new CoreDocumentError("CORE_PARTIAL_V3", "v3-Spuren (" + spuren.join(", ") + ") in einem unvollstaendigen oder kaputten Kern — keine erneute Erstmigration: " + f.map((x) => x.code + "@" + x.path).join("; "));
+    if (f.length) throw new CoreDocumentError("CORE_PARTIAL_V3", "v3-Spuren (" + spuren.join(", ") + ") in einem unvollstaendigen oder kaputten Kern — keine erneute Erstmigration: " + f.map((x) => x.code + "@" + x.path).join("; "), f);
     bericht.mode = "repeat";
   } else {
     bericht.mode = "initial";
@@ -213,6 +223,6 @@ export function pruefeKernStruktur(data) {
 export function requireCore(data) {
   const d = pruefeBestand(data);
   const f = pruefeKernStruktur(d);
-  if (f.length) throw new CoreDocumentError(f[0].code, f.map((x) => x.code + "@" + x.path).join("; "));
+  if (f.length) throw new CoreDocumentError(f[0].code, f.map((x) => x.code + "@" + x.path).join("; "), f);
   return d;
 }
