@@ -14218,14 +14218,24 @@ function mergeData(local, remote) {
       const map = {};
       for (const r of [...(localArr || []), ...(remoteArr || [])]) {
         if (!r || !r.id) continue;
-        const ex = map[r.id];
-        if (!ex) { map[r.id] = { ...r }; continue; }
+        // Review-Fix (25.09.2026): NICHT mehr strikt nach .id gruppieren.
+        // Waehrend reconcileHabits() eine No-Braine-Routine auf die
+        // vollstaendige, kollisionsfreie Id migriert (siehe dortiger Fix),
+        // kann ein Geraet bereits die neue Id fuehren, waehrend ein anderes
+        // noch die alte sendet — beide repraesentieren dieselbe Definition.
+        // Ohne diesen Schluessel wuerde die Vereinigung sie als ZWEI
+        // verschiedene Routinen lesen: genau die vom Review gemeldete
+        // Doppel-Routinen-Gefahr waehrend eines laufenden Id-Wechsels.
+        // Nicht-No-Braine-Routinen (kein nbHabitId) verhalten sich unveraendert.
+        const schluessel = r.nbHabitId ? ('nb:' + r.nbHabitId) : r.id;
+        const ex = map[schluessel];
+        if (!ex) { map[schluessel] = { ...r }; continue; }
         const exTs = new Date(ex.updatedAt || ex.createdAt || 0).getTime();
         const rTs = new Date(r.updatedAt || r.createdAt || 0).getTime();
         const base = rTs > exTs ? { ...ex, ...r } : { ...r, ...ex };
         base.completions = unionBy(ex.completions, r.completions, c => c.id || (c.date + '|' + (c.value || '') + '|' + (c.autoFromSubUnits ? 'a' : '')));
         base.subCompletions = unionBy(ex.subCompletions, r.subCompletions, c => c.id || (c.date + '|' + c.subUnitName));
-        map[r.id] = base;
+        map[schluessel] = base;
       }
       return Object.values(map);
     };
@@ -81485,7 +81495,15 @@ window.searchAllData = searchAllData;
       }
       if(r && r.archivedByUser) return;
       if(def.aktiv===false){ if(r && !r.archived){ r.archived=true; changed=true; } return; }
-      if(!r && nbGeloescht(korrekteId, id, def)) return;
+      // Review-Fix (25.09.2026): zusaetzlich die alte, gekuerzte Formel als
+      // Grabstein-Kandidat pruefen — eine Loeschung, die (vor diesem Fix)
+      // unter der damaligen Kurz-Id geloggt wurde, darf durch den Wechsel
+      // auf die vollstaendige Id nicht unsichtbar werden. Der stabile
+      // "nb:"+nbHabitId-Schluessel innerhalb von nbGeloescht() greift zwar
+      // in jedem regulaeren Loeschpfad ohnehin (beide Schluessel werden dort
+      // immer gemeinsam geschrieben), dieser Fallback sichert aber auch
+      // etwaige AELTERE, nur unter der Kurz-Id dokumentierte Grabsteine ab.
+      if(!r && (nbGeloescht(korrekteId, id, def) || nbGeloescht("rt_nb_"+String(id).slice(0,12), id, def))) return;
       if(!r){ routines.push({ id:korrekteId, nbHabitId:id, source:"nobraine", text:def.name||"Habit", icon:def.icon||"🔁", color:"#3e8e87", frequency:"daily", customDays:[], target:1, unit:"", subUnits:[], archived:false, createdAt:new Date().toISOString(), completions:[], subCompletions:[] }); changed=true; }
       else { if(def.name && r.text!==def.name){ r.text=def.name; changed=true; } if(def.icon && r.icon!==def.icon){ r.icon=def.icon; changed=true; } if(r.archived){ r.archived=false; changed=true; } }
     });

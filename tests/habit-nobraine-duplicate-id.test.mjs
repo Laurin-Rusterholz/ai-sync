@@ -138,14 +138,82 @@ const ROUTINE = (extra = {}) => Object.assign({
     `eine neu angelegte Routine traegt weiterhin eine gekuerzte Id: ${routinen[0].id}`);
 }
 
-// ── 4. Struktur-Beleg: die alte, kuerzende Formel (.slice(0,12)) fuer
-//      rt_nb_-Ids ist aus dem Quelltext entfernt ────────────────────────────
+// ── 4. Struktur-Beleg: die tatsaechlich VERGEBENE Id kuerzt nicht mehr auf
+//      12 Zeichen — die alte, kuerzende Form darf NUR NOCH als zusaetzlicher
+//      Grabstein-Kandidat (Rueckwaertskompatibilitaet, siehe Test 6) benutzt
+//      werden, nie mehr fuer die Id selbst ─────────────────────────────────
 {
   const quelle = funktion("reconcileHabits", "  function ");
-  ok(!/rt_nb_["']?\s*\+\s*String\([^)]*\)\.slice\(0,\s*12\)/.test(quelle),
-    "reconcileHabits kuerzt die Routine-Id weiterhin auf 12 Zeichen — die Kollisionsursache besteht fort");
   ok(/korrekteId\s*=\s*"rt_nb_"\s*\+\s*String\(id\)/.test(quelle),
-    "reconcileHabits berechnet die vollstaendige Id nicht mehr ueber eine einzige, konsistente Formel");
+    "reconcileHabits berechnet die vollstaendige Id nicht mehr ueber eine einzige, konsistente Formel (korrekteId)");
+  ok(!/id\s*:\s*korrekteId[\s\S]{0,20}\.slice/.test(quelle) && !/r\.id\s*=\s*korrekteId\.slice/.test(quelle),
+    "die tatsaechlich vergebene Id (korrekteId) wird noch irgendwo gekuerzt");
+}
+
+// ── 5. Merge-Beleg (Review vor Merge): zwei Geraete melden dieselbe
+//      No-Braine-Definition mit VERSCHIEDENEN Ids — Geraet A hat bereits auf
+//      die vollstaendige Id migriert, Geraet B sendet noch die alte,
+//      gekuerzte Id. Der echte mergeRoutinesById() (aus mergeData()
+//      herausgeschnitten) darf daraus NICHT zwei Routinen machen, und
+//      Archiv-Status/Verlauf duerfen nicht verloren gehen oder vertauscht
+//      werden ───────────────────────────────────────────────────────────
+{
+  function mergeRoutinesByIdFn() {
+    const start = index.indexOf("const mergeRoutinesById = (localArr, remoteArr) => {");
+    ok(start > 0, "mergeRoutinesById wurde nicht gefunden");
+    const ende = index.indexOf("\n    };\n", start) + 6;
+    const quelle = index.slice(start, ende);
+    return new Function(quelle + "\nreturn mergeRoutinesById;")();
+  }
+  const mergeRoutinesById = mergeRoutinesByIdFn();
+
+  const nbHabitId = "-Own62y4VzfBbewegung01";
+  // Geraet A: bereits migriert (dieser Fix lief dort schon einmal durch),
+  // neuerer Zeitstempel (Archivierung durch den Nutzer NACH der Migration).
+  const geraetA = [{
+    id: "rt_nb_" + nbHabitId, nbHabitId, text: "Bewegung", icon: "🏃",
+    archived: true, archivedByUser: true, updatedAt: "2026-09-25T09:00:00.000Z", createdAt: "2026-01-05T08:00:00.000Z",
+    completions: [{ id: "hcA", date: "2026-09-24", value: 1 }], subCompletions: [],
+  }];
+  // Geraet B: noch NICHT migriert — alte, gekuerzte Id, kein archivedByUser,
+  // aber eine ANDERE completion (vor dem naechsten Sync auf diesem Geraet
+  // eingetragen) — die muss trotz unterschiedlicher .id erhalten bleiben.
+  const geraetB = [{
+    id: "rt_nb_-Own62y4VzfB", nbHabitId, text: "Bewegung", icon: "🏃",
+    archived: false, createdAt: "2026-01-05T08:00:00.000Z",
+    completions: [{ id: "hcB", date: "2026-09-23", value: 1 }], subCompletions: [],
+  }];
+
+  const gemergt = mergeRoutinesById(geraetA, geraetB);
+  eq(gemergt.length, 1, `zwei Geraete mit unterschiedlicher Id fuer dieselbe nbHabitId ergeben nach dem Merge mehr als EINE Routine — genau die vom Review befuerchtete Doppel-Routine: ${JSON.stringify(gemergt.map((r) => ({ id: r.id, nbHabitId: r.nbHabitId })))}`);
+  const r = gemergt[0];
+  eq(r.archived, true, "der Merge verliert den (neueren) Archiv-Status von Geraet A");
+  eq(r.archivedByUser, true, "der Merge verliert das archivedByUser-Flag von Geraet A");
+  const completionIds = r.completions.map((c) => c.id).sort();
+  eq(completionIds.join(","), "hcA,hcB", `der Merge verliert completions eines der beiden Geraete: ${completionIds.join(",")}`);
+}
+
+// ── 6. Legacy-Grabstein-Beleg: eine Loeschung, die (vor diesem Fix) NUR unter
+//      der damaligen, gekuerzten Id dokumentiert wurde (kein "nb:"-Schluessel,
+//      z. B. ein sehr alter Grabstein), verhindert weiterhin die Neuanlage
+//      nach dem Wechsel auf die vollstaendige Id ───────────────────────────
+{
+  const quelle = funktion("reconcileHabits", "  function ");
+  const nbHabitId = "-Own62y4VzfBwassertr4";
+  const alteKurzId = "rt_nb_" + nbHabitId.slice(0, 12); // exakt die frueher vergebene Id
+  // Der Log enthaelt AUSSCHLIESSLICH die alte, kurze Id — kein "nb:"-Eintrag —
+  // simuliert einen Grabstein aus der Zeit vor der Formel-Aenderung.
+  const grabsteinLog = { routine: { [alteKurzId]: Date.now() } };
+  const b = { routines: [] };
+  const S = { defs: { [nbHabitId]: { name: "Wasser trinken", icon: "💧", aktiv: true, erstellt: "2020-01-01T00:00:00.000Z" } }, log: {} };
+  const fn = new Function("S", "brief", "window", "Date", "Number", "Object", "Array", "Math", "nbGeloescht",
+    // nbGeloescht() bewusst NICHT gestubbt — die ECHTE Funktion soll gegen
+    // den simulierten Alt-Grabstein laufen.
+    funktion("nbGeloescht", "  function ") + "\n" + quelle + "\nreturn reconcileHabits;",
+  )(S, () => b, { getDeleteLog: () => grabsteinLog }, Date, Number, Object, Array, Math, undefined);
+  fn();
+  eq(b.routines.length, 0,
+    "eine Loeschung, die nur unter der alten, gekuerzten Id dokumentiert ist, wird nach dem Formel-Wechsel ignoriert — die geloeschte Routine kommt zurueck");
 }
 
 console.log(`habit-nobraine-duplicate-id: ok (${checks} Pruefungen)`);
