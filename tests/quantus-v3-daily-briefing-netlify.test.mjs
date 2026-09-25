@@ -417,7 +417,11 @@ test("Befund (25.09.2026): ein werfender mutateCore()-Aufruf mitten im Lauf (z. 
   let aufrufNr = 0;
   const mutateCore = async (key, mutator) => {
     aufrufNr++;
-    if (aufrufNr === 1) throw Object.assign(new Error("RTDB-Verbindung abgebrochen"), { code: "rtdb_transaction_failed" });
+    // Aufruf 1 ist jetzt die Migrationspruefung (core_migrate, s.u.) — auf
+    // einem bereits migrierten seedCore() ein echter no-op-Durchlauf.
+    // Aufruf 2 ist der Pacht-Erwerb (lease_acquire), hier gezielt zum Werfen
+    // gebracht.
+    if (aufrufNr === 2) throw Object.assign(new Error("RTDB-Verbindung abgebrochen"), { code: "rtdb_transaction_failed" });
     return casMutate(store, mutator);
   };
   const readCore = fakeCoreAccess(store).readCore;
@@ -433,11 +437,11 @@ test("Befund (25.09.2026): ein Wurf spaeter im Lauf (nach dem Pacht-Erwerb) wird
   let releaseAufgerufen = false;
   const mutateCore = async (key, mutator) => {
     aufrufNr++;
-    if (aufrufNr === 2) throw new TypeError("unerwarteter interner Fehler");
+    // Reihenfolge im echten Ablauf: 1 core_migrate (no-op), 2 lease_acquire,
+    // 3 ensureRun (hier zum Werfen gebracht), 4 releaseLease (finally).
+    if (aufrufNr === 3) throw new TypeError("unerwarteter interner Fehler");
     const ergebnis = await casMutate(store, mutator);
-    // Der 3. mutateCore-Aufruf im echten Ablauf ist releaseLease() (finally) —
-    // hier grob am Aufrufmuster erkannt: kein result.ok-Feld mehr benoetigt.
-    if (aufrufNr >= 3) releaseAufgerufen = true;
+    if (aufrufNr >= 4) releaseAufgerufen = true;
     return ergebnis;
   };
   const readCore = fakeCoreAccess(store).readCore;
@@ -454,4 +458,73 @@ test("Befund (25.09.2026): ein Wurf spaeter im Lauf (nach dem Pacht-Erwerb) wird
   } finally {
     await gmail.close();
   }
+});
+
+// ── Befund (25.09.2026, echter Knopflauf): der lebende Bestand hatte NIE ein
+// data.automation — kein Netlify-Pfad rief je die vorhandene migrateCore()
+// (assistant-migration.mjs) auf einen echten Bestand auf. E1.acquireLease()
+// (assertCore) prueft dies strikt, legt aber ABSICHTLICH nichts an — genau
+// dieselbe Fail-closed-Haltung gilt fuer Paket B (requireCore()). Fix: die
+// bereits vorhandene, versionierte, idempotente migrateCore() wird jetzt
+// einmalig ueber denselben CAS-Weg wie jede andere Aenderung angestossen. ──
+test("Befund (25.09.2026): ein NIE migrierter Bestand (kein automation-Feld) wird jetzt automatisch migriert, statt mit automation_not_ready zu scheitern", async () => {
+  const gmail = await gmailServer({ ids: [] });
+  try {
+    // Bewusst OHNE seedCore()/migrateCore() — genau der lebende Altbestand vor
+    // dem allerersten v3-Schreibversuch: entities + _settings, kein automation.
+    const rohbestand = { entities: {}, _settings: { anthropicApiKey: "" } };
+    const store = createCasStore(rohbestand);
+    const { mutateCore, readCore } = fakeCoreAccess(store);
+    const ergebnis = await runDailyBriefing({
+      now: T0, envRead: envReadFrom(baseEnv()), mutateCore, readCore,
+      gmailApiBase: gmail.base, getGmailToken: async () => ({ token: "test-token" }), clock: () => T0,
+    });
+    assert.notEqual(ergebnis.blocked, "unexpected_error:lease_acquire",
+      `automation_not_ready haette durch die automatische Migration nicht mehr auftreten duerfen: ${JSON.stringify(ergebnis)}`);
+    assert.equal(ergebnis.ok, true, `der Lauf gegen einen frisch migrierten Bestand muss gelingen: ${JSON.stringify(ergebnis)}`);
+    const migriert = store.snapshot();
+    assert.ok(migriert.automation && migriert.automation.schemaVersion === 3 && Number.isSafeInteger(migriert.automation.dataRevision),
+      "der Bestand traegt nach dem Lauf kein gueltiges automation-Feld");
+  } finally {
+    await gmail.close();
+  }
+});
+
+test("Befund (25.09.2026): auf einem bereits migrierten Bestand loest die Migrationspruefung KEINEN zusaetzlichen Schreibvorgang aus (taeglicher Regelfall)", async () => {
+  const gmail = await gmailServer({ ids: [] });
+  try {
+    const store = createCasStore(seedCore({ anthropicApiKey: "" }));
+    const { mutateCore, readCore } = fakeCoreAccess(store);
+    const putsVorher = store.stats.puts;
+    const ergebnis = await runDailyBriefing({
+      now: T0, envRead: envReadFrom(baseEnv()), mutateCore, readCore,
+      gmailApiBase: gmail.base, getGmailToken: async () => ({ token: "test-token" }), clock: () => T0,
+    });
+    assert.equal(ergebnis.ok, true, JSON.stringify(ergebnis));
+    // ensureRun/recordSourceCheck/releaseLease schreiben ohnehin — die
+    // Behauptung ist nur: die MIGRATIONSPRUEFUNG selbst fuegt keinen
+    // zusaetzlichen Schreibvorgang hinzu, wenn nichts zu migrieren ist. Das
+    // laesst sich direkt an migrateCore() nachweisen (unveraendert = kein
+    // Text-Unterschied), nicht an der Gesamt-Schreibzahl (die haengt von
+    // vielen anderen, hier nicht relevanten Schritten ab).
+    const { changed } = (await import("../netlify/lib/assistant-migration.mjs")).migrateCore(seedCore({ anthropicApiKey: "" }), { now: T0 });
+    assert.equal(changed, false, "migrateCore() meldet auf einem bereits gueltigen v3-Bestand faelschlich eine Aenderung");
+    assert.ok(store.stats.puts > putsVorher, "der Lauf selbst muss trotzdem etwas schreiben (ensureRun/sourceCheck/release) — sonst waere dieser Test wirkungslos");
+  } finally {
+    await gmail.close();
+  }
+});
+
+test("Befund (25.09.2026): ein teilweise migrierter, aber struktuell kaputter v3-Bestand bleibt sichtbar fail-closed — keine vorgetaeuschte vollstaendige Pruefung", async () => {
+  // v3-Spuren (automation vorhanden) OHNE die restliche Pflichtstruktur
+  // (dailyBriefing.assistantRuns fehlt) — migrateCore() darf das NICHT
+  // stillschweigend "heilen" (eigener Kopfkommentar: "keine erneute
+  // Erstmigration"), sondern muss CORE_PARTIAL_V3 werfen.
+  const kaputterBestand = { entities: {}, automation: { schemaVersion: 3, dataRevision: 0, idempotencyByKey: {} } };
+  const store = createCasStore(kaputterBestand);
+  const { mutateCore, readCore } = fakeCoreAccess(store);
+  const ergebnis = await runDailyBriefing({ now: T0, envRead: envReadFrom(baseEnv()), mutateCore, readCore, clock: () => T0 });
+  assert.equal(ergebnis.ok, false);
+  assert.equal(ergebnis.blocked, "unexpected_error:core_migrate", `ein struktuell kaputter v3-Bestand muss sichtbar scheitern, nicht als vollstaendig gelten: ${JSON.stringify(ergebnis)}`);
+  assert.equal(ergebnis.code, "CORE_PARTIAL_V3");
 });
