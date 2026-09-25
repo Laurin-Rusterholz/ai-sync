@@ -77,6 +77,7 @@
 import * as E1 from "./quantus-v3-runtime-state.mjs";
 import { localDate as zurichLocalDate } from "./quantus-v3-runtime-plan.mjs";
 import { applyCommand } from "./assistant-core.mjs";
+import { migrateCore } from "./assistant-migration.mjs";
 import { CORE_KEY } from "./quantus-v3-service.mjs";
 import { mutateAppData, readAppDataDocument } from "./firebase-admin.mjs";
 import { getValidAccessToken } from "./gcal-shared.mjs";
@@ -210,6 +211,38 @@ export async function runDailyBriefing({
   // auch OHNE Schluessel laufen und einen ehrlichen Status hinterlassen —
   // erst der Entwurf selbst braucht ihn (s. u.).
   const apiKey = String(coreDoc.parsed?._settings?.anthropicApiKey || "").trim();
+
+  // Befund (25.09.2026, echter Knopflauf am lebenden Bestand): der erste
+  // wirkliche Aufruf dieses Laufs scheiterte mit unexpected_error:lease_acquire
+  // [automation_not_ready] — NICHT invalid_rapt, Auth/Konfiguration liefen
+  // durch. Ursache: E1.acquireLease() (quantus-v3-runtime-state.mjs) prueft
+  // ueber assertCore() ausdruecklich nur, ob data.automation SCHON die volle
+  // v3-Form traegt (schemaVersion/dataRevision/idempotencyByKey) — sie legt
+  // absichtlich NICHTS an ("keine Uhr, keine UUID... fehlender ... Kern => 503,
+  // niemals ein neuer Bestand", eigener Kopfkommentar dort). Genau dieselbe
+  // Fail-closed-Haltung gilt fuer Paket B (assistant-core.mjs, requireCore()).
+  // Migriert wird ausschliesslich durch die bereits vorhandene, versionierte,
+  // idempotente migrateCore() (assistant-migration.mjs) — die rief bisher
+  // ABER KEIN einziger Netlify-Pfad jemals auf den echten Bestand auf. Der
+  // lebende Kern (vor diesem allerersten v3-Schreibversuch) hatte deshalb nie
+  // ein data.automation.
+  //
+  // Fix: GENAU DIESELBE, bereits getestete Migration jetzt hier einmalig
+  // ueber denselben CAS-Schreibweg wie jede andere Aenderung anstossen — kein
+  // neuer Endpunkt, keine neue Pruefung, keine abgeschwaechte Schutzschranke.
+  // migrateCore() ist rein/deterministisch (Kopie, kein now-Zufall, "zweimal
+  // angewendet ergibt exakt dasselbe Ergebnis") und damit sicher fuer eine
+  // CAS-Schleife; unchanged:true ueberspringt den Schreibvorgang, sobald der
+  // Bestand bereits migriert ist (der taegliche Regelfall). Ist ein bereits
+  // TEILWEISE migrierter, aber struktuell kaputter Bestand vorhanden, wirft
+  // migrateCore() bewusst CORE_PARTIAL_V3 — das bleibt ein sichtbarer,
+  // unklassifizierter Fehlschlag (mitPhase), es wird NICHTS als "vollstaendig
+  // geprueft" vorgetaeuscht.
+  const migrateWrap = await mitPhase("core_migrate", () => mutateCore(CORE_KEY, (data) => {
+    const { data: migriert, changed } = migrateCore(data, { now });
+    return changed ? { data: migriert } : { data, unchanged: true };
+  }));
+  if (!migrateWrap.ok) return migrateWrap;
 
   const date = zurichLocalDate(now);
   const leaseScope = `${tenant}:${LEASE_SCOPE_SUFFIX}`;
