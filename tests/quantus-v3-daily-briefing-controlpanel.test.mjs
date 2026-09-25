@@ -649,7 +649,10 @@ test("DelegationEinLead: task-delegate-chatgpt legt genau EINEN verknuepften Lea
   assert.doesNotMatch(src, /createEntity\("task"/, "die Delegation darf niemals eine zweite Aufgabe/Kopie erzeugen");
   assert.match(src, /task\.delegatedLeadId \? getEntity\("chatgptLead", task\.delegatedLeadId\) : null/, "ein bereits verknuepfter Lead muss wiederverwendet werden (idempotent), kein zweiter Lead pro erneuter Delegation");
   assert.match(src, /createChatgptLead\(/, "ohne bestehenden Lead muss GENAU EINER angelegt werden, sonst bleibt die Delegation fuer 'Pendent bei ChatGPT' unsichtbar");
-  assert.match(src, /linkEntities\("task", taskId, "chatgptLead", neueId\)/, "der neue Lead muss ueber die Standard-Registry mit dem Original-Task verknuepft werden");
+  assert.match(src, /linkEntities\("task", taskId, "chatgptLead", leadId\)/, "der neue Lead muss ueber die Standard-Registry mit dem Original-Task verknuepft werden");
+  // Review-Fix (25.09.2026): deterministische Lead-ID statt Zufalls-ID —
+  // siehe chatgpt-task-delegation-lead-race.test.mjs (analog zu intake-to-lead).
+  assert.match(src, /const leadId = "chatgptLead_from_task_" \+ taskId;/, "die Lead-ID wird nicht mehr deterministisch aus der taskId abgeleitet — zwei offline delegierende Geraete erzeugen wieder einen doppelten Lead");
 });
 
 test("DelegationEinLead: zweimaliges Delegieren desselben Tasks erzeugt KEINEN zweiten Lead (echte Idempotenz)", () => {

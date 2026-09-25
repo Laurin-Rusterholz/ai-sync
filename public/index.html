@@ -61535,11 +61535,21 @@ case "task-delegate-chatgpt": {
   } else {
     let lead = bestehenderLead;
     if (!lead) {
-      const neueId = createChatgptLead(task.title, "Delegierte Aufgabe: " + task.title);
-      if (!neueId) break;
-      lead = getEntity("chatgptLead", neueId);
-      updateEntity("task", taskId, { delegatedLeadId: neueId });
-      if (typeof linkEntities === "function") linkEntities("task", taskId, "chatgptLead", neueId);
+      // Deterministische Lead-ID (wie bei intake-to-lead): zwei offline
+      // delegierende Geraete berechnen fuer dieselbe Aufgabe dieselbe ID —
+      // die bestehende Entitaets-Zusammenfuehrung (pro Id, neuerer Zeitstempel
+      // gewinnt) fuehrt beide Versuche zu EINEM Datensatz zusammen, statt
+      // einen zweiten, verwaisten Lead anzulegen (task.delegatedLeadId zeigte
+      // sonst je nach Merge-Ausgang nur noch auf einen der beiden).
+      const leadId = "chatgptLead_from_task_" + taskId;
+      lead = getEntity("chatgptLead", leadId);
+      if (!lead) {
+        const neueId = createChatgptLead(task.title, "Delegierte Aufgabe: " + task.title, leadId);
+        if (!neueId) break;
+        lead = getEntity("chatgptLead", neueId);
+      }
+      updateEntity("task", taskId, { delegatedLeadId: leadId });
+      if (typeof linkEntities === "function") linkEntities("task", taskId, "chatgptLead", leadId);
     } else if (lead.status === "abgeschlossen") {
       // Idempotente Wiederverwendung: derselbe Lead wird reaktiviert statt
       // einen zweiten anzulegen.
