@@ -49,7 +49,7 @@ function cut(header) {
 const DEPS = [
   "window", "firebase", "APP", "console", "setTimeout", "_cloudHealth", "persistCloudHealth",
   "updateSyncChip", "shouldTryCloudProvider", "rememberCloudSuccess", "rememberCloudFailure",
-  "RTDB_NODE", "RTDB_DB_URL", "rtdbNodeKey", "rtdbDbRef", "fetchWithTimeout",
+  "RTDB_NODE", "RTDB_DB_URL", "rtdbNodeKey", "rtdbDbRef", "fetchWithTimeout", "withTimeout",
   "getDataTimestamp", "getOrCreateDeviceId",
   // Seit F-25 v3 traegt rtdbJsonPut den Trichter-Waechter. Hier wird der Weg
   // INNERHALB des Trichters geprueft (Anmeldetor), also gibt der Waechter null
@@ -94,6 +94,7 @@ function buildHarness({ user = null, authMode = "sync", refImpl = null } = {}) {
       set: async () => { log.writes++; },
     }; },
     async () => { throw new Error("fetchWithTimeout darf hier nicht laufen"); },
+    (p) => p,   // withTimeout: reine Durchreichung, das Zeitlimit prueft sync-endless-wait.test.mjs
     (d) => new Date(d?.meta?.updatedAt || 0).getTime() || 0,
     () => "dev_test_local",
     () => null, async () => { throw new Error("canonicalWrite darf hier nicht greifen"); },
@@ -425,7 +426,7 @@ function buildIntegration({ authMode = "async", rtdbImpl = null } = {}) {
     "window", "firebase", "APP", "console", "setTimeout", "Date", "_cloudHealth",
     "persistCloudHealth", "updateSyncChip", "isAutoSyncEnabled", "isBlobSyncConfigured",
     "isFirebaseCloudAvailable", "RTDB_NODE", "RTDB_DB_URL", "rtdbNodeKey", "rtdbDbRef",
-    "fetchWithTimeout", "getDataTimestamp", "firebaseJsonGet", "netlifyBlobGet",
+    "fetchWithTimeout", "withTimeout", "getDataTimestamp", "firebaseJsonGet", "netlifyBlobGet",
   ];
   const factory = new Function(...DEPS2, src +
     "\nreturn { coreAuthReady, noteCoreAuthState, isRtdbCloudAvailable, primaryCloudProvider, rtdbJsonGet, remoteGetByKey, isAuthDeniedError };");
@@ -450,6 +451,7 @@ function buildIntegration({ authMode = "async", rtdbImpl = null } = {}) {
     (k) => String(k).replace(/[.#$[\]/]/g, "_"),
     () => rtdbRef,
     async () => { throw new Error("REST darf hier nicht laufen"); },
+    (p) => p,   // withTimeout: reine Durchreichung, das Zeitlimit prueft sync-endless-wait.test.mjs
     (d) => new Date(d?.meta?.updatedAt || 0).getTime() || 0,
     // Firebase-Storage-Schatten: WUERDE erfolgreich antworten — aber mit dem
     // markerlosen Altstand. Genau die Falle aus B2.

@@ -127,6 +127,7 @@ function loadRtdbJsonPut({ spy = true } = {}) {
     "mergeEntity", "entityTimestamp", "console", "APP", "shouldTryCloudProvider", "coreAuthReady",
     "rememberCoreAuthRequired", "RTDB_NODE", "rtdbNodeKey", "rtdbDbRef", "getOrCreateDeviceId",
     "rememberCloudFailure", "rememberCloudSuccess", "isAuthDeniedError", "getDataTimestamp", "CORE_BLOB_KEY",
+    "withTimeout",
   ];
   const args = [
     () => {}, { getItem: () => null, setItem() {} }, (d) => d, () => ({}), () => ({}),
@@ -136,6 +137,9 @@ function loadRtdbJsonPut({ spy = true } = {}) {
     "appStore", (k) => String(k).replace(/[.#$\[\]\/]/g, "_"), () => globalThis.__fakeRef,
     () => "test-device", () => {}, () => {}, () => false, (d) => Number(d?.meta?.updatedAt ? Date.parse(d.meta.updatedAt) : 0),
     "app-data.json",
+    // withTimeout: reine Durchreichung — das Zeitlimit selbst prueft
+    // tests/sync-endless-wait.test.mjs.
+    (p) => p,
   ];
   if (spy) {
     src += spySrc() + "\nreturn rtdbJsonPut;";
