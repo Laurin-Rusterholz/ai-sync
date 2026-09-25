@@ -136,4 +136,36 @@ test("bei 401 wird der Zugriff als verweigert angezeigt und syncFreshness() NICH
   assert.match(els.dbV3EmailRunStatus.innerHTML, /Zugang verweigert/, "eine 401-Antwort muss verstaendlich sichtbar sein");
 });
 
+// ── Review-Fix (25.09.2026, belegter Fehler): der Knopf endete oeffentlich
+// mit einem opaken "run_failed", weil netlify/functions/quantus-v3-daily-
+// briefing-run.mjs den Fehler seines eigenen catch-Blocks verschluckte — Auth
+// und Konfigurationspruefung waren dabei laengst durchlaufen (kein GESPERRT).
+// Fix: runDailyBriefing() klassifiziert jetzt jeden bekannten Fehlschlagspunkt
+// selbst (mitPhase() in quantus-v3-daily-briefing.mjs) und liefert IMMER ein
+// sicheres { blocked, code } ohne Geheimnisse/Mailinhalt; der Knopf muss
+// dieses Paar sichtbar anzeigen statt nur "Lauf fehlgeschlagen".
+test("ein serverseitig klassifizierter Fehlschlag (blocked+code) wird sichtbar mit BEIDEN Angaben angezeigt, nicht nur generisch", async () => {
+  const { document, els } = stubDom();
+  const APP = { state: { settings: { v3EmailAuthToken: "tok" } } };
+  const fn = loadHandler({
+    document, APP,
+    fetch: async () => ({ status: 200, json: async () => ({ ok: false, blocked: "unexpected_error:core_read", code: "credentials_missing" }) }),
+  });
+  await fn();
+  assert.match(els.dbV3EmailRunStatus.innerHTML, /unexpected_error:core_read/, "die Phase (aus 'blocked') muss sichtbar sein, nicht nur ein generischer Satz");
+  assert.match(els.dbV3EmailRunStatus.innerHTML, /credentials_missing/, "der sichere Fehlercode muss sichtbar sein");
+});
+
+test("ein wirklich unklassifizierter 500er (run_failed+code, keine Phase) wird trotzdem mit dem Code angezeigt", async () => {
+  const { document, els } = stubDom();
+  const APP = { state: { settings: { v3EmailAuthToken: "tok" } } };
+  const fn = loadHandler({
+    document, APP,
+    fetch: async () => ({ status: 500, json: async () => ({ ok: false, error: "run_failed", phase: "unclassified", code: "TypeError" }) }),
+  });
+  await fn();
+  assert.match(els.dbV3EmailRunStatus.innerHTML, /run_failed/, "run_failed muss weiterhin sichtbar sein");
+  assert.match(els.dbV3EmailRunStatus.innerHTML, /TypeError/, "der sichere Fehlername muss sichtbar sein, auch ohne bekannte Phase");
+});
+
 console.log("quantus-v3-email-briefing-button: alle Pruefungen bestanden");

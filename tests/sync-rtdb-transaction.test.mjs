@@ -35,7 +35,7 @@ function cut(header) {
 
 const DEPS = [
   "APP", "console", "shouldTryCloudProvider", "coreAuthReady", "rememberCoreAuthRequired",
-  "RTDB_NODE", "RTDB_DB_URL", "rtdbNodeKey", "rtdbDbRef", "fetchWithTimeout",
+  "RTDB_NODE", "RTDB_DB_URL", "rtdbNodeKey", "rtdbDbRef", "fetchWithTimeout", "withTimeout",
   "getDataTimestamp", "getOrCreateDeviceId", "rememberCloudSuccess", "rememberCloudFailure",
   "rtdbJsonGet", "rememberCoreAuthRequired", "isAuthDeniedError",
   // Seit F-25 v3 traegt jede Low-Level-Schreibfunktion den Trichter-Waechter.
@@ -92,6 +92,7 @@ function build(refBundle, { blobKey = "app-data.json", device = "dev_desktop_1" 
     (k) => String(k).replace(/[.#$[\]/]/g, "_"),
     () => refBundle.ref,
     async () => { throw new Error("REST darf fuer den Hauptdatensatz nicht laufen"); },
+    (p) => p,   // withTimeout: reine Durchreichung, das Zeitlimit prueft sync-endless-wait.test.mjs
     (d) => new Date(d?.meta?.updatedAt || 0).getTime() || 0,
     () => device, () => {}, (p, i) => { fails.push(i); },
     async () => ({ ok: false, provider: "rtdb" }),
@@ -246,6 +247,7 @@ const wrapOf = (payload, savedBy) => ({
     APP, { log() {}, warn() {} }, () => true, async () => ({ user: { uid: "u1" } }), () => {},
     "appStore", "https://rtdb.example", (k) => k, () => null,
     async () => { restCalls++; return { ok: true }; },
+    (p) => p,   // withTimeout: reine Durchreichung
     () => 1, () => "dev_desktop_1", () => {}, () => {}, async () => ({ ok: false }),
     undefined, undefined, ...OHNE_TRICHTER,
   );

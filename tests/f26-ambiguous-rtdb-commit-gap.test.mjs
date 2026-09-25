@@ -204,7 +204,7 @@ function umgebung({ rtdbLesenOk = true, transaktion = "ambiguous",
     "getDataTimestamp", "isAutoSyncEnabled", "isBlobSyncConfigured", "isFirebaseCloudAvailable",
     "isRtdbCloudAvailable", "primaryCloudProvider", "normalizeData", "mergeData", "coreAuthReady",
     "coreKeyAuthGate", "hasAnyCloudProviderAvailable", "firebaseJsonPut", "firebaseJsonGet",
-    "rtdbJsonGet", "netlifyBlobGet", "rtdbDbRef", "fetchWithTimeout", "buildStorageAuthHeaders",
+    "rtdbJsonGet", "netlifyBlobGet", "rtdbDbRef", "fetchWithTimeout", "withTimeout", "buildStorageAuthHeaders",
     "guardV3ProtectedWrite",
     "detectV3ProtectedGap", "detectV3LocalDivergence", "retainV3ProtectedGapLocally", "retainV3LocalDivergenceSecurely",
     "console", "_lastShadowWriteAt", "JSON", "Date", "Promise", "Error", "Object", "Array", "Math", "String",
@@ -226,6 +226,10 @@ function umgebung({ rtdbLesenOk = true, transaktion = "ambiguous",
       gesendeterIfMatch = (opt && opt.headers && opt.headers["If-Match"]) || null;
       return { ok: true, status: 200, headers: { get: () => "srv-3" }, json: async () => ({}) };
     },
+    // withTimeout(): fuer diesen Test genuegt eine reine Durchreichung — die
+    // Attrappen loesen synchron auf, es gibt hier nichts zu begrenzen. Das
+    // Zeitlimit selbst prueft tests/sync-endless-wait.test.mjs.
+    (p) => p,
     () => ({}),
     () => null,   // F-27: diese Attrappe kennt keinen v3-Namensraum, keine Luecke (guardV3ProtectedWrite, canonicalWrite/netlifyBlobPut)
     () => null, () => null, async () => true, async () => {},   // F-27: dito, reine Erkennung + entkoppelte Aufbewahrung (rtdbJsonPut)
@@ -351,7 +355,7 @@ ok(u.APP.state.storage.etag === null,
 // zu lesen. Das ist die falsche Richtung: er sichert von Hand nach, waehrend
 // sein Stand moeglicherweise schon oben liegt.
 {
-  const ds = index.indexOf("\n  const result = await remotePut(payload);");
+  const ds = index.indexOf("\n    result = await remotePut(payload);");
   const koerper = ds > 0 ? index.slice(ds, index.indexOf("\n  updateSyncChip();", ds)) : "";
   ok(ds > 0, "der Ergebniszweig von doSave wurde nicht gefunden");
   const ambigZweig = koerper.indexOf("result.ambiguous");

@@ -104,7 +104,7 @@ const stand = (notizen, meta) => ({
   const put = new Function(
     "APP", "shouldTryCloudProvider", "coreAuthReady", "rememberCoreAuthRequired", "rememberCloudFailure",
     "rememberCloudSuccess", "getOrCreateDeviceId", "getDataTimestamp", "rtdbDbRef", "rtdbNodeKey",
-    "RTDB_NODE", "RTDB_DB_URL", "fetchWithTimeout", "coreWriteGuard", "canonicalWrite",
+    "RTDB_NODE", "RTDB_DB_URL", "fetchWithTimeout", "withTimeout", "coreWriteGuard", "canonicalWrite",
     "detectV3ProtectedGap", "detectV3LocalDivergence", "retainV3ProtectedGapLocally", "retainV3LocalDivergenceSecurely",
     "console", "JSON", "Date", "Promise", "Error",
     "const RTDB_DIVERGENCE_MAX_ATTEMPTS = " +
@@ -114,6 +114,7 @@ const stand = (notizen, meta) => ({
     () => true, async () => ({ user: { uid: "u" } }), () => {}, () => {}, () => {},
     () => "dev-A", (d) => Date.parse(d?.meta?.updatedAt) || 0, db.ref, (k) => k.replace(/\./g, "_"),
     "appStore", "https://x", async () => ({ ok: false, status: 500 }),
+    (p) => p,   // withTimeout: reine Durchreichung, das Zeitlimit prueft sync-endless-wait.test.mjs
     () => null,   // Waechter: hier wird der Trichter-Weg selbst geprueft
     async () => { throw new Error("canonicalWrite darf hier nicht greifen"); },
     // F-27: diese Fixtures kennen keinen v3-Namensraum — reine Erkennung

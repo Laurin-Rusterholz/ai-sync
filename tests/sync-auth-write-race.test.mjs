@@ -262,7 +262,11 @@ function harness() {
     "der direkte remotePut-Pfad in syncFreshness ist zurueckgekehrt");
   ok(/if \(remote\.weekPlan && remote\.weekPlan\.days\)/.test(index),
     "der weekPlan-Zweig wurde veraendert — das ist Commit 3");
-  ok(/const snap = await ref\.once\('value'\);/.test(index),
+  // Review-Fix (25.09.2026): ref.once('value') haengte ohne Zeitlimit
+  // unbegrenzt (Befund tests/sync-endless-wait.test.mjs) — jetzt ueber
+  // withTimeout() begrenzt. Das ist eine ECHTE Verbesserung des F-20-Pfads,
+  // keine Regression: die Kanone prueft deshalb den neuen, begrenzten Aufruf.
+  ok(/const snap = await withTimeout\(ref\.once\('value'\), \d+, 'rtdb_once'\);/.test(index),
     "die SDK-Zeitgrenze wurde angefasst — das ist F-20/P1.2");
   ok(/if \(_authResyncDone\) return \{ ok: false, reason: 'already_done' \};/.test(index),
     "die _authResyncDone-Semantik wurde veraendert — das ist F-20/P1.2");
