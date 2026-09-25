@@ -54,7 +54,7 @@ function funktion(kopfzeile) {
 
 // ── 1. withTimeout(): die echte Funktion loest bei Ablauf ab, statt zu haengen ─
 {
-  const src = funktion("function withTimeout(promise, timeoutMs, label) {");
+  const src = funktion("function withTimeout(promise, timeoutMs, label, onTimeout) {");
   const withTimeout = new Function(src + "\nreturn withTimeout;")();
 
   const nieAufloesend = new Promise(() => {}); // haengt absichtlich fuer immer
@@ -70,6 +70,25 @@ function funktion(kopfzeile) {
   const eigenerFehler = new Error("eigener_fehler");
   await assert.rejects(withTimeout(Promise.reject(eigenerFehler), 5000, "x"), /eigener_fehler/,
     "withTimeout ersetzt einen echten, schnellen Fehler durch einen Timeout");
+
+  // Review-Fix (25.09.2026): onTimeout() laeuft GENAU beim Ablauf und darf den
+  // Fehler mit zusaetzlichen Feldern anreichern (fuer __ambiguous/__versuchsId
+  // bei einer RTDB-Transaktion, siehe sync-rtdb-transaction-timeout-ambiguous).
+  let onTimeoutAufgerufen = false;
+  const angereichert = withTimeout(new Promise(() => {}), 20, "mit_zusatz", () => {
+    onTimeoutAufgerufen = true;
+    return { __ambiguous: true, __versuchsId: "abc" };
+  });
+  await assert.rejects(angereichert, (e) => {
+    ok(onTimeoutAufgerufen, "onTimeout() wurde beim Ablauf nicht aufgerufen");
+    ok(e.__ambiguous === true, "der Timeout-Fehler traegt die von onTimeout() gelieferten Zusatzfelder nicht");
+    eq(e.__versuchsId, "abc", "der Timeout-Fehler traegt __versuchsId nicht durch");
+    return true;
+  }, "withTimeout mischt das Ergebnis von onTimeout() nicht in den Fehler");
+
+  // Ein werfendes onTimeout() darf den Timeout selbst nicht verhindern.
+  const trotzWurf = withTimeout(new Promise(() => {}), 20, "onTimeout_wirft", () => { throw new Error("darf nicht durchschlagen"); });
+  await assert.rejects(trotzWurf, /onTimeout_wirft_timeout/, "ein werfendes onTimeout() verhindert die Ablehnung des Timeouts");
 }
 
 // ── 2. rtdbJsonGet/rtdbJsonPut/das sekundaere ref.set() nutzen withTimeout

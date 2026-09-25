@@ -6892,10 +6892,24 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
 // Ablehnung nach Ablauf statt endlosem Haengen. Verhaelt sich fuer den
 // Aufrufer wie jeder andere Netzfehler: lokale Daten bleiben unveraendert,
 // keine Anmeldung wird umgangen, kein Schreibvorgang wird erzwungen.
-function withTimeout(promise, timeoutMs, label) {
+// onTimeout (optional): laeuft GENAU beim Ablauf, bevor abgelehnt wird. Der
+// Rueckgabewert (ein Objekt) wird in den Timeout-Fehler gemischt — damit kann
+// ein Aufrufer z. B. eine RTDB-Transaktion, die WEITERLAUFEN und spaeter noch
+// committen kann, als "Ausgang unbekannt" (__ambiguous) kennzeichnen statt als
+// definitiven Fehlschlag, und einen eigenen Abbruch-Schalter setzen (siehe
+// rtdbJsonPut: die Aktualisierungsfunktion prueft ihn und lehnt einen spaeten,
+// unbeaufsichtigten Commit-Versuch ab).
+function withTimeout(promise, timeoutMs, label, onTimeout) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      reject(Object.assign(new Error((label || 'operation') + '_timeout'), { code: 'timeout', __timeout: true }));
+      const fehler = Object.assign(new Error((label || 'operation') + '_timeout'), { code: 'timeout', __timeout: true });
+      if (typeof onTimeout === 'function') {
+        try {
+          const zusatz = onTimeout();
+          if (zusatz && typeof zusatz === 'object') Object.assign(fehler, zusatz);
+        } catch (e) { /* onTimeout darf den Timeout selbst nicht verhindern */ }
+      }
+      reject(fehler);
     }, timeoutMs);
     promise.then(
       (v) => { clearTimeout(timer); resolve(v); },
@@ -7726,8 +7740,21 @@ async function rtdbJsonPut(key, data, options = {}) {
          * unklaren Fehler im Knoten, ist genau UNSER Versuch durchgekommen.
          */
         const versuchsId = 'w_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+        // Review-Fix (25.09.2026): withTimeout gibt hier lokal auf — die Transaktion
+        // selbst lebt beim SDK weiter und kann spaeter (Reconnect, langsame
+        // Antwort) noch committen. Ohne "abgelaufen" wuerde ein spaeter,
+        // unbeaufsichtigter Aufruf der Aktualisierungsfunktion einen zwischenzeitlich
+        // neueren Serverstand (z. B. aus einem parallelen lokalen Edit + Retry
+        // dieses Geraets) stillschweigend mit dem VERALTETEN `data` ueberschreiben.
+        // Nach Ablauf lehnt die Funktion deshalb jeden weiteren Aufruf ab
+        // (return undefined -> kein Commit), und der Timeout wird wie ein echter
+        // Transaktionsfehler als __ambiguous behandelt: derselbe Rueckleseweg wie
+        // bei "disconnect" (unten) entscheidet danach anhand der attemptId, ob
+        // GENAU DIESER Versuch doch noch durchkam.
+        let abgelaufen = false;
         const txn = await withTimeout(new Promise((resolve, reject) => {
           ref.transaction((current) => {
+            if (abgelaufen) return undefined;
             let remoteData = null;
             if (current && typeof current.data === 'string') {
               try { remoteData = JSON.parse(current.data); } catch(e) { remoteData = null; }
@@ -7804,7 +7831,7 @@ async function rtdbJsonPut(key, data, options = {}) {
               { __ambiguous: true, __versuchsId: versuchsId }));
             else resolve({ committed, snapshot });
           }, false);
-        }), 15000, 'rtdb_transaction');
+        }), 15000, 'rtdb_transaction', () => { abgelaufen = true; return { __ambiguous: true, __versuchsId: versuchsId }; });
         if (!txn.committed) {
           const grund = abortReason || 'transaction_aborted';
           if (grund === 'v3_protected_gap' && letzterGapVersuch) {
@@ -7946,7 +7973,9 @@ async function rtdbJsonPut(key, data, options = {}) {
       try {
         const ref2 = rtdbDbRef(RTDB_NODE + '/' + rtdbNodeKey(key));
         if (ref2 && typeof ref2.once === 'function') {
-          const snap = await ref2.once('value');
+          // Auch dieser Rueckleseweg braucht ein Zeitlimit — sonst haengt die
+          // Ausgang-unbekannt-Klaerung genauso wie die Transaktion selbst.
+          const snap = await withTimeout(ref2.once('value'), 12000, 'rtdb_ambiguous_readback');
           nachgelesen = snap && typeof snap.val === 'function' ? snap.val() : null;
         }
       } catch (leseFehler) { nachgelesen = undefined; }
