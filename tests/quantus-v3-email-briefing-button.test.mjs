@@ -168,4 +168,28 @@ test("ein wirklich unklassifizierter 500er (run_failed+code, keine Phase) wird t
   assert.match(els.dbV3EmailRunStatus.innerHTML, /TypeError/, "der sichere Fehlername muss sichtbar sein, auch ohne bekannte Phase");
 });
 
+// Befund (25.09.2026, echter Knopflauf): unexpected_error:core_migrate
+// [CORE_PARTIAL_V3] allein sagt nicht, WELCHES Feld unvollstaendig ist. Der
+// Server liefert jetzt zusaetzlich body.violations ({code,path}[], nur
+// Feldpfade, nie ein Wert) — der Knopf muss das sichtbar anzeigen, nicht nur
+// den Sammelcode.
+test("violations (sichere Feldpfade) werden bei CORE_PARTIAL_V3 sichtbar angezeigt", async () => {
+  const { document, els } = stubDom();
+  const APP = { state: { settings: { v3EmailAuthToken: "tok" } } };
+  const fn = loadHandler({
+    document, APP,
+    fetch: async () => ({
+      status: 200,
+      json: async () => ({
+        ok: false, blocked: "unexpected_error:core_migrate", code: "CORE_PARTIAL_V3",
+        violations: [{ code: "CORE_NOT_MIGRATED", path: "automation.migration" }, { code: "CORE_RUN_CORRUPT", path: "dailyBriefing.assistantRuns.2026-09-25" }],
+      }),
+    }),
+  });
+  await fn();
+  assert.match(els.dbV3EmailRunStatus.innerHTML, /CORE_PARTIAL_V3/, "der Sammelcode muss weiterhin sichtbar sein");
+  assert.match(els.dbV3EmailRunStatus.innerHTML, /CORE_NOT_MIGRATED@automation\.migration/, "der erste Feldpfad ist nicht sichtbar");
+  assert.match(els.dbV3EmailRunStatus.innerHTML, /CORE_RUN_CORRUPT@dailyBriefing\.assistantRuns\.2026-09-25/, "der zweite Feldpfad ist nicht sichtbar");
+});
+
 console.log("quantus-v3-email-briefing-button: alle Pruefungen bestanden");

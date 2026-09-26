@@ -157,6 +157,35 @@ function sichererFehlercode(err) {
   return "unknown_error";
 }
 
+/* Befund (25.09.2026, echter Knopflauf NACH der Migrations-Bootstrap-
+ * Korrektur): unexpected_error:core_migrate [CORE_PARTIAL_V3] allein sagt nur
+ * "irgendetwas ist unvollstaendig" — ohne WELCHES Feld, unmoeglich sicher zu
+ * beheben, ohne zu raten. migrateCore()/requireCore() (assistant-migration.mjs)
+ * berechnen die vollstaendige Liste ({code,path}) laengst — pruefeKernStruktur()
+ * — und haengen sie bereits als err.violations an ihren CoreDocumentError. Nur
+ * err.message (Freitext mit denselben Angaben) wurde bisher NIE durchgereicht
+ * (sichererFehlercode() by design) — das verschluckte damit auch diese an
+ * sich unbedenklichen, rein strukturellen Angaben.
+ *
+ * Diese Funktion liest NUR code+path aus jedem Eintrag (beides aus einer
+ * festen, kleinen Vokabular-/Feldpfad-Menge, siehe pruefeKernStruktur() —
+ * Feldpfade wie "automation" oder "entities.chatgptTasks.<id>", NIE ein
+ * Feldwert) und verwirft jede weitere Eigenschaft — auch falls dort einmal
+ * versehentlich mehr haengen sollte. Keine Ledger-/Revisions-Aenderung, keine
+ * Lockerung von requireCore()/migrateCore() — reine Sichtbarkeit auf einen
+ * bereits vorhandenen, bereits sicheren Befund. */
+export function sichereViolations(err) {
+  if (!err || !Array.isArray(err.violations)) return null;
+  const sicher = err.violations
+    .filter((v) => v && typeof v === "object")
+    .slice(0, 50)
+    .map((v) => ({
+      code: typeof v.code === "string" ? v.code.slice(0, 60) : "unknown",
+      path: typeof v.path === "string" ? v.path.slice(0, 200) : "",
+    }));
+  return sicher.length ? sicher : null;
+}
+
 /* Faengt einen unerwarteten Wurf (Netzwerk-/Firebase-Admin-Ausnahme — siehe
  * CLAUDE.md "invalid_rapt": ab dann antworten ALLE Netlify-Funktionen mit
  * 500) an GENAU DER STELLE ab, an der er entsteht, und macht daraus denselben
@@ -171,7 +200,8 @@ async function mitPhase(phase, aufruf) {
   try {
     return { ok: true, value: await aufruf() };
   } catch (err) {
-    return { ok: false, blocked: `unexpected_error:${phase}`, code: sichererFehlercode(err) };
+    const violations = sichereViolations(err);
+    return { ok: false, blocked: `unexpected_error:${phase}`, code: sichererFehlercode(err), ...(violations ? { violations } : {}) };
   }
 }
 
