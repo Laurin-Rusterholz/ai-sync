@@ -262,3 +262,23 @@ Das Register setzt noch keinen Quellcursor und erzeugt keine Intake-Karte;
 seine Einträge sind keine erledigten Aufgaben oder bestätigten Klassifikationen.
 Produktive Source-Anbindung, History-Gap-Orchestrierung und begrenzte Fortsetzung
 im 90-Sekunden-Lauf bleiben anzuschliessen und nachzuweisen.
+
+### Fortsetzbarer Quellenabgleich
+
+`gmail-source-sync.mjs` verbindet Reader und Registry mit CAS-Checkpoints unter
+`automation.runtime.gmailSync`. `next()` verarbeitet einen Schritt. Phasen:
+Profil sichern, Liste/Verlauf abrufen, einzelne Nachrichten registrieren,
+Seite bestätigen, Abruf beendet. Jede Seite wird privat und unveränderlich
+mit Konto-/Quellenbindung und Vorgängerreferenz gesichert. Die Nachrichtenposition
+wird nur bei weiterhin passendem Registerbeleg weitergesetzt; der abschliessende
+History-Cursor erst nach vollständiger Verarbeitung der letzten Verlaufsseite.
+
+Nach dem vollständigen Abruf folgt der History-Nachzug ab der zuvor gesicherten
+Profil-ID. History-404 startet den Vollabgleich neu, ohne bestehende Quellen oder
+Lücken zu löschen. Bei Laufwechsel werden offene Seiten fortgesetzt; ein bereits
+abgeschlossener Abruf startet am bisherigen Cursor neu. Message-404 bleibt eine
+ausdrückliche Lücke. `done` bedeutet nur Abrufende; `partial` nennt weiterhin
+offene Quellen. Es wird weder `recordSourceCheck(ok)` aufgerufen noch eine Intake-
+Karte oder fachliche Erledigung erzeugt. Produktive Komposition und autorisierter
+OAuth-Zugang sind noch anzuschliessen. Maximal 3 MiB/10000 IDs pro gespeicherter
+Seite; Core-, Lease- und Originalbündelgrenzen bleiben zusätzlich bestehen.
