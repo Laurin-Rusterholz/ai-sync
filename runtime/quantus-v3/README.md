@@ -242,3 +242,23 @@ dürfen anschliessend in einer eigenen CAS-Importtransaktion verwendet werden.
 Die benötigte aktuelle Leaseprüfung ist ein Pflichtport; keine Speicheroperation
 darf sie umgehen. Grenzen: 32 MiB pro Bündel und 128 Teile. Noch keine produktive
 Import-/Cursoranbindung; der Baustein schreibt nicht in den Core oder nach Gmail.
+
+### Dauerhaftes Mailregister (Quellenorchestrierung noch offen)
+
+`gmail-message-registry.mjs` übernimmt bestätigte Originalbündel in
+`automation.runtime.gmailRegistry`, mit separatem Initialisierungsmarker.
+Mandant, Konto und Quelle binden den Namensraum; jede Provider-Message-ID besitzt
+einen dauerhaften Eintrag mit neuester History-ID und Originalreferenz. Änderungen
+erhalten eine höhere Version, deren Vorgängerreferenz privat archiviert ist.
+`register` speichert Originale vor CAS und bestätigt danach Eintrag und Original
+unabhängig. `read` prüft den aktuellen Eintrag, `readPrevious` den tatsächlich
+verknüpften direkten Vorgänger. Beide benötigen die aktuelle Lauf-/Leasebindung.
+
+Gleicher Inhalt wird unabhängig zurückgelesen und erzeugt keine zweite Version.
+Widerspruch bei gleicher History-ID, Rückschritte, verlorene Originale und
+konkurrierende Änderung desselben Eintrags stoppen die Übernahme. Andere
+Benutzeränderungen bleiben durch den bestehenden CAS-Umschlag erhalten.
+Das Register setzt noch keinen Quellcursor und erzeugt keine Intake-Karte;
+seine Einträge sind keine erledigten Aufgaben oder bestätigten Klassifikationen.
+Produktive Source-Anbindung, History-Gap-Orchestrierung und begrenzte Fortsetzung
+im 90-Sekunden-Lauf bleiben anzuschliessen und nachzuweisen.

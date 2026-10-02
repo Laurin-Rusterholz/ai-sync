@@ -535,3 +535,35 @@ ausdrücklich abgebrochen. Noch setzt dieser Baustein keinen Quellcursor und leg
 keine Intake-Karte an. Registry, CAS-Übernahme, autorisierte Quellenanbindung und
 die Einbindung der Originale in den Arbeitsbestand bleiben der nächste Schritt.
 T28 und der produktive Gesamtabschluss bleiben offen.
+
+### Dauerhaftes Mailregister mit atomarer Originalübernahme
+
+`gmail-message-registry` führt unter dem geschützten Laufzeitbestand ein
+kontogebundenes Register je Provider-Message-ID. Es gibt keinen flüchtigen Ring
+der letzten 300 Kennungen mehr in diesem neuen Importpfad. Im Kern stehen nur
+die aktuelle Originalreferenz, Inhaltshash, History-ID, Version und tatsächliche
+Leselücken. Frühere Versionen bleiben als unveränderliche private Referenzkette
+erhalten. Eine andere Mailbox oder Quelle besitzt einen getrennten Namensraum.
+
+Der Import speichert und liest das vollständige Original vor der CAS-Transaktion.
+CAS übernimmt die neue Version nur bei weiterhin passender Lease, Laufsektion
+und exakt unverändertem Vorgänger. Uploads und Quellenzugriffe erfolgen nie im
+wiederholbaren Mutator. Unabhängiges Rücklesen prüft anschliessend den gespeicherten
+Registereintrag und dessen vollständiges Original. Gleichzeitige Benutzeränderungen
+bleiben erhalten; ein verlorener Transaktionsbeleg wird über den vorhandenen
+Eintrag bestätigt, ohne eine weitere Version oder einen zweiten Core-Schreibvorgang.
+
+History-Rückschritte, abweichende Inhalte bei gleicher History-ID, fehlende
+Originale und ein nach Initialisierung verschwundenes Register werden nicht
+stillschweigend repariert oder als leer gewertet. Die Vorgängerlesung folgt nur
+der tatsächlich gespeicherten Referenzkette und prüft die direkte Versionsfolge.
+Die bestehende 18-MiB-Core-Grenze bleibt durchgesetzt; keine Registereinträge oder
+Originale werden zur Platzgewinnung gelöscht.
+
+Die Tests verwenden den echten Integrations-/Idempotenzumschlag mit CAS-Prüfstand
+und privatem Artefaktspeicher-Prüfstand. Sie prüfen über 300 Nachrichten,
+Wiederaufnahme, Versionshistorie, verlorene Quittung, Benutzerkonflikt, Änderungen
+während des Rücklesens und Leaseverlust vor CAS. Der Worker importiert damit noch
+nicht produktiv: Seiten-/History-Fortsetzung, Intake-/Arbeitsbestandseinbindung,
+autorisierter OAuth-Zugang und produktive T28-Nachweise bleiben offen. Registrierung
+allein bedeutet weder Klassifikation noch Bearbeitung oder erfolgreichen Quellenabschluss.
