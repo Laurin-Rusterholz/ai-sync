@@ -516,6 +516,16 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
     if (!Number.isInteger(pageSize) || pageSize < 1) throw fail("invalid_request", "page_size_invalid", 400);
     const rolle = String(principal?.role || "");
     switch (query) {
+      case 'run.workset': {
+        if (rolle !== 'lead_agent' || principal.jobId !== scopeId) throw fail('forbidden', 'workset_role_or_job_invalid', 403);
+        const run = laufNachId(data, scopeId);
+        if (!run) throw fail('forbidden', 'workset_run_missing', 403);
+        const refs = new Map((run.itemRefs || []).map(ref => [ref.sourceType + ':' + ref.sourceId, ref]));
+        for (const ref of B.collectRunInventory(data)) refs.set(ref.sourceType + ':' + ref.sourceId, ref);
+        // Read-only snapshot union: new arrivals are visible immediately,
+        // not only after the next bootstrap writes stored itemRefs.
+        return seite(laufKontextEintraege(data, { ...run, itemRefs: [...refs.values()] }, run.id, null), { pageSize, afterId });
+      }
       case 'run.readback': {
         if (rolle !== 'lead_agent' || principal.jobId !== scopeId) throw fail('forbidden', 'readback_role_or_job_invalid', 403);
         if (afterId) throw fail('invalid_request', 'readback_cursor_not_allowed', 400);

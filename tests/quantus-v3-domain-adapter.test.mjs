@@ -693,3 +693,17 @@ test('readback endpoint refuses foreign originals, specialists, unsupported kind
   const specialist = await jobToken(d._env, { role: 'specialist_claude', principalId: 'specialist', jobId: JOB, audience: 'quantus-read' });
   assert.equal((await lese(d, { ...query, token: specialist, jobId: JOB })).status, 403);
 });
+
+test('run.workset includes new unregistered work immediately without changing stored refs and rejects specialist scope', async () => {
+  const data = structuredClone(BASIS);
+  data.entities.tasks.arrived = { id: 'arrived', title: 'New task during run', status: 'todo' };
+  const refs = structuredClone(data.dailyBriefing.assistantRuns[DATE].itemRefs);
+  const d = deps({ store: FC.makeStore({ snapshot: data }) });
+  const token = await jobToken(d._env, { role: 'lead_agent', principalId: 'leader', assignedJobIds: [RUN_ID], audience: 'quantus-context' });
+  const result = await lese(d, { query: 'run.workset', scopeId: RUN_ID, jobId: RUN_ID, token, pageSize: 50 });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.ok(result.body.items.some(i => i.sourceId === 'arrived'));
+  assert.deepEqual((await d._store.readSnapshot()).dailyBriefing.assistantRuns[DATE].itemRefs, refs);
+  const specialist = await jobToken(d._env, { role: 'specialist_claude', principalId: 'specialist', jobId: JOB, audience: 'quantus-context' });
+  assert.equal((await lese(d, { query: 'run.workset', scopeId: RUN_ID, jobId: JOB, token: specialist })).status, 403);
+});

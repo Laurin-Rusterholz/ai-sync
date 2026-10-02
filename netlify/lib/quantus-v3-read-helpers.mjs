@@ -63,6 +63,7 @@ const NESTED_FIELDS = Object.freeze({
  * zur vollen Rechteprüfung jedes einzelnen Eintrags im Dienst.
  */
 export const SCOPE_RELATION = Object.freeze({
+  "run.workset": (item, scopeId) => String(item.runId || '') === scopeId,
   "run.readback": (item, scopeId) => String(item.runId || '') === scopeId,
   "run.context": (item, scopeId) => String(item.runId || item.jobId || "") === scopeId,
   "lead.context": (item, scopeId) => String(item.id || "") === scopeId,

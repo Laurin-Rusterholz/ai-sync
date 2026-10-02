@@ -186,3 +186,16 @@ test('actual HTTP worker plus production source composition bootstraps an empty 
   assert.equal(sources, 1);
   assert.equal(core.store.snapshot().dailyBriefing.assistantRuns[DATE].sourceChecks.gmail.outcome, 'auth_error');
 });
+
+test('new originals arriving within an active section are bound before its next work phase', async () => {
+  const s = await fixture();
+  await s.work.next(s.args);
+  s.store.forceWrite(d => { d.entities.tasks.arrived = { id: 'arrived', title: 'New task', status: 'todo' }; return d; });
+  await s.make(s.core, { async next() {
+    assert.ok(s.store.snapshot().dailyBriefing.assistantRuns[DATE].itemRefs.some(r => r.sourceType === 'task' && r.sourceId === 'arrived'));
+    return { done: false, stepId: 'after-arrival', cursor: { n: 2 } };
+  } }).next(s.args);
+  const puts = s.store.stats.puts;
+  await s.work.next(s.args);
+  assert.equal(s.store.stats.puts, puts, 'no extra inventory mutation when all references are already present');
+});

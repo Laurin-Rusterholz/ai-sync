@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { HttpError } from './errors.mjs';
 
 export async function readLeadershipContext({ gateway, query, scopeId, signal, maxPages = 100, maxBytes = 384 * 1024 } = {}) {
-  if (!gateway?.execute || !['run.context', 'lead.context', 'notes.recent', 'policy.current', 'run.status'].includes(query)
+  if (!gateway?.execute || !['run.context', 'run.workset', 'lead.context', 'notes.recent', 'policy.current', 'run.status'].includes(query)
     || typeof scopeId !== 'string' || !scopeId || !Number.isInteger(maxPages) || maxPages < 1 || maxPages > 100
     || !Number.isInteger(maxBytes) || maxBytes < 1 || maxBytes > 512 * 1024) throw new TypeError('context_reader_configuration_invalid');
   const items = [], seenItems = new Set(), seenCursors = new Set();

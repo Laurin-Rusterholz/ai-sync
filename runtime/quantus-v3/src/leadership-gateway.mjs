@@ -10,6 +10,7 @@ import { validateSchema } from './schema.mjs';
 import { runIdForRunKey, statusScopeIdForRunKey } from './run-ids.mjs';
 import { HttpError } from './errors.mjs';
 import { ORIGINAL_READBACK_KINDS, validOriginalId } from '../../../netlify/lib/quantus-v4-readback.mjs';
+import { completeToolRead } from './complete-tool-read.mjs';
 
 const ID = { type: 'string', pattern: '^[A-Za-z0-9_:-]{1,120}$' };
 const CURSOR = { type: 'string', maxLength: 4096 };
@@ -22,7 +23,7 @@ export function leadershipToolDefinitions() {
   const read = queries => object({ query: { type: 'string', enum: queries }, scopeId: ID, cursor: CURSOR });
   return [
     { name: 'quantus_context', description: 'Read assigned live context, notes or policy. Empty cursor starts a page; follow hasMore/cursor until complete.',
-      parameters: read(['run.context', 'lead.context', 'notes.recent', 'policy.current']) },
+      parameters: read(['run.context', 'run.workset', 'lead.context', 'notes.recent', 'policy.current']) },
     { name: 'quantus_read', description: 'Read an authorized original lead or its notes and policy. Empty cursor starts a page. A partial page is not complete context.',
       parameters: read(['lead.context', 'notes.recent', 'policy.current']) },
     { name: 'quantus_command', description: 'Request one permitted domain action. payloadJson is the JSON object for that verb from the active Quantus command contract. Never include identity, permissions, lease, paths or finalization fields. A dry-run is not a saved change.',
@@ -67,9 +68,21 @@ export function createLeadershipGateway({ transport, jobTokenIssuer, clock, runK
       const credential = await jobTokenIssuer.mint({ audience: route, jobId, tenant, now: clock.now() });
       if (typeof credential !== 'string' || !credential) throw new HttpError(503, 'job_token_mint_failed');
       checkAbort();
-      const response = await transport.send({ route, method: payload ? 'POST' : 'GET', credential,
+      let response = await transport.send({ route, method: payload ? 'POST' : 'GET', credential,
         payload, searchParams, idempotencyKey: payload ? stableKey : null, timeoutMs: 20000, signal });
       checkAbort();
+      let read;
+      if (!payload) {
+        read = await completeToolRead({ first: response, query: searchParams.query, scopeId: searchParams.scopeId,
+          cursor: args.cursor, signal, next: async cursor => {
+            checkAbort();
+            const token = await jobTokenIssuer.mint({ audience: route, jobId, tenant, now: clock.now() });
+            checkAbort();
+            return transport.send({ route, method: 'GET', credential: token,
+              searchParams: { ...searchParams, cursor }, timeoutMs: 20000, signal });
+          } });
+        response = read.response;
+      }
       // HTTP success alone never proves a write; preserve a dry-run distinctly.
       // HTTP/schema/permission failures go back for deliberate reevaluation.
       const receipt = response?.body;
@@ -79,7 +92,7 @@ export function createLeadershipGateway({ transport, jobTokenIssuer, clock, runK
       const pageValid = Boolean(receipt && Array.isArray(receipt.items) && typeof receipt.hasMore === 'boolean'
         && typeof receipt.complete === 'boolean' && (!receipt.hasMore || (typeof receipt.cursor === 'string' && receipt.cursor)));
       let confirmed = Boolean(response?.status === 200 && receipt?.ok === true && metadataValid
-        && (payload ? receipt.applied === true && receipt.dryRun === false : pageValid));
+        && (payload ? receipt.applied === true && receipt.dryRun === false : pageValid && read?.readComplete === true));
       let readback;
       if (payload && confirmed) {
         // The acknowledgement proves application, not the independently read
@@ -124,7 +137,8 @@ export function createLeadershipGateway({ transport, jobTokenIssuer, clock, runK
         } else if (validRefs) readback.reason = 'readback_tool_disabled';
         confirmed = readback.confirmed;
       }
-      return { confirmed, idempotencyKey: payload ? stableKey : null, response, ...(readback ? { readback } : {}) };
+      return { confirmed, idempotencyKey: payload ? stableKey : null, response, ...(readback ? { readback } : {}),
+        ...(read ? { readPages: read.readPages, readComplete: read.readComplete, ...(read.readFailure ? { readFailure: read.readFailure } : {}) } : {}) };
     },
   });
 }

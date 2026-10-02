@@ -56,6 +56,7 @@ const VALID_KEY_STATUS = new Set(["active", "retiring", "revoked"]);
  * dem jede Seite autorisiert wird, und ihre Höchstseitengrösse.
  */
 export const NAMED_QUERIES = Object.freeze({
+  "run.workset": Object.freeze({ scopeKind: "run", dataCategory: "run_context", itemCategory: "run_context", verb: "context.read", maxPageSize: 50 }),
   "run.readback": Object.freeze({ scopeKind: "run", dataCategory: "run_context", itemCategory: "run_context", verb: "context.read", maxPageSize: 1 }),
   // dataCategory  = Kategorie des SCOPE-Objekts, gegen das autorisiert wird
   // itemCategory  = Kategorie der Einträge, die die Seite liefert
@@ -78,6 +79,7 @@ export const NAMED_QUERIES = Object.freeze({
    damit er zur Abfrage passt. Die Datenkategorie leitet `authorize()` selbst
    aus der Objektart ab — hier steht nur, was zusammengehört. */
 export const SCOPE_OBJECT_KINDS = Object.freeze({
+  "run.workset": "run_context",
   "run.readback": "run_context",
   "run.context": "run_context",
   "lead.context": "lead",
