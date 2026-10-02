@@ -657,3 +657,25 @@ Dies ist die serverinterne Lesegrundlage für die nächste Arbeitsbestandseinbin
 Eine Fortsetzungsposition ist ausdrücklich kein Vollständigkeitsnachweis für das
 Modell. Der Verbraucher muss die gesamte Seitenkette speichern und prüfen; die
 Verbindung zu Intake, Kontextpaketen, Worker und fachlichem Abschluss bleibt offen.
+
+### Registrierte Mailversion als offener Eingang
+
+`gmail-intake-binding` verbindet eine unabhängig zurückgelesene Registerversion
+mit einem offenen Domain-Eingang. Die Kennung bindet Konto, Quelle, Nachrichten-ID,
+Version und Inhaltshash; der Eingang enthält eine kompakte serverseitige Referenz
+mit dem unveränderten Originalbeleg. Anlage und Referenz werden in derselben
+CAS-Transaktion mit genau einer Domainrevision gespeichert. Innerhalb der
+Transaktion findet kein externer Abruf statt. Eine währenddessen geänderte
+Registerversion wird abgewiesen; Wiederholungen prüfen Original und Bindung erneut
+und erhalten den Bearbeitungszustand eines bereits angelegten Eingangs.
+
+Eine neue Mailversion erzeugt einen eigenen offenen Eingang. Frühere Eingänge
+und Originalreferenzen bleiben erhalten. Der vorhandene Bestandsabgleich nimmt
+den Eingang in den Tageslauf auf. C2 kennzeichnet solche externen Inhalte bis zur
+vollständigen Originalauflösung ausdrücklich als `sourceMissing` mit
+`external_read_required`; interne Speicherorte werden nicht an das Modell gegeben.
+Normale Intake-Kommandos dürfen das serverseitige Referenzfeld nicht setzen.
+
+Die automatische Auflösung in den Kontextpaketen und die Aufrufkette im produktiven
+Worker fehlen weiterhin. Ein kompakter Eingang ist kein gelesener Mailinhalt und
+kein Quellenabschluss. T28 und die integrierte Abnahme bleiben offen.

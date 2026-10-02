@@ -386,7 +386,9 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
             return pick(d, ['id', 'title', 'date', 'done']);
           });
           break;
-        case 'intake': text = String(e.text || ''); details = pick(e, ['channel', 'receivedAt', 'sourceType', 'sourceId']); break;
+        case 'intake': text = String(e.text || ''); details = pick(e, ['channel', 'receivedAt', 'sourceType', 'sourceId']);
+          if (e.externalSource !== undefined) details.originalState = 'external_read_required';
+          break;
         case 'question': text = String(e.text || ''); details = pick(e, ['sourceType', 'sourceId', 'answerId', 'askedAt']);
           if (Array.isArray(e.options) && e.options.every(x => typeof x === 'string')) details.options = e.options; break;
         case 'answer': text = String(e.text || ''); details = pick(e, ['questionId', 'answeredAt', 'consumedAt']); break;
@@ -406,7 +408,7 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
         versionInvalid: Boolean(z.versionInvalid), legacyDrift: Boolean(z.drift),
         closureVerified: B.ABGESCHLOSSENE_ZUSTAENDE.includes(z.state) ? B.abschlussBelegPruefen(data, ref.sourceType, ref.sourceId, e).ok : null };
       out.push(basis('run_context', 'ctx_' + ref.sourceType + '_' + ref.sourceId, {
-        ...identity, sourceMissing: false,
+        ...identity, sourceMissing: ref.sourceType === 'intake' && e.externalSource !== undefined,
         title: String(e.title || e.name || (ref.sourceType === 'chatgptTask' ? e.text || '' : '')),
         text, contextDetails: JSON.stringify(details),
         state: z ? (z.unmigrated ? 'unmigrated' : z.unmapped ? 'unmapped' : z.state)
