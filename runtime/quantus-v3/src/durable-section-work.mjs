@@ -5,7 +5,7 @@
 import { createHash } from 'node:crypto';
 import { assertLeadership, readRuntime } from '../../../netlify/lib/quantus-v3-runtime-state.mjs';
 import { parseSlotRunKey } from '../../../netlify/lib/quantus-v3-runtime-plan.mjs';
-import { assertActiveRuntimeCapacity, encodeRuntimePayload, WORK_PAYLOAD_BYTES, WORK_RESULT_BYTES } from './leadership-journal.mjs';
+import { assertActiveRuntimeCapacity, encodeRuntimePayload, WORK_PAYLOAD_BYTES, WORK_RESULT_BYTES } from './runtime-payload.mjs';
 import { availablePort } from './ports.mjs';
 import { HttpError } from './errors.mjs';
 import { validArtifactReference } from './work-artifact-store.mjs';

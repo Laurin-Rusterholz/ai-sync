@@ -5,7 +5,7 @@
  */
 import { createHash } from 'node:crypto';
 import { HttpError } from './errors.mjs';
-import { WORK_PAYLOAD_BYTES } from './leadership-journal.mjs';
+import { WORK_PAYLOAD_BYTES, JOURNAL_LIMITS } from './runtime-payload.mjs';
 const hash = text => createHash('sha256').update(text).digest('hex');
 const fail = (code, status = 502) => { throw new HttpError(status, code); };
 export const ARTIFACT_SCHEMA = 'quantus-work-artifact/1';
@@ -15,14 +15,15 @@ export function validArtifactReference(v) {
     && v.schema === ARTIFACT_SCHEMA && typeof v.bucket === 'string' && typeof v.objectName === 'string'
     && typeof v.hash === 'string' && /^[a-f0-9]{64}$/.test(v.hash)
     && typeof v.generation === 'string' && /^[1-9][0-9]{0,30}$/.test(v.generation)
-    && Number.isSafeInteger(v.bytes) && v.bytes > 0 && v.bytes <= WORK_PAYLOAD_BYTES;
+    && Number.isSafeInteger(v.bytes) && v.bytes > 0 && v.bytes <= JOURNAL_LIMITS.responseBytes;
 }
 
-export function createWorkArtifactStore({ bucket, tenant, getAccessToken, fetchImpl = fetch, timeoutMs = 20000 } = {}) {
+export function createWorkArtifactStore({ bucket, tenant, getAccessToken, fetchImpl = fetch, timeoutMs = 20000, maxPayloadBytes = WORK_PAYLOAD_BYTES } = {}) {
   if (typeof bucket !== 'string' || !/^[a-z0-9][a-z0-9.-]{1,220}[a-z0-9]$/.test(bucket)
     || bucket.split('.').some(p => p.length > 63) || /\.\.|\.\-|\-\./.test(bucket)
     || typeof tenant !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(tenant) || typeof getAccessToken !== 'function'
-    || typeof fetchImpl !== 'function' || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 20000)
+    || typeof fetchImpl !== 'function' || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 20000
+    || !Number.isInteger(maxPayloadBytes) || maxPayloadBytes < 1 || maxPayloadBytes > JOURNAL_LIMITS.responseBytes)
     throw new TypeError('artifact_store_configuration_invalid');
   const name = digest => `quantus-v4/${tenant}/work/${digest}.json`;
   const objectUrl = digest => `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(name(digest))}`;
@@ -69,7 +70,7 @@ export function createWorkArtifactStore({ bucket, tenant, getAccessToken, fetchI
     }
   }
   function checkRef(ref) {
-    if (!validArtifactReference(ref) || ref.bucket !== bucket || ref.objectName !== name(ref.hash)) fail('artifact_reference_invalid', 409);
+    if (!validArtifactReference(ref) || ref.bytes > maxPayloadBytes || ref.bucket !== bucket || ref.objectName !== name(ref.hash)) fail('artifact_reference_invalid', 409);
   }
   async function requirePrivateBucket(signal) {
     const response = await request(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}?fields=iamConfiguration`, { signal });
@@ -82,7 +83,7 @@ export function createWorkArtifactStore({ bucket, tenant, getAccessToken, fetchI
   async function read(ref, { signal } = {}) {
     checkRef(ref);
     await requirePrivateBucket(signal);
-    const response = await request(`${objectUrl(ref.hash)}?alt=media&generation=${encodeURIComponent(ref.generation)}`, { signal, maxBytes: WORK_PAYLOAD_BYTES });
+    const response = await request(`${objectUrl(ref.hash)}?alt=media&generation=${encodeURIComponent(ref.generation)}`, { signal, maxBytes: maxPayloadBytes });
     if (response.status !== 200) fail('artifact_read_failed');
     if (Buffer.byteLength(response.text) !== ref.bytes || hash(response.text) !== ref.hash) fail('artifact_hash_mismatch');
     return response.text;
@@ -90,7 +91,7 @@ export function createWorkArtifactStore({ bucket, tenant, getAccessToken, fetchI
   return Object.freeze({
     async put({ text, hash: digest, signal }) {
       if (typeof text !== 'string' || !/^[a-f0-9]{64}$/.test(digest) || hash(text) !== digest
-        || Buffer.byteLength(text) < 1 || Buffer.byteLength(text) > WORK_PAYLOAD_BYTES) fail('artifact_payload_invalid', 400);
+        || Buffer.byteLength(text) < 1 || Buffer.byteLength(text) > maxPayloadBytes) fail('artifact_payload_invalid', 400);
       await requirePrivateBucket(signal);
       const query = new URLSearchParams({ uploadType: 'media', name: name(digest), ifGenerationMatch: '0' });
       const upload = await request(`https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o?${query}`, { method: 'POST', body: text, signal });

@@ -3,6 +3,7 @@ import * as IDEM from '../../netlify/lib/quantus-v3-idempotency.mjs';
 import * as F from '../quantus-v3-runtime-cas-harness.mjs';
 import { createIntegrationCorePort } from '../../runtime/quantus-v3/src/integration-ports.mjs';
 import { createLeadershipJournal } from '../../runtime/quantus-v3/src/leadership-journal.mjs';
+import { artifactFixture } from './quantus-v4-artifact-fixture.mjs';
 export const T = Date.parse('2026-10-02T07:01:00Z');
 export const RUN = 'quantus:2026-10-02:process09:4.0';
 
@@ -22,7 +23,8 @@ export async function setup(initialData = F.baseCore()) {
     },
   }) });
   const clock = { now: () => now };
-  const make = () => createLeadershipJournal({ core: port.impl, clock, runKey: RUN, verifiedScope: scope });
-  return { store, core: port.impl, clock, scope, make, journal: make(),
+  const artifacts = artifactFixture({ maxPayloadBytes: 3 * 1024 * 1024 });
+  const make = () => createLeadershipJournal({ core: port.impl, clock, runKey: RUN, verifiedScope: scope, artifacts: artifacts.store });
+  return { store, core: port.impl, clock, scope, artifacts, make, journal: make(),
     setNow: v => { now = v; }, onMutation: fn => { beforeMutation = fn; }, onRead: fn => { beforeRead = fn; }, get reads() { return reads; } };
 }
