@@ -49,7 +49,7 @@ export const RUN_PHASES = Object.freeze(["created", "active", "final", "exceptio
 export const EXECUTORS = Object.freeze(["openai", "claude", "gemini", "user", "external"]);
 export const ACCOUNTABLES = Object.freeze(["chatgpt", "user"]);
 
-export const SOURCE_TYPES = Object.freeze(["chatgptLead", "chatgptTask", "task", "project", "intake", "question", "document", "job", "evidence"]);
+export const SOURCE_TYPES = Object.freeze(["chatgptLead", "chatgptTask", "task", "project", "intake", "question", "answer", "document", "job", "evidence", "chatgptNote"]);
 
 /* Sammlungen im Bestand, aus denen Arbeit stammt. Projekte tragen nur
  * Fristen (deadlines) bei. */
@@ -324,6 +324,7 @@ export const COMMAND_SCHEMAS = Object.freeze({
   recordSlotReceipt:    Object.freeze({ required: ["date", "slot", "receiptId"], optional: ["note"], actors: ["agent", "system"] }),
   recordSourceCheck:    Object.freeze({ required: ["date", "sourceId", "cursor", "outcome"], optional: ["detail"], actors: ["adapter", "system"] }),
   addItemRef:           Object.freeze({ required: ["date", "sourceType", "sourceId"], optional: ["carriedFrom"], actors: ["agent", "system"] }),
+  syncRunInventory:     Object.freeze({ required: ["date"], optional: [], actors: ["system"] }),
   carryOverRefs:        Object.freeze({ required: ["fromDate", "toDate"], optional: [], actors: ["agent", "system"] }),
   observeSource:        Object.freeze({ required: ["sourceType", "sourceId"], optional: [], actors: ["agent", "system"] }),
   setWaiting:           Object.freeze({ required: ["sourceType", "sourceId", "expectedVersion", "state", "counterparty", "nextAction", "followUpAt", "evidence"], optional: [], actors: ["agent"] }),
