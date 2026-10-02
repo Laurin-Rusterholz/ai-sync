@@ -13,12 +13,15 @@ import { createAnthropicTransport } from "./anthropic-transport.mjs";
 import { createEnvCostPolicyPort } from "./cost-policy-port.mjs";
 import { createSectionWorkProvider, loadAssistantPolicy } from "./section-work.mjs";
 import { createBriefingSectionWork } from "./briefing-bootstrap.mjs";
+import { createDurableSectionWork } from "./durable-section-work.mjs";
+import { createWorkArtifactStore } from "./work-artifact-store.mjs";
+import { createGoogleAccessTokenSource } from "./google-transport.mjs";
 
 /**
  * @param envRead   `(name) => string|undefined`, wie `resolveRuntimeConfig`.
  * @param loadGmailToken  nur fuer Tests: ersetzt den dynamischen Import.
  */
-export async function createFSourcePorts({ config, corePort, clockPort, envRead = (n) => process.env[n], loadGmailToken } = {}) {
+export async function createFSourcePorts({ config, corePort, clockPort, envRead = (n) => process.env[n], loadGmailToken, artifactStore } = {}) {
   const costPolicy = createEnvCostPolicyPort(envRead);
   // server.mjs passes the registered port envelope, while isolated callers
   // may pass its implementation. Do not mistake the envelope for the core API.
@@ -56,6 +59,13 @@ export async function createFSourcePorts({ config, corePort, clockPort, envRead 
   });
   let sectionWork;
   try {
+    if (!artifactStore) {
+      const bucket = envRead('QUANTUS_V4_ARTIFACT_BUCKET');
+      if (!bucket) return { sectionWork: unavailablePort('sectionWork', 'artifact_bucket_not_configured'), costPolicy };
+      const tokens = await createGoogleAccessTokenSource({});
+      if (!tokens.ok) return { sectionWork: unavailablePort('sectionWork', 'artifact_credentials_not_configured'), costPolicy };
+      artifactStore = createWorkArtifactStore({ bucket, tenant: config.tenant, getAccessToken: tokens.get });
+    }
     sectionWork = createSectionWorkProvider({
       // `costPolicy` ist jetzt immer verfuegbar (s. cost-policy-port.mjs) —
       // `.load()` selbst meldet frisch, ob GERADE JETZT eine gueltige
@@ -66,6 +76,8 @@ export async function createFSourcePorts({ config, corePort, clockPort, envRead 
       clockPort, gmailSource, anthropic, leaseScope: config.leaseScope, policy: policyResult.policy,
       runtimeConfig: config,
     });
+    sectionWork = createDurableSectionWork({ core: corePort, clock: clockPort,
+      leaseScope: config.leaseScope, pipelineId: 'gmail-draft-v1', artifacts: artifactStore, inner: sectionWork.impl });
     sectionWork = createBriefingSectionWork({ core: corePort, clock: clockPort,
       policy: policyResult.policy, config, inner: sectionWork.impl });
   } catch (e) {

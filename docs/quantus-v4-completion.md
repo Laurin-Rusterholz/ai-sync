@@ -252,6 +252,35 @@ Fortsetzung. Dies schließt weder die OpenAI-Gesamtkomposition noch den
 produktiven Probebetrieb ab. Begrenzte Quellen-Artefakte, vollständige
 Kontext-Batches und der Leitungszyklus müssen noch gemeinsam verdrahtet werden.
 
+## Große Arbeitsinhalte und dauerhafte Fortsetzung
+
+Der Quellen-Worker speichert Arbeitsinhalte als unveränderliche Objekte in
+einem ausdrücklich konfigurierten Cloud-Storage-Bucket. Im Kern stehen nur
+Hash, Objektname, Generation und Größe. Der Fortsetzungscursor bleibt unter
+500 Byte, auch wenn die gelesenen Nachrichten mehrere hundert KiB umfassen.
+Ein Upload überschreibt kein bestehendes Objekt (`ifGenerationMatch=0`);
+Metadaten und generationsgebundener Download werden vor der Kernreferenz
+unabhängig geprüft. Fremde Buckets, Mandantenpfade, falsche Hashes und nicht
+mehr vorhandene Generationen werden abgewiesen.
+
+Vor jedem Zugriff werden erzwungener Schutz gegen öffentliche Freigabe und
+einheitliche Bucket-IAM-Rechte geprüft. Der Runtime-Parameter
+`QUANTUS_V4_ARTIFACT_BUCKET` ist zwingend; es gibt keinen Rückfall auf den
+vorhandenen Firebase-Standardbucket oder auf Mailtexte im Kern. Der Worker
+benötigt `storage.buckets.get`, `storage.objects.create` und
+`storage.objects.get` für diesen Bucket. Der konkrete Bucket und seine
+produktiven IAM-Rechte sind noch separat nachzuweisen.
+
+Ein kleiner CAS-Beleg beansprucht jeden Schritt vor seiner Ausführung.
+Bestätigte Ergebnisse werden nach Neustart wiedergegeben; ein beanspruchter
+Schritt ohne bestätigtes Ergebnis bleibt unklar und wird nicht automatisch
+wiederholt. Aktive Inhalte und Belege werden hier nicht gekürzt. Die spätere
+Archivierung und die Migration großer Leitungs-Journale in diesen Speicher
+sind weiterhin offen, ebenso die vollständige OpenAI-Komposition.
+
+Grundlagen: [Cloud Storage Preconditions](https://docs.cloud.google.com/storage/docs/request-preconditions)
+und [Bucket-IAM-Konfiguration](https://docs.cloud.google.com/storage/docs/json_api/v1/buckets).
+
 ## Betriebsfreigabe
 
 Keine neuen bezahlten Aufrufe ohne vorhandene genehmigte Kostenkonfiguration.
