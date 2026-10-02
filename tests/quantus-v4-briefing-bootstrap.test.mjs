@@ -9,6 +9,7 @@ import { setup, T, RUN } from './fixtures/quantus-v4-leadership-fixture.mjs';
 import { createFSourcePorts } from '../runtime/quantus-v3/src/f-composition.mjs';
 import { DOMAIN_PORT_VARS } from '../netlify/lib/quantus-v3-domain-adapter.mjs';
 import * as F from './quantus-v3-e2-fixtures.mjs';
+import { artifactFixture } from './fixtures/quantus-v4-artifact-fixture.mjs';
 
 const DATE = '2026-10-02';
 const policy = { ...POLICY_TEMPLATE, tenant: 'quantus', version: '4.0', requiredSources: [{ id: 'quantus-core', kind: 'quantus-core' }], noExternalSources: true };
@@ -164,6 +165,7 @@ test('actual HTTP worker plus production source composition bootstraps an empty 
     QUANTUS_V3_ANTHROPIC_INPUT_MICROS_PER_MTOK: '1', QUANTUS_V3_ANTHROPIC_OUTPUT_MICROS_PER_MTOK: '1' };
   let sources = 0;
   const ports = await createFSourcePorts({ config: actualConfig, corePort: core.port, clockPort: clock.port.impl,
+    artifactStore: artifactFixture({ tenant: F.TENANT }).store,
     envRead: n => env[n], loadGmailToken: async () => async () => {
       const d = core.store.snapshot(), run = d.dailyBriefing.assistantRuns[DATE];
       assert.ok(run?.slotReceipts.process09, 'domain receipt exists before token lookup');

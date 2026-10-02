@@ -13,6 +13,8 @@ import { HttpError } from './errors.mjs';
 
 export const JOURNAL_LIMITS = Object.freeze({ requestBytes: 512 * 1024, responseBytes: 3 * 1024 * 1024,
   toolBytes: 512 * 1024, coreBytes: 18 * 1024 * 1024, turns: 30 });
+export const WORK_PAYLOAD_BYTES = 512 * 1024;
+export const WORK_RESULT_BYTES = 8 * 1024;
 const record = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const hash = text => createHash('sha256').update(text).digest('hex');
 const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
@@ -20,7 +22,7 @@ const fail = (error, status = 409) => { throw new HttpError(status, error); };
 
 // Validate without changing property order: reconstructed provider requests
 // must retain exactly the same immutable bytes used for cost reservation.
-function encode(value, limit) {
+export function encodeRuntimePayload(value, limit) {
   const seen = new Set();
   let nodes = 0;
   function visit(v, depth) {
@@ -82,9 +84,19 @@ function view(entry) {
     tool: entry.tool === null ? null : JSON.parse(entry.tool.text) };
 }
 
-function assertCapacity(data) {
+export function assertActiveRuntimeCapacity(data) {
   let reserved = 0;
   for (const run of Object.values(readRuntime(data).runsByKey)) {
+    const steps = run.sectionWork?.steps;
+    if (steps !== undefined) {
+      if (!record(steps)) fail('work_state_invalid', 503);
+      // A claimed step reserves metadata and its compact result before source
+      // work. Large payloads live externally, never in this core document.
+      for (const step of Object.values(steps)) {
+        if (!record(step) || !['claimed', 'completed'].includes(step.state)) fail('work_state_invalid', 503);
+        if (step.state === 'claimed') reserved += 2 * WORK_RESULT_BYTES + 4096;
+      }
+    }
     const entries = run.leadershipJournal?.entries;
     if (entries === undefined) continue;
     if (!Array.isArray(entries)) fail('journal_invalid', 503);
@@ -113,7 +125,7 @@ export function createLeadershipJournal({ core, clock, runKey, verifiedScope } =
   async function write(field, { callId, requestHash, payload }) {
     if (typeof callId !== 'string' || !/^[A-Za-z0-9_.:-]{1,120}$/.test(callId) || !digest(requestHash)) fail('journal_identity_invalid', 400);
     if (!record(payload)) fail('journal_payload_invalid', 400);
-    const encoded = encode(payload, JOURNAL_LIMITS[`${field}Bytes`]);
+    const encoded = encodeRuntimePayload(payload, JOURNAL_LIMITS[`${field}Bytes`]);
     // The content digest participates in the command key. The real core port
     // binds only commandKey; a reused call ID with different content must still
     // reach the journal's immutable-entry check instead of replaying success.
@@ -135,7 +147,7 @@ export function createLeadershipJournal({ core, clock, runKey, verifiedScope } =
         if (entry[field] !== null && entry[field].hash !== encoded.hash) fail('journal_record_conflict');
         entry[field] = encoded;
       }
-      assertCapacity(data);
+      assertActiveRuntimeCapacity(data);
       // Only a small receipt enters the idempotency ledger, never a second copy
       // of full provider output (the ledger's own result limit is 64 KiB).
       return { data, result: { callId, field, hash: encoded.hash } };
@@ -143,7 +155,7 @@ export function createLeadershipJournal({ core, clock, runKey, verifiedScope } =
     if (result?.result?.hash !== encoded.hash) fail('journal_receipt_invalid', 502);
     // Independent readback catches an acknowledged but missing write/replay.
     const current = await snapshot();
-    assertCapacity(current);
+    assertActiveRuntimeCapacity(current);
     const journal = area(current, runKey);
     const entry = journal?.entries.find(e => e.callId === callId);
     if (!entry || entry.requestHash !== requestHash || entry[field]?.hash !== encoded.hash) fail('journal_readback_failed', 502);
