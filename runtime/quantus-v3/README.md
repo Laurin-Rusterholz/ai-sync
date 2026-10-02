@@ -231,3 +231,14 @@ Grenzen: 100 IDs/History-Datensätze pro API-Seite, 8 MiB pro HTTP-Antwort,
 sind offene Fehler. Das bisherige F-Modul bleibt unverändert; der neue Adapter
 ist noch nicht mit der v4-Produktionskomposition verbunden. T28 benötigt den
 dauerhaften Import, Wiederaufnahme/Gaps und produktive Nachweise.
+
+`gmail-original-store.mjs` ergänzt die private Speicherung vollständiger
+Leser-Ausgaben. `put({messageId,text})` verlangt die unveränderte JSON-Nachricht
+mit passendem Konto und Provider-ID. Originalbytes werden in 256-KiB-Teilen
+gesichert, durch ein unveränderliches Manifest verbunden und vollständig
+zurückgelesen. `read({messageId,reference})` prüft dieselben Konto-/Quellenbindungen,
+Generationen, Teilreihenfolge, Längen und Gesamt-Hash. Nur bestätigte Referenzen
+dürfen anschliessend in einer eigenen CAS-Importtransaktion verwendet werden.
+Die benötigte aktuelle Leaseprüfung ist ein Pflichtport; keine Speicheroperation
+darf sie umgehen. Grenzen: 32 MiB pro Bündel und 128 Teile. Noch keine produktive
+Import-/Cursoranbindung; der Baustein schreibt nicht in den Core oder nach Gmail.

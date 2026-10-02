@@ -510,3 +510,28 @@ Antwortströmen. Der Adapter allein setzt keinen Quellcursor und meldet keinen
 produktiven Quellenabschluss. Die dauerhafte Message-ID-Registry, CAS-Import mit
 Original-Readback, Gap-Nachabgleich, Anhangsauswertung und Einbindung in die
 OpenAI-Produktionskomposition folgen noch; T28 bleibt offen.
+
+### Vollständige Mailoriginale in privaten Speicherteilen
+
+`gmail-original-store` sichert die unveränderte JSON-Antwort des neuen Mail-
+Leseadapters einschliesslich aller Originale und nachgeladenen Körper ausserhalb
+des Kerndokuments. 256-KiB-Byteabschnitte halten jedes Speicherobjekt unter der
+bisherigen Grenze. Ein unveränderliches Manifest bindet Konto, Mandant, Quelle,
+Provider-Message-ID, vollständigen Inhaltshash, Bytezahl und geordnete Teile.
+Unicode über Abschnittsgrenzen bleibt bei der Rekonstruktion exakt erhalten.
+
+Jeder Schreibschritt wird separat zurückgelesen. Vor Rückgabe einer bestätigten
+Speicherreferenz werden Manifest und sämtliche Teile nochmals vollständig gelesen
+und der Gesamtinhalt mit dem ursprünglichen Text verglichen. Die aktuelle Lease
+und Abbruchbedingung werden vor und nach jeder Speicheroperation geprüft. Ein
+verlorener Uploadbeleg lässt sich über dieselben unveränderlichen Inhaltshashes
+fortsetzen; ein fehlender oder veränderter Teil, falsche Generation, fremdes Konto,
+entzogene Speicherprivatheit und Leaseverlust verhindern eine Bestätigung.
+
+Belegt sind vollständige Leser-Ausgaben über 3 MiB, neue Workerinstanz, identische
+Wiederholung, manipulierte oder vertauschte Teile sowie Speicher-/Leasefehler.
+Die Grenze liegt bei 32 MiB pro Originalbündel und 128 Teilen; darüber wird
+ausdrücklich abgebrochen. Noch setzt dieser Baustein keinen Quellcursor und legt
+keine Intake-Karte an. Registry, CAS-Übernahme, autorisierte Quellenanbindung und
+die Einbindung der Originale in den Arbeitsbestand bleiben der nächste Schritt.
+T28 und der produktive Gesamtabschluss bleiben offen.
