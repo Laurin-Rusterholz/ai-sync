@@ -35,7 +35,7 @@ export function leadershipToolDefinitions() {
   ];
 }
 
-export function createLeadershipGateway({ transport, jobTokenIssuer, clock, runKey, tenant, toolsEnabled, lease, signal, artifacts }) {
+export function createLeadershipGateway({ transport, jobTokenIssuer, clock, runKey, tenant, toolsEnabled, lease, signal, artifacts, hydrateWorkset }) {
   const jobId = runIdForRunKey(runKey);
   const statusId = statusScopeIdForRunKey(runKey);
   const definitions = leadershipToolDefinitions();
@@ -100,7 +100,8 @@ export function createLeadershipGateway({ transport, jobTokenIssuer, clock, runK
           } });
         response = read.response;
         if (packetRead && read.readComplete) {
-          const items = assembleContextItems(response.body.items);
+          let items = assembleContextItems(response.body.items);
+          if (hydrateWorkset) items = await hydrateWorkset({ items, dataRevision: response.body.dataRevision, scopeId: args.scopeId });
           response.body = { ...response.body, items, count: items.length,
             entityVersions: Object.fromEntries(items.filter(i => Number.isSafeInteger(i.entityVersion)).map(i => [i.id, i.entityVersion])) };
           const packet = await packets.capture(read);

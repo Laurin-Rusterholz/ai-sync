@@ -656,7 +656,8 @@ Unabhängige Benutzereingaben ausserhalb des Registers bleiben möglich.
 Dies ist die serverinterne Lesegrundlage für die nächste Arbeitsbestandseinbindung.
 Eine Fortsetzungsposition ist ausdrücklich kein Vollständigkeitsnachweis für das
 Modell. Der Verbraucher muss die gesamte Seitenkette speichern und prüfen; die
-Verbindung zu Intake, Kontextpaketen, Worker und fachlichem Abschluss bleibt offen.
+Verbindung zu Intake und Kontextpaketen ist unten beschrieben; die automatische
+Quellenaufnahme im Worker und der fachliche Abschluss bleiben offen.
 
 ### Registrierte Mailversion als offener Eingang
 
@@ -676,6 +677,39 @@ vollständigen Originalauflösung ausdrücklich als `sourceMissing` mit
 `external_read_required`; interne Speicherorte werden nicht an das Modell gegeben.
 Normale Intake-Kommandos dürfen das serverseitige Referenzfeld nicht setzen.
 
-Die automatische Auflösung in den Kontextpaketen und die Aufrufkette im produktiven
-Worker fehlen weiterhin. Ein kompakter Eingang ist kein gelesener Mailinhalt und
-kein Quellenabschluss. T28 und die integrierte Abnahme bleiben offen.
+Die anschliessende Auflösung in den Kontextpaketen ist unten beschrieben. Die
+automatische Quellenaufnahme und Bindung im produktiven Worker fehlen weiterhin.
+Ein kompakter Eingang ist kein gelesener Mailinhalt und kein Quellenabschluss.
+T28 und die integrierte Abnahme bleiben offen.
+
+### Vollständige gebundene Mailinhalte in der OpenAI-Verarbeitung
+
+Die tatsächliche OpenAI-Komposition schliesst jetzt `gmail-context-hydrator` an
+den vollständig autorisierten C2-Arbeitsbestand an. Der Leser prüft die aktuelle
+Domainrevision, Intake-Identität, Mandant, Quellbindung und aktive Laufsektion.
+Historische offene Versionen werden ausschliesslich über die bestätigte private
+Registerkette erreicht. Ein neueres Original ohne eigenen gebundenen Eingang
+stoppt die Auslieferung, damit ein älterer Eingang keine neue Nachrichtenversion
+verdeckt. Ganze Originalbündel werden unabhängig zurückgelesen und vor/nach dem
+Lesen gegen Änderungen abgesichert.
+
+Der vollständige serialisierte Mailinhalt ersetzt den kompakten Referenztext.
+Versionsangabe, Hash, Kennzeichnung als untrusted source sowie offene Anhangslücken
+bleiben erhalten; interne Speicherorte werden nicht projiziert. Fehlende Inhalte
+bleiben `sourceMissing`. Vor der Paketzerlegung prüft dieselbe Positivliste und
+Geheimnissuche den gesamten Text. Die bisherige Schlüsselprüfung wurde um
+Bindestriche und Unterstriche innerhalb langer `sk-`-Schlüssel erweitert, nachdem
+eine Gegenprobe die bisherige Lücke nachgewiesen hatte.
+
+Die unveränderlichen Kontextpakete und deren unabhängige Abschlussprüfung binden
+nun den tatsächlichen vollständigen Mailinhalt ein. Direkte Tests und die echte
+OpenAI-Komposition mit künstlichem Modelltransport prüfen vollständige Inhalte,
+Unicode über mehrere Pakete, alte Versionen, fremde Identitäten, fehlende Originale,
+konkurrierende Änderungen, Geheimnisse sowie den verweigerten Abschluss bei
+ungelesenen Anhängen. Es erfolgt kein echter Provideraufruf in diesen Tests.
+
+Der gesamte Kontext bleibt derzeit auf 16 MiB begrenzt und die historische
+Versionssuche auf 1000 Vorgänger; Überschreitungen brechen ausdrücklich ab. Die
+automatische Quellenaufnahme und Bindung im Worker, grössere produktive Bestände,
+Anhangsauswertung und Laufzeitnachweise bleiben offen. Dies ist kein produktiver
+T28-Nachweis und kein abgeschlossener Probebetrieb.

@@ -1188,7 +1188,7 @@ const SECRET_KEY_PATTERN = /(api[_-]?key|secret|token|password|passwort|private[
 // Die Wortgrenze steht je Alternative — ein PEM-Block beginnt mit „-----",
 // davor gibt es keine, und eine gemeinsame Grenze vorn hätte ihn durchgelassen.
 const SECRET_VALUE_PATTERN =
-  /(\bsk-ant-[A-Za-z0-9_-]{8,}|\bsk-[A-Za-z0-9]{20,}|\bAIza[0-9A-Za-z_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/;
+  /(\bsk-ant-[A-Za-z0-9_-]{8,}|\bsk-[A-Za-z0-9_-]{20,}|\bAIza[0-9A-Za-z_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/;
 
 export const SECRET_SCAN_LIMITS = Object.freeze({ depth: 12, maxNodes: 20_000, maxStringLength: 1_000_000 });
 

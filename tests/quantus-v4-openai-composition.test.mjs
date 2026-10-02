@@ -8,6 +8,8 @@ import { setup, T, RUN } from './fixtures/quantus-v4-leadership-fixture.mjs';
 import * as F from './quantus-v3-e2-fixtures.mjs';
 import { reserveCost } from '../netlify/lib/quantus-v3-runtime-state.mjs';
 import { projectPage } from '../netlify/lib/quantus-v3-read-helpers.mjs';
+import { createGmailMessageRegistry } from '../runtime/quantus-v3/src/gmail-message-registry.mjs';
+import { createGmailIntakeBinding } from '../runtime/quantus-v3/src/gmail-intake-binding.mjs';
 
 const assistantPolicy = { ...POLICY_TEMPLATE, tenant: 'quantus', version: '4.0',
   requiredSources: [{ id: 'quantus-core', kind: 'quantus-core' }], noExternalSources: true };
@@ -18,9 +20,19 @@ const costPolicy = { schema: 'quantus-v3-cost-policy/1', version: 'test-only', c
   dayLimitMicros: 1000000, runLimitMicros: 1000000, callLimitMicros: 100000, unresolvedBlockMicros: 1000000,
   featureFlags: { providers: 'live' }, models: { 'openai:test-model': {
     inputMicrosPerMillionTokens: 1000, outputMicrosPerMillionTokens: 1000, maxCallMicros: 100000 } } };
-async function build({ mode = 'live', providerFailure = false, compaction = false, large = false } = {}) {
+async function build({ mode = 'live', providerFailure = false, compaction = false, large = false, gmail = false } = {}) {
   const s = await setup(migrateCore({ entities: { tasks: { task1: { id: 'task1', status: 'todo', ...(large ? { notes: 'Large original '.repeat(large === 'long' ? 280000 : 65000) } : {}) } } } }, { now: T }).data);
   const requests = [], tools = [];
+  if (gmail) {
+    const source = { core: s.core, clock: s.clock, artifacts: s.artifacts.store, tenant: 'quantus',
+      account: 'mail@example.test', sourceId: 'gmail-test', runKey: RUN, sectionId: 'section-1', verifiedScope: s.scope, policy: assistantPolicy };
+    await createGmailMessageRegistry(source).register({ messageId: 'mail1', text: JSON.stringify({ missing: false,
+      account: source.account, id: 'mail1', threadId: 'thread1', historyId: '100', internalDate: String(T),
+      partial: gmail === 'partial', gaps: gmail === 'partial' ? [{ reason: 'attachment_unread' }] : [],
+      parts: [{ text: 'Full source available to the actual model transport.'.repeat(gmail === 'large' ? 12000 : 1) }],
+      original: { id: 'mail1', threadId: 'thread1', historyId: '100' } }) });
+    await createGmailIntakeBinding(source).bind({ messageId: 'mail1' });
+  }
   const env = { QUANTUS_V4_OPENAI_API_KEY: 'test-secret-not-real', QUANTUS_V4_OPENAI_MODEL: 'test-model',
     QUANTUS_V4_OPENAI_INPUT_MICROS_PER_MTOK: '1000', QUANTUS_V4_OPENAI_OUTPUT_MICROS_PER_MTOK: '1000',
     QUANTUS_V4_PROMPT_VERSION: '4.0.0', QUANTUS_V3_COST_POLICY_JSON: JSON.stringify(costPolicy),
@@ -86,6 +98,41 @@ async function build({ mode = 'live', providerFailure = false, compaction = fals
     }, ...overrides });
   return { ...s, args, make, requests, tools, env, config };
 }
+
+test('production composition delivers the exact bound mail original to model input and retains partial-source gates', async () => {
+  for (const gmail of [true, 'partial']) {
+    const s = await build({ gmail }); let result;
+    for (let n = 0; n < 20; n++) {
+      result = await (await s.make()).sectionWork.impl.next(s.args);
+      if (result.done || result.blocked) break;
+    }
+    const deliveries = s.requests.flatMap(r => r.input).filter(i => i.type === 'function_call_output')
+      .map(i => JSON.parse(i.output)).filter(t => t.response.body.query === 'run.workset');
+    const mailItem = deliveries.flatMap(t => t.response.body.items).find(i => i.sourceType === 'intake');
+    assert.equal(JSON.parse(mailItem.text).parts[0].text, 'Full source available to the actual model transport.');
+    assert.equal(mailItem.sourceMissing, gmail === 'partial');
+    if (gmail === 'partial') {
+      assert.equal(result.blocked, true); assert.equal(result.reason, 'context_original_missing');
+      assert.equal(s.store.snapshot().automation.runtime.runsByKey[RUN].contextCoverage, undefined);
+    } else assert.equal(result.done, true, JSON.stringify(result));
+  }
+});
+
+test('actual worker carries a large mail through all packets and independent completion coverage', async () => {
+  const s = await build({ gmail: 'large', large: true, compaction: true }); let result;
+  for (let n = 0; n < 90; n++) {
+    result = await (await s.make()).sectionWork.impl.next(s.args);
+    if (result.done || result.blocked) break;
+  }
+  assert.equal(result.done, true, JSON.stringify(result));
+  const receipts = (await s.journal.read()).map(e => e.tool).filter(t => t?.contextPacket);
+  const fragments = receipts.flatMap(r => r.response.body.fragments).filter(f => f.originalId.startsWith('ctx_intake_'));
+  assert.ok(fragments.length > 1);
+  const item = JSON.parse(fragments.sort((a, b) => a.fragmentIndex - b.fragmentIndex).map(f => f.jsonFragment).join(''));
+  assert.equal(JSON.parse(item.text).parts[0].text, 'Full source available to the actual model transport.'.repeat(12000));
+  assert.equal(s.store.snapshot().automation.runtime.runsByKey[RUN].contextCoverage.proof.itemCount, 3);
+  assert.ok(s.requests.every(r => Buffer.byteLength(JSON.stringify(r)) < 512 * 1024));
+});
 
 test('production worker completes full large-original packet coverage across fresh instances and changed runtime revisions', async () => {
   const s = await build({ large: true, compaction: true });
