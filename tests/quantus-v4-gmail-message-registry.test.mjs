@@ -156,6 +156,79 @@ test('the first ID remains registered after more than the old 300-message overla
   const puts = f.store.stats.puts;
   const old = await createGmailMessageRegistry(f.config).register({ messageId: 'mail0', text: mail('mail0') });
   assert.equal(old.record.version, 1); assert.equal(rows(f).count, 301); assert.equal(f.store.stats.puts, puts);
+  const seen = new Set(); let cursor = null, fingerprint;
+  do {
+    const page = await createGmailMessageRegistry(f.config).readPage({ cursor });
+    assert.equal(page.count, 301); assert.equal(page.index, seen.size);
+    fingerprint ??= page.fingerprint; assert.equal(page.fingerprint, fingerprint);
+    assert.equal(page.item.confirmed, true);
+    assert.equal(JSON.stringify(page.item.original), mail(page.item.record.messageId));
+    assert.equal(seen.has(page.item.record.messageId), false);
+    seen.add(page.item.record.messageId); cursor = page.nextCursor;
+  } while (cursor);
+  assert.equal(seen.size, 301); assert.equal(f.store.stats.puts, puts);
+});
+
+test('original traversal preserves large full content and explicit missing-attachment gaps', async () => {
+  const f = await build();
+  const body = 'full source '.repeat(24000);
+  await f.registry.register({ messageId: 'mail1', text: mail('mail1', '100', {
+    parts: [{ text: body }], partial: true, gaps: [{ reason: 'attachment_unread', attachmentId: 'att1' }],
+  }) });
+  const page = await f.registry.readPage();
+  assert.equal(page.item.original.parts[0].text, body);
+  assert.equal(page.item.record.partial, true); assert.equal(page.item.record.gapCount, 1);
+  assert.deepEqual(page.item.original.gaps, [{ reason: 'attachment_unread', attachmentId: 'att1' }]);
+  assert.equal(page.count, 1); assert.equal(page.nextCursor, null);
+});
+
+test('traversal rejects absent sources, unreadable originals and cursors from another source or version', async () => {
+  const f = await build();
+  await assert.rejects(f.registry.readPage(), /source_missing/);
+  await f.registry.register({ messageId: 'mail1', text: mail() });
+  await f.registry.register({ messageId: 'mail2', text: mail('mail2') });
+  const first = await f.registry.readPage(), cursor = first.nextCursor;
+  for (const changed of [{ ...cursor, sourceKey: 'a'.repeat(64) }, { ...cursor, index: 0 },
+    { ...cursor, previousKey: 'b'.repeat(64) }, { ...cursor, extra: true }])
+    await assert.rejects(f.registry.readPage({ cursor: changed }), /cursor_invalid/);
+  await f.registry.register({ messageId: 'mail1', text: mail('mail1', '101') });
+  await assert.rejects(f.registry.readPage({ cursor }), /snapshot_changed/);
+  const fresh = await f.registry.readPage();
+  f.artifacts.objects.delete(fresh.item.record.reference.objectName);
+  await assert.rejects(f.registry.readPage(), /artifact_read_failed/);
+});
+
+test('traversal detects another row changing during an original read even without revision/count change', async () => {
+  const f = await build();
+  await f.registry.register({ messageId: 'mail1', text: mail() });
+  await f.registry.register({ messageId: 'mail2', text: mail('mail2') });
+  const keys = Object.keys(rows(f).records).sort(); let changed = false;
+  const registry = createGmailMessageRegistry({ ...f.config, artifacts: {
+    ...f.config.artifacts, async read(...args) {
+      const result = await f.config.artifacts.read(...args);
+      if (!changed) {
+        changed = true;
+        f.store.forceWrite(d => {
+          d.automation.runtime.gmailRegistry.sources[f.registry.sourceKey].records[keys[1]].importedAtMs++;
+          return d;
+        });
+      }
+      return result;
+    },
+  } });
+  await assert.rejects(registry.readPage(), /snapshot_changed/);
+});
+
+test('traversal stops on expired lease and ignores unrelated core edits', async () => {
+  const f = await build();
+  await f.registry.register({ messageId: 'mail1', text: mail() });
+  await f.registry.register({ messageId: 'mail2', text: mail('mail2') });
+  const first = await f.registry.readPage();
+  f.store.forceWrite(d => { d.entities.tasks.t1.title = 'user edit'; return d; });
+  const second = await f.registry.readPage({ cursor: first.nextCursor });
+  assert.equal(second.fingerprint, first.fingerprint); assert.equal(second.nextCursor, null);
+  f.setNow(T + 120001);
+  await assert.rejects(f.registry.readPage());
 });
 
 test('lease expiry at the CAS boundary rejects a prepared source without registering it', async () => {
