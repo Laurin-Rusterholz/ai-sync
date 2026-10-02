@@ -6,11 +6,12 @@
 //
 //  Security model (mirrors blob-get / blob-put):
 //   • Client-ID / Client-Secret come from env vars, never from the frontend.
-//   • Refresh-Token + Access-Token are stored server-side in Firebase RTDB.
+//   • Refresh-Token + Access-Token are stored server-side in Netlify Blobs.
 //   • Frontend calls are authorised with the same optional SYNC_AUTH_TOKEN
 //     bearer that the existing sync endpoints use.
 // ============================================================================
 import { getStore } from "@netlify/blobs";
+import { createGoogleOAuthTokenSource } from "../../runtime/quantus-v3/src/google-oauth-token-source.mjs";
 
 export const TOKEN_KEY = "tokens";
 export const STATE_KEY = "oauthState";
@@ -114,7 +115,7 @@ function oauthStore() {
 
 export async function loadTokens() {
   try {
-    return await oauthStore().get(TOKEN_KEY, { type: "json" });
+    return await oauthStore().get(TOKEN_KEY, { type: "json", consistency: "strong" });
   } catch (e) {
     return null;
   }
@@ -122,6 +123,20 @@ export async function loadTokens() {
 
 export async function saveTokens(tokens) {
   await oauthStore().setJSON(TOKEN_KEY, tokens);
+}
+
+// Account enrichment is not a new login. It must never recreate a disconnected
+// connection or overwrite another account while Calendar was being queried.
+export async function updateTokenEmail({ accessToken, email }) {
+  if (typeof email !== 'string' || !email || email.length > 320 || /[\r\n]/.test(email)) return false;
+  const store = oauthStore();
+  const current = await store.getWithMetadata(TOKEN_KEY, { type: 'json', consistency: 'strong' });
+  if (!current?.etag || current.data?.access_token !== accessToken) return false;
+  const updated = { ...current.data, email };
+  const saved = await store.set(TOKEN_KEY, JSON.stringify(updated), { onlyIfMatch: current.etag });
+  if (saved.modified !== true || !saved.etag) return false;
+  const confirmed = await store.getWithMetadata(TOKEN_KEY, { type: 'json', consistency: 'strong' });
+  return confirmed?.etag === saved.etag && JSON.stringify(confirmed.data) === JSON.stringify(updated);
 }
 
 export async function clearTokens() {
@@ -175,46 +190,14 @@ export async function exchangeCode(code, req) {
   };
 }
 
-// Refresh the access token using the stored refresh token.
-async function refreshAccessToken(tokens) {
-  if (!tokens || !tokens.refresh_token) {
-    throw new Error("Kein Refresh-Token vorhanden – bitte neu mit Google verbinden.");
-  }
+// Refresh through the same conditional, independently verified token source as
+// the cloud worker. This shared Google connection may serve Calendar without
+// Gmail consent; only the mail worker requires the additional Gmail read scope.
+export async function getValidAccessToken({ forceRefresh = false, signal } = {}) {
   const { clientId, clientSecret } = getOAuthConfig();
-  const body = new URLSearchParams({
-    refresh_token: tokens.refresh_token,
-    client_id: clientId,
-    client_secret: clientSecret,
-    grant_type: "refresh_token",
-  });
-  const r = await fetch(GOOGLE_TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
-  const data = await r.json();
-  if (!r.ok) {
-    throw new Error("Token-Refresh fehlgeschlagen: " + (data.error_description || data.error || r.status));
-  }
-  const updated = {
-    ...tokens,
-    access_token: data.access_token,
-    expiry: Date.now() + (data.expires_in || 3600) * 1000,
-    // Google usually does NOT return a new refresh_token on refresh → keep old.
-    refresh_token: data.refresh_token || tokens.refresh_token,
-    scope: data.scope || tokens.scope,
-  };
-  await saveTokens(updated);
-  return updated;
-}
-
-// Returns a valid (non-expired) access token, refreshing transparently.
-export async function getValidAccessToken({ forceRefresh = false } = {}) {
-  let tokens = await loadTokens();
-  if (!tokens) throw new Error("NOT_CONNECTED");
-  const needsRefresh = forceRefresh || !tokens.access_token || Date.now() > (tokens.expiry || 0) - 60 * 1000;
-  if (needsRefresh) tokens = await refreshAccessToken(tokens);
-  return { token: tokens.access_token, tokens };
+  const source = createGoogleOAuthTokenSource({ store: oauthStore(), clientId, clientSecret,
+    mailAccessRequired: false });
+  return source.get({ forceRefresh, signal });
 }
 
 export async function revokeToken(token) {

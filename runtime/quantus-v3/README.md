@@ -282,3 +282,33 @@ offene Quellen. Es wird weder `recordSourceCheck(ok)` aufgerufen noch eine Intak
 Karte oder fachliche Erledigung erzeugt. Produktive Komposition und autorisierter
 OAuth-Zugang sind noch anzuschliessen. Maximal 3 MiB/10000 IDs pro gespeicherter
 Seite; Core-, Lease- und Originalbündelgrenzen bleiben zusätzlich bestehen.
+
+### Google-OAuth-Verbindung ausserhalb Netlify
+
+`createNetlifyGoogleTokenSource` in `google-oauth-token-source.mjs` benötigt:
+
+- `QUANTUS_V4_GOOGLE_NETLIFY_SITE_ID`: explizite UUID der vorhandenen Site.
+- `QUANTUS_V4_GOOGLE_NETLIFY_TOKEN`: privater serverseitiger Netlify-Zugang zum Store.
+- `QUANTUS_V4_GOOGLE_CLIENT_ID` und `QUANTUS_V4_GOOGLE_CLIENT_SECRET`: derselbe
+  Google-OAuth-Client wie bei der vorhandenen Anmeldung.
+
+Der bestehende siteweite Store und Schlüssel sind fest vorgegeben; es gibt keine
+automatische Cloud-Run-Umgebungserkennung oder Ausweichanmeldung. `get({signal})`
+liest frisch und gibt ausschliesslich `{token}` an den Gmail-Leser weiter.
+Die Bindung an das erwartete Mailkonto übernimmt weiterhin der kontogebundene
+Gmail-Leser; die Tokenquelle allein weist noch kein bestimmtes Konto nach.
+
+Erneuerung: maximal 15 Sekunden einschliesslich Speicherzugriff, 64 KiB Google-
+Antwort, keine Redirects, feste Fehlerkennungen. Neue Credentials werden mit
+dem zuvor gelesenen ETag geschrieben und unabhängig bestätigt. Der gepinnte
+Blobs-Client benötigt dafür `set(serialisiertesJSON,{onlyIfMatch})`; sein
+`setJSON`-Pfad reicht die Bedingung nicht weiter. Der Test prüft den tatsächlichen
+HTTP-Header mit der installierten Bibliothek. Late/unknown Writes werden nicht
+als bestätigter Zugang zurückgegeben; der nächste Aufruf liest den echten Stand.
+
+Noch keine produktive Cloud-Worker-Konfiguration oder Kompositionsanbindung.
+Der gemeinsame `gcal-shared`-Helfer nutzt denselben sicheren Refresh, einschliesslich
+`forceRefresh`, jedoch ohne Gmail-Scope-Pflicht für reine Kalender-Anmeldungen.
+Kontoadress-Anreicherung schreibt ebenfalls bedingt und prüft das zugehörige
+Access-Token. Statuslesungen verwenden starke Konsistenz. Nur eine ausdrücklich
+neue OAuth-Anmeldung ersetzt den kompletten Verbindungsdatensatz direkt.

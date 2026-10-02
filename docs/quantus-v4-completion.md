@@ -599,3 +599,39 @@ auf 3 MiB und 10000 IDs begrenzt; darüber bleibt der Abgleich offen. Der Bauste
 meldet ausschliesslich das Ende des Abrufs, keinen fachlichen Quellenabschluss.
 Intake-/Arbeitsbestandseinbindung, Anhangsauswertung, OAuth-/Produktionsanbindung
 und Laufzeitnachweise im 90-Sekunden-Worker folgen noch. T28 bleibt produktiv offen.
+
+### Expliziter Google-Zugang für den Cloud-Worker
+
+`google-oauth-token-source` ergänzt eine serverinterne Verbindung zum bestehenden
+siteweiten Netlify-Store `quantus-google-oauth`, Schlüssel `tokens`. Cloud Run
+benötigt dafür ausdrücklich konfigurierte Site-ID, Netlify-Zugang und Google-
+Clientdaten; fehlende Werte führen zu `unavailable`, ohne eine andere Site oder
+ein Dienstkonto als Gmail-Nutzer zu erraten. Die Schnittstelle folgt dem
+[Netlify-Blobs-Zugriff](https://docs.netlify.com/build/data-and-storage/netlify-blobs/)
+und der [Google-Token-Erneuerung](https://developers.google.com/identity/protocols/oauth2/web-server).
+
+Jeder Aufruf liest die aktuelle Verbindung mit starker Konsistenz. Ein abgelaufener
+Zugang wird ausschliesslich am festen Google-OAuth-Endpunkt erneuert, mit begrenzter
+Zeit, Antwortgrösse und Gültigkeitsdauer. Der neue Datensatz darf den alten nur
+unter dessen ETag ersetzen; anschliessend erfolgt ein unabhängiges Rücklesen.
+Neue Anmeldung, Trennung, verlorene Quittung, fehlender Gmail-Leseumfang und
+abweichende Speicherung erzeugen keinen bestätigten Zugang. Aufrufer erhalten nur
+das Access-Token; Refresh-Token und Clientgeheimnisse bleiben im privaten Adapter.
+Fehler enthalten feste Kennungen und keine Provider- oder Speicherantworten.
+
+Ein konkreter Befund der installierten Blobs-Bibliothek wurde berücksichtigt:
+`setJSON` reicht die Schreibbedingung dort nicht korrekt an den Client weiter.
+Der Adapter nutzt deshalb `set` mit serialisiertem JSON und `onlyIfMatch`.
+Ein Test über die echte installierte Bibliothek bestätigt den tatsächlichen
+`If-Match`-Header sowie die Ablehnung einer konkurrierenden Verbindung.
+
+Die Tests verwenden künstliche Zugangsdaten und HTTP-Antworten. Produktive Secrets
+wurden weder gelesen noch konfiguriert; ein tatsächlicher Kontozugriff ist noch
+nicht nachgewiesen. Der Adapter ist noch an die OpenAI-Workerkomposition anzuschliessen.
+Der bisherige Netlify-Refreshpfad in `gcal-shared` verwendet nun denselben
+bedingten Schreibweg und unterstützt weiterhin erzwungenes Erneuern. Bestehende
+Kalender-Anmeldungen benötigen dort keinen zusätzlichen Gmail-Scope. Auch die
+nachträgliche Kontoadresse wird nur bei passendem Access-Token und ETag gespeichert;
+eine gleichzeitig getrennte Verbindung wird nicht dadurch wieder angelegt.
+Ein Test über den echten gemeinsamen Netlify-Helfer und Blobs-Client bestätigt
+diese Kompatibilität und den Konkurrenzschutz mit künstlichen HTTP-Antworten.

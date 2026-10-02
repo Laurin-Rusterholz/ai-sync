@@ -12,7 +12,7 @@
 import {
   CORS, json, requireAuth, getOAuthConfig, getRedirectUri, getAppOrigin,
   GOOGLE_AUTH_URL, SCOPE, saveState, consumeState, exchangeCode,
-  loadTokens, saveTokens, clearTokens, getValidAccessToken, revokeToken,
+  loadTokens, saveTokens, clearTokens, getValidAccessToken, revokeToken, updateTokenEmail,
   CALENDAR_API_BASE,
 } from "../lib/gcal-shared.mjs";
 
@@ -62,12 +62,11 @@ async function ensureEmail(tokens) {
     if (r.ok) {
       const cal = await r.json();
       if (cal && cal.id) {
-        const fresh = await loadTokens();
-        if (fresh) { fresh.email = cal.id; await saveTokens(fresh); return fresh; }
+        await updateTokenEmail({ accessToken: token, email: cal.id });
       }
     }
   } catch (e) { /* ignore – email is cosmetic */ }
-  return tokens;
+  return loadTokens();
 }
 
 export default async (req) => {
@@ -145,6 +144,7 @@ export default async (req) => {
     let tokens = await loadTokens();
     if (!tokens) return json({ connected: false });
     tokens = await ensureEmail(tokens);
+    if (!tokens) return json({ connected: false });
     return json({
       connected: true,
       email: tokens.email || null,
