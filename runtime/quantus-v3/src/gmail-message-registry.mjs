@@ -103,6 +103,39 @@ export function createGmailMessageRegistry({ core, clock, artifacts, tenant, acc
   }
   return Object.freeze({
     sourceKey,
+    // Enumerate complete originals without materializing a mailbox in core or
+    // trusting a caller-provided list of IDs. A cursor is continuation data,
+    // not a coverage proof: the consumer must persist/verify the whole chain.
+    // One original per call keeps this resumable at message boundaries.
+    async readPage({ cursor = null } = {}) {
+      const source = area(await snapshot());
+      if (!source) fail('source_missing');
+      const keys = Object.keys(source.records).sort();
+      const fingerprint = hash({ identity, revision: source.revision,
+        records: keys.map(key => [key, source.records[key]]) });
+      let index = 0;
+      if (cursor !== null) {
+        if (!fields(cursor, 'schema,sourceKey,fingerprint,index,previousKey')
+          || cursor.schema !== 'quantus-gmail-registry-cursor/1' || cursor.sourceKey !== sourceKey
+          || !hashValid(cursor.fingerprint) || !Number.isSafeInteger(cursor.index)
+          || cursor.index < 1 || cursor.index >= keys.length
+          || cursor.previousKey !== keys[cursor.index - 1]) fail('cursor_invalid');
+        if (cursor.fingerprint !== fingerprint) fail('snapshot_changed');
+        index = cursor.index;
+      }
+      const row = keys.length ? source.records[keys[index]] : null;
+      const item = row ? await verifyCurrent(row.messageId, row) : null;
+      // A different message can change while this original is read. Checking
+      // only this row (or count/revision alone) would miss that change.
+      const fresh = area(await snapshot());
+      if (!fresh || JSON.stringify(fresh) !== JSON.stringify(source)) fail('snapshot_changed');
+      const nextIndex = index + (item ? 1 : 0);
+      return { sourceKey, fingerprint, revision: source.revision, count: keys.length,
+        index, item, nextCursor: nextIndex < keys.length ? {
+          schema: 'quantus-gmail-registry-cursor/1', sourceKey, fingerprint,
+          index: nextIndex, previousKey: keys[index],
+        } : null };
+    },
     async read({ messageId }) {
       const row = record(await snapshot(), messageId);
       if (!row) return null;

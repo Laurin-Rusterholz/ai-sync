@@ -635,3 +635,25 @@ nachträgliche Kontoadresse wird nur bei passendem Access-Token und ETag gespeic
 eine gleichzeitig getrennte Verbindung wird nicht dadurch wieder angelegt.
 Ein Test über den echten gemeinsamen Netlify-Helfer und Blobs-Client bestätigt
 diese Kompatibilität und den Konkurrenzschutz mit künstlichen HTTP-Antworten.
+
+### Vollständige Originale aus dem Gmail-Register lesen
+
+`gmail-message-registry.readPage` liefert pro Aufruf genau ein unabhängig
+zurückgelesenes Original samt verbindlicher Registerversion, Hash, Anhangslücken
+und Fortsetzungsposition. Die Reihenfolge entsteht aus dem vollständigen Register,
+nicht aus einer vom Modell ausgewählten ID-Liste. Der Fingerabdruck bindet Konto,
+Quelle, Registerrevision und sämtliche aktuellen Datensätze. Fortsetzungen sind
+auch über neue Instanzen möglich; Änderungen an irgendeinem Registereintrag
+während oder zwischen Seiten lassen den Durchlauf scheitern. Ein fehlendes
+Register gilt nicht als leere, erfolgreich gelesene Quelle.
+
+Die Tests lesen alle 301 Nachrichten über frische Instanzen genau einmal und ohne
+Kernschreibvorgang zurück. Weitere Gegenproben decken vollständigen grossen Inhalt,
+ungelesene Anhänge, fremde und veraltete Fortsetzungen, fehlende Originale,
+Änderungen einer anderen Nachricht ohne Revisionsanstieg und abgelaufene Leases ab.
+Unabhängige Benutzereingaben ausserhalb des Registers bleiben möglich.
+
+Dies ist die serverinterne Lesegrundlage für die nächste Arbeitsbestandseinbindung.
+Eine Fortsetzungsposition ist ausdrücklich kein Vollständigkeitsnachweis für das
+Modell. Der Verbraucher muss die gesamte Seitenkette speichern und prüfen; die
+Verbindung zu Intake, Kontextpaketen, Worker und fachlichem Abschluss bleibt offen.
