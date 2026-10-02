@@ -1,0 +1,124 @@
+# Quantus v4 — verbindliche Fertigstellung
+
+Auftrag vom 02.10.2026: **das vollständige Konzept implementieren**, nicht nur
+Oberfläche und Audit. Referenz: Gesamtkonzept v4 vom 28.09.2026, 36 Seiten.
+Ausgangsstand: main `f4d2b3a0acb72fb99f4596333a74ece92bbd0f5b`, lokal gleicher
+Tree `5ab240104b8bf6854e63406df820165249ab387b`.
+
+## Festgestellter Ausgangspunkt
+
+- Gemeinsamer Fachkern, CAS/Idempotenz, Auth, vier API-Routen, Jobrouter,
+  Laufzustand, Kostenreservierung und Infrastrukturdefinitionen existieren.
+- `runtime/quantus-v3/src/f-composition.mjs` verdrahtet bisher Gmail und Anthropic;
+  `section-work.mjs` erzeugt einen Entwurf, keinen OpenAI-geführten Werkzeugzyklus.
+- `tool-ports.mjs` bietet Scheduler-/Prüfer-Verben, aber noch keinen vollständigen
+  Werkzeugkatalog der Leitungsrolle für Originalobjekte.
+- Desktopänderungen laufen noch über lokale Entitäten und Snapshot-Synchronisation.
+  Die neue UI ist deshalb kein Nachweis eines API-only-Cutovers.
+- Vorhandene Tests und alte Reviewberichte sind Hinweise auf Teilabdeckung,
+  keine Abnahme des aktuellen integrierten Produktionsstands.
+
+## Aktuelle Inventur der Begleitclients
+
+- Tablet `de7d5950d97c22602fdec963669decb1878e9b95`: `public/app.js`
+  `transactionOperation()` schreibt direkt per Firebase-Transaktion auf
+  `appStore/app-data_json`; `public/sync-core.js` wendet die gespeicherten
+  Offline-Operationen an. Queue und Konfliktablage müssen bei der Migration
+  erhalten bleiben. Native BM-/Smarter-Schreibwege sind separate Knoten.
+- Mobile `11def7943ba3c1029be031af8765a37d55b86423`: `js/store.js`
+  `pushData()` sendet den ganzen Bestand per `PUT blob-put`, mit optionalem
+  If-Match, aber ohne Auth-Header. `netlify/functions/blob-put.mjs` in diesem
+  Repo besitzt außerdem einen eigenen Netlify-Blob-Schreiber mit optionaler,
+  nicht atomarer Vorabprüfung. Welches Ziel produktiv konfiguriert ist, ist
+  damit noch nicht belegt. Kein Abschalten vor Ersatz und Queue-Abnahme.
+- Weitere konkrete Leitungslücke: `ROLE_POLICY.lead_agent` gestattet aktuell
+  keinen `run_status`-Lesezugriff. Die bindungsgeprüfte Statusfreigabe und ihre
+  negativen Gegenproben gehören zum nächsten Gateway-Paket; kein Ausweichen
+  auf ein unbeschränktes Scheduler-Credential für Modellwünsche.
+
+## Arbeitspakete und Reihenfolge
+
+1. Inventur aller Writer und drei Client-Repositories aktualisieren; Backup und
+   Restore mit unbekannten Nebenwirkungen im Testprojekt prüfen.
+2. Fachkern/Command-Verträge gegen alle v4-Pflichten prüfen und Lücken schließen.
+3. OpenAI-Leitungszyklus: vier Werkzeuge, vollständiger paginierter Kontext,
+   persistierte Modellresultate, stabile Kommandos, Readback, Checkpoint und
+   Wiederaufnahme; atomare Kostenreservierung und nachgewiesene Abrechnung.
+4. Desktop, Tablet, Mobile und übrige Mutatoren migrieren; Offline-Queue und
+   alte Änderungen erhalten; API-only erst nach Writer-Abnahme aktivieren.
+5. Gmail/Calendar/Drive, Message-ID-Register und Gap-Recovery, Dokumentbelege,
+   jobgebundene Claude-/Gemini-Rückläufe, MCP und verständliche Live-Ansicht.
+6. Scheduler/Tasks/Run, unabhängiges Monitoring, Warnzustellung, Archivierung,
+   Deployment/Rollback und reale Ende-zu-Ende-Prüfungen T01–T40.
+7. Tatsächlicher 14-Tage-Probebetrieb: Woche 1 Schatten/Entwürfe; Woche 2 nur
+   dokumentierte risikoarme Rechte. Zeit und fehlende Belege nicht simulieren.
+
+## In dieser Phase implementiert
+
+`openai-transport.mjs`: Responses-Transport mit explizit konfiguriertem Modell
+und Preisen; unveränderlich vorbereitete Anfrage für die Kostenreservierung;
+nur die vier Quantus-Werkzeuge; strikte lokale Validierung von Modellaufrufen;
+keine Werkzeugausführung im Transport; Frist über Header und Body, Bytegrenze,
+keine automatischen Wiederholungen, keine Provider-Fehlertexte in Rückgaben.
+Bestätigter Verbrauch wird auch bei unbrauchbarem Modellresultat abgerechnet;
+unklare Ergebnisse behalten den Status `unknown`. Statelose Fortsetzung erhält
+Reasoning-Items. Noch nicht mit dem produktiven Leitungszyklus verdrahtet.
+
+Referenz: https://developers.openai.com/api/docs/guides/function-calling
+Prüfung: `npm run test:v4-leadership` (Netz durch kontrollierte Responses ersetzt;
+keine kostenpflichtigen Provideraufrufe und kein Nachweis produktiver Freigabe).
+
+## Abnahmeregister
+
+Jede Zeile braucht konkrete Prüfung, geprüfte Revision, tatsächliches Ergebnis
+und verlinkten Nachweis. Ein fehlender Nachweis bleibt offen. Vorhandene ähnliche
+Tests sind kein automatisches Bestehen. Das Register ist kein Erfolgszähler.
+
+| ID | Verbindliches Ergebnis | Integrierter Nachweis |
+|---|---|---|
+| T01 | Ohne Auth-Konfiguration keine geschützte Lese-/Schreiboperation; 503 statt offener Endpunkt. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T02 | Falscher Principal, fremder Mandant oder fremder Lead: 401/403, keine Nebenwirkung. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T03 | Unbekanntes Verb, Feld, Blob-Key, Pfad oder zu grosse Nutzlast wird verworfen. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T04 | Gleicher Idempotenzschlüssel und Body erzeugt genau eine fachliche Mutation. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T05 | Gleicher Schlüssel mit anderem Body: 409; nach verlorener HTTP-Antwort kein Duplikat. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T06 | Innerer CAS-Retry darf keinen externen Call wiederholen; acht Konflikte enden sichtbar. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T07 | Fehlender oder unlesbarer Kern wird nicht als leere App überschrieben. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T08 | Desktop, Tablet, Mobile und Worker ändern parallel; Antworten, Runs und fremde Felder bleiben erhalten. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T09 | Verschachteltes assistantRuns überlebt explizites Merge, Reload und Gerätewechsel. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T10 | Alter Offline-Client kann weder geschützte Felder noch Löschmarkierungen überschreiben. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T11 | Benutzerantwort während Agentenupdate bleibt erhalten; veralteter Agentenschritt wird abgewiesen. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T12 | Legacy-Statusmigration ist wiederholbar; unbekannte Zustände werden nicht geraten. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T13 | Vom Agenten ausgelassener Lead oder nicht geladene Listenseite verhindert falsches Grün. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T14 | Wartender Lead ohne vollständigen und belegten Folgeschritt bleibt gelb/rot. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T15 | Drei Verschiebungen ohne fachlichen Fortschritt sperren Grün; neue Texte setzen den Zähler nicht zurück. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T16 | Vom Agenten übergebenes overall=green, finalAt oder eine Finalnote wird abgewiesen. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T17 | Finalisierung, Abschlussrevision und Finalnote sind atomar und idempotent. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T18 | Neue widersprechende Information invalidiert den Abschluss; unveränderte historische Note ist erkennbar. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T19 | Abgelaufene Lease oder alter Fencing-Token sperrt einen verspäteten Worker. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T20 | Doppelte Queue-Auslieferung, Outbox-Neuzustellung und Workerabbruch verlieren keinen Job. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T21 | Fehlender 04:00-Start wird unabhängig erkannt und nachgeholt; Ausfallhistorie bleibt bestehen. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T22 | Europe/Zurich, Sommer-/Winterzeit und nachgeholte Slots erzeugen eindeutige Laufnachweise. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T23 | 23:00 erstellt nicht das morgige Briefing; 04:00 übernimmt offene Referenzen ohne Kopien. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T24 | Zeit-/Kostenlimit speichert Restarbeit; kein grüner Abschluss und keine Endlosschleife. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T25 | Parallele Kostenreservierungen können das genehmigte Limit nicht überziehen. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T26 | Versand-Timeout bleibt outcome_unknown; kein Blind-Resend und kein falsches „gesendet“. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T27 | Widerrufene Freigabe oder geänderter Inhalt stoppt eine wartende Outbox-Aktion. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T28 | Mailcursor-Lücke führt zum Nachabgleich; Message-ID bleibt eindeutig; keine stumme Mailverluste. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T29 | Risikomail wird trotz hoher Modellkonfidenz und trotz Modellmehrheit nicht unberechtigt ausgeführt. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T30 | Manipulierte Mail/PDF/Workerantwort kann weder Policy ändern noch Daten an fremde Ziele exportieren. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T31 | Unlesbare Datei bleibt offen; OCR und Verknüpfungen benötigen prüfbare Belege. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T32 | Claude/Gemini sieht nur den Jobkontext; veralteter Rücklauf kann keinen Lead abschliessen. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T33 | Frage erscheint sofort; Antwort wird einmal konsumiert; kein automatischer Chat-Unterbruch. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T34 | Snooze, Urlaub und Minimalbetrieb verschieben keine harten Fristen und erzeugen kein falsches Grün. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T35 | Archivfehler verhindert Kürzung; offene Jobs und alte Replays bleiben sicher behandelt. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T36 | Start-/Finalnoten und Cache-Status überleben Reload; offline wird keine aktuelle Prüfung behauptet. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T37 | Appübergreifende Handler funktionieren tatsächlich; benötigte Desktop-window-Exporte sind vorhanden. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T38 | Bestehende Notes-, Lead-, Task-, Link-, Attachment- und Sync-Tests bleiben grün. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T39 | Monitor erkennt fehlenden eigenen Heartbeat und gestörte Benachrichtigungszustellung. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+| T40 | Backup/Restore im Testprojekt reaktiviert keine bereits versandte externe Aktion. | Offen: gegen aktuellen integrierten Stand auszuführen. |
+
+## Betriebsfreigabe
+
+Keine neuen bezahlten Aufrufe ohne vorhandene genehmigte Kostenkonfiguration.
+Keine zusätzliche parallele Leitung. Vorhandene Hauptläufe werden erst beim
+geprüften Cutover ersetzt. Schutzregeln niemals zum Bestehen eines Tests lockern.

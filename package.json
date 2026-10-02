@@ -1,11 +1,11 @@
 {
   "name": "ai-sync",
   "version": "1.0.0",
-  "description": "Quantus \u2014 personal management app (Netlify functions backend)",
+  "description": "Quantus — personal management app (Netlify functions backend)",
   "private": true,
   "type": "module",
   "scripts": {
-    "pretest": "npm run test:assistant-cas && npm run test:assistant-idempotency && npm run test:assistant-prompts && npm run test:assistant-restore && npm run test:assistant-client && npm run test:assistant-core && npm run test:assistant-router && npm run test:assistant-runtime && npm run test:assistant-domain && npm run test:v3-cloud",
+    "pretest": "npm run test:assistant-cas && npm run test:assistant-idempotency && npm run test:assistant-prompts && npm run test:assistant-restore && npm run test:assistant-client && npm run test:assistant-core && npm run test:assistant-router && npm run test:assistant-runtime && npm run test:assistant-domain && npm run test:v3-cloud && npm run test:v4-leadership",
     "test:assistant-domain": "node --test tests/quantus-v3-domain-adapter.test.mjs tests/tagesbriefing-v3-kern-c3a.test.mjs",
     "test:assistant-cas": "node --test tests/quantus-v3-cas-safety.test.mjs",
     "test:assistant-idempotency": "node --test tests/quantus-v3-idempotency.test.mjs",
@@ -47,7 +47,8 @@
     "test:navigation": "node tests/quantus-navigation-search.test.mjs && node tests/quantus-app-search-runtime.test.mjs",
     "test:sticky-export": "node tests/sticky-board-export.test.mjs && node tests/sticky-board-export-runtime.test.mjs",
     "test:flowertech-portal": "node tests/flowertech-portal-auth.test.mjs && node tests/flowertech-projekt-cockpit.test.mjs",
-    "test:flowertech-workflow": "node tests/flowertech-workflow-dataflow.test.mjs && node tests/flowertech-offertenanfrage.test.mjs && node tests/flowertech-kundenanfrage.test.mjs && node tests/flowertech-zwei-links.test.mjs && node tests/flowertech-offerte-ohne-projekt.test.mjs && node tests/flowertech-projekt-fragebogen.test.mjs && node tests/flowertech-fragebogen-reset.test.mjs && node tests/flowertech-kundenbereich-prompt.test.mjs && node tests/flowertech-standard-agb.test.mjs && node tests/flowertech-claude-rueckgabe.test.mjs && node tests/flowertech-kundenlink-vorbelegung.test.mjs && node tests/flowertech-vision-upload.test.mjs && node tests/flowertech-bedarf-vorbelegung.test.mjs && node tests/flowertech-kundenlink-alias.test.mjs && node tests/flowertech-kundenlink-kopieren.test.mjs"
+    "test:flowertech-workflow": "node tests/flowertech-workflow-dataflow.test.mjs && node tests/flowertech-offertenanfrage.test.mjs && node tests/flowertech-kundenanfrage.test.mjs && node tests/flowertech-zwei-links.test.mjs && node tests/flowertech-offerte-ohne-projekt.test.mjs && node tests/flowertech-projekt-fragebogen.test.mjs && node tests/flowertech-fragebogen-reset.test.mjs && node tests/flowertech-kundenbereich-prompt.test.mjs && node tests/flowertech-standard-agb.test.mjs && node tests/flowertech-claude-rueckgabe.test.mjs && node tests/flowertech-kundenlink-vorbelegung.test.mjs && node tests/flowertech-vision-upload.test.mjs && node tests/flowertech-bedarf-vorbelegung.test.mjs && node tests/flowertech-kundenlink-alias.test.mjs && node tests/flowertech-kundenlink-kopieren.test.mjs",
+    "test:v4-leadership": "node --test tests/quantus-v4-*.test.mjs"
   },
   "dependencies": {
     "@netlify/blobs": "^10.7.11",
