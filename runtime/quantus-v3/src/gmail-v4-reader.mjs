@@ -207,7 +207,7 @@ export function createGmailV4Reader({ account, getAccessToken, fetchImpl = globa
           const location = { path, partId: typeof part.partId === 'string' ? part.partId : null, mimeType: part.mimeType };
           const filename = part.filename || '';
           const contentDisposition = (part.headers || []).find(h => h.name.toLowerCase() === 'content-disposition')?.value || '';
-          const isAttachment = !!filename || /^attachment(?:;|$)/i.test(contentDisposition);
+          const isAttachment = !!filename || /^attachment\s*(?:;|$)/i.test(contentDisposition.trim());
           if (isAttachment || (!mime.startsWith('multipart/') && !['text/plain', 'text/html'].includes(mime))) {
             attachments.push({ ...location, filename, size: part.body.size ?? null,
               attachmentId: part.body.attachmentId ?? null, status: 'unread' });

@@ -103,7 +103,7 @@ test('unread attachments, inline binary and unsupported text encoding remain exp
   const payload = { mimeType: 'multipart/mixed', body: { size: 0 }, parts: [part('body'),
     part('attachment', { filename: 'invoice.txt' }),
     part('', { mimeType: 'image/png', body: { size: 7, attachmentId: 'binary' } }),
-    part('hidden', { headers: [{ name: 'Content-Disposition', value: 'attachment; filename="letter"' }] }),
+    part('hidden', { headers: [{ name: 'Content-Disposition', value: ' Attachment ; filename="letter" ' }] }),
     part('not decodable', { headers: [{ name: 'Content-Type', value: 'text/plain; charset=unknown-codec' }] }),
   ] };
   const r = reader(() => Response.json(message(payload)));
