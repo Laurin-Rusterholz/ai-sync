@@ -157,6 +157,29 @@ dieser Arbeitsmenge aus allen relevanten Originalobjekten und das Batch-Verfahre
 bei grossem Kontext sind noch zu integrieren. Eine vollständige V4-Abnahme wird
 daraus nicht abgeleitet.
 
+### Inventur aus Originalobjekten
+
+Der bestehende `run.ensure`-Pfad ergänzt beim neuen Slot die Arbeitsverweise nun
+in derselben Revision aus den Originalsammlungen. Erfasst werden offene oder
+nicht verlässlich abgeschlossene Leads und Aufgaben (auch spätere Nutzeraufgaben
+als Kontext), aktive Projekte, offene Eingänge/Dokumente, Fragen mit unbearbeiteten
+Antworten, diese Antworten selbst, nicht abgeschlossene Spezialistenarbeit,
+registrierte Belege und nicht archivierte ChatGPT Notes. Es entstehen nur Verweise;
+Originalzustände, Nutzerantworten, NoteFlow und Habits bleiben unverändert.
+
+`syncRunInventory` kann spätere Eingänge nachtragen; dieser Kernbefehl gehört
+nur dem Backend und akzeptiert keine vom Modell ausgewählte Teilmenge. Wiederholung
+ist ein No-op; historische Verweise werden nicht gelöscht. Der Kontext liefert
+alle diese Typen mit Originaltext, Fristen, Zuständigkeiten, Verbindungen und enger
+Detailprojektion. Ein fehlendes Original wird sichtbar als `sourceMissing` markiert.
+Beleglisten werden nicht mehr still nach 50 Kennungen abgeschnitten. Spezialisten
+sehen weiterhin nur Quelle und explizite Kontextverweise ihres eigenen Auftrags.
+
+52 gezielte Inventur-/Fachkern-/Domänenprüfungen und 448 erweiterte Prüfungen
+bestanden. Die Aktualisierung bei ereignisgesteuerten Fortsetzungen, Quellenadapter,
+Modell-Batching und produktive Worker-Zusammenstellung bleiben zu verdrahten.
+Inventur ist keine Fortschrittsbestätigung oder Erlaubnis für externe Aktionen.
+
 ## Abnahmeregister
 
 Jede Zeile braucht konkrete Prüfung, geprüfte Revision, tatsächliches Ergebnis

@@ -41,6 +41,7 @@ const HANDLER = Object.freeze({
   recordSlotReceipt: B.recordSlotReceipt,
   recordSourceCheck: B.recordSourceCheck,
   addItemRef: B.addItemRef,
+  syncRunInventory: B.syncRunInventory,
   carryOverRefs: B.carryOverRefs,
   observeSource: B.observeSource,
   setWaiting: B.setWaiting,

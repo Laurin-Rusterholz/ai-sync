@@ -59,9 +59,10 @@ export function quelleFinden(data, sourceType, sourceId) {
     return istKarte(store) && istKarte(store[sourceId]) ? store[sourceId] : null;
   }
   if (sourceType === "project") return istKarte(data.entities.projects) && istKarte(data.entities.projects[sourceId]) ? data.entities.projects[sourceId] : null;
+  if (sourceType === "chatgptNote") return istKarte(data.entities.chatgptNotes[sourceId]) ? data.entities.chatgptNotes[sourceId] : null;
   const karte = {
     intake: data.automation.intakeById, question: data.automation.questionsById,
-    document: data.automation.documentsById, job: data.automation.jobsById, evidence: data.automation.evidenceById,
+    document: data.automation.documentsById, job: data.automation.jobsById, evidence: data.automation.evidenceById, answer: data.automation.answersById,
   }[sourceType];
   return istKarte(karte) && istKarte(karte[sourceId]) ? karte[sourceId] : null;
 }
@@ -275,6 +276,58 @@ export function addItemRef(input, { date, sourceType, sourceId, carriedFrom }, c
   runAnfassen(run, ctx.now);
   bump(data, ctx.now);
   return { ok: true, data, created: true, ref };
+}
+
+/** Deterministic discovery from authoritative originals, never from an agent's
+ * selected subset. References confer no completion, progress or send rights.
+ * Unknown states stay visible; broken records stop the inventory explicitly.
+ */
+export function collectRunInventory(input) {
+  const data = requireCore(input);
+  const refs = [];
+  function visit(sourceType, store, include) {
+    for (const [sourceId, entry] of Object.entries(store)) {
+      if (!istKarte(entry)) throw Object.assign(new Error('Invalid inventory source'), { code: 'CORE_INVENTORY_CORRUPT', status: 503 });
+      try { sourceKey(sourceType, sourceId); } catch { throw Object.assign(new Error('Invalid inventory identifier'), { code: 'CORE_INVENTORY_CORRUPT', status: 503 }); }
+      if (include(entry, sourceId)) refs.push({ sourceType, sourceId });
+    }
+  }
+  for (const [type, q] of Object.entries(QUELLEN)) visit(type, data.entities[q.store], (e, id) => {
+    const z = effektiverZustand(type, e);
+    return z.unmigrated || z.unmapped || z.versionInvalid || z.drift || !ABGESCHLOSSENE_ZUSTAENDE.includes(z.state)
+      || !abschlussBelegPruefen(data, type, id, e).ok;
+  });
+  visit('project', data.entities.projects, e => !['done', 'archived'].includes(e.status));
+  visit('intake', data.automation.intakeById, e => !['done', 'cancelled'].includes(e.status));
+  visit('document', data.automation.documentsById, e => !['done', 'cancelled'].includes(e.status));
+  const unansweredConsumption = new Set(Object.values(data.automation.answersById).filter(a => a && !a.consumedAt).map(a => a.questionId));
+  visit('question', data.automation.questionsById, (e, id) => !['answered', 'withdrawn'].includes(e.status) || unansweredConsumption.has(id));
+  visit('answer', data.automation.answersById, e => !e.consumedAt);
+  visit('job', data.automation.jobsById, e => e.state !== 'cancelled' && !(e.state === 'returned' && e.review?.verdict === 'accepted'
+    && e.result && e.review.resultHash === e.result.hash && e.review.resultRef === e.result.ref));
+  visit('evidence', data.automation.evidenceById, () => true);
+  visit('chatgptNote', data.entities.chatgptNotes, e => e.archived !== true && !e.archivedAt);
+  return refs.sort((a, b) => {
+    const x = sourceKey(a.sourceType, a.sourceId), y = sourceKey(b.sourceType, b.sourceId);
+    return x < y ? -1 : x > y ? 1 : 0;
+  });
+}
+
+function syncInventoryRefs(data, run, now) {
+  let added = 0;
+  for (const ref of collectRunInventory(data)) if (refHinzufuegen(run, ref, now)) added++;
+  return added;
+}
+
+export function syncRunInventory(input, { date }, ctx) {
+  ctxPruefen(ctx);
+  const data = klon(requireCore(input));
+  const run = runVon(data, date);
+  if (!run) return fehler('RUN_MISSING', date);
+  if (run.phase === 'final') return fehler('RUN_FINAL', date);
+  const added = syncInventoryRefs(data, run, ctx.now);
+  if (added) { runAnfassen(run, ctx.now); bump(data, ctx.now); }
+  return { ok: true, data, added };
 }
 
 /* Carry-over: offene Elemente des Vortages als VERWEISE in den neuen Lauf.
@@ -1126,9 +1179,12 @@ export function ensureRunSlot(input, { date, slot, receiptId, note }, ctx) {
   const key = slotKey(ctx.policy.tenant, date, slot, ctx.policy.version);
   run.slotReceipts[slot] = { receiptId, slotKey: key, at: isoAus(ctx.now), note: note ? String(note).slice(0, 500) : null };
   if (run.phase === "created") run.phase = "active";
+  // Same snapshot and revision as the slot receipt. A fresh slot cannot start
+  // with an agent-selected or empty work list while original work exists.
+  const inventoryAdded = syncInventoryRefs(data, run, ctx.now);
   runAnfassen(run, ctx.now);
   bump(data, ctx.now);
-  return { ok: true, data, run, created, receipt: run.slotReceipts[slot], receiptCreated: true };
+  return { ok: true, data, run, created, receipt: run.slotReceipts[slot], receiptCreated: true, inventoryAdded };
 }
 
 export { KARTEN_ZUSTAENDE };

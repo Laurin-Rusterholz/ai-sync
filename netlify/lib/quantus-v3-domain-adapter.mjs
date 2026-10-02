@@ -350,18 +350,68 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
     closure: POLICY.closure, featureFlags: POLICY.featureFlags, requiredSources: POLICY.requiredSources, noExternalSources: POLICY.noExternalSources });
   function laufKontextEintraege(data, run, jobId, filter) {
     const out = [];
+    const pick = (object, fields) => Object.fromEntries(fields.filter(k => object && Object.hasOwn(object, k)
+      && (object[k] === null || ['string', 'number', 'boolean'].includes(typeof object[k]))).map(k => [k, object[k]]));
     for (const ref of Array.isArray(run.itemRefs) ? run.itemRefs : []) {
-      if (!istKarte(ref) || !B.QUELLEN[ref.sourceType]) continue;
+      if (!istKarte(ref) || !B.SOURCE_TYPES.includes(ref.sourceType)) throw fail('core_invalid', 'context_reference_invalid', 503);
       if (filter && !filter.has(ref.sourceType + ":" + ref.sourceId)) continue;
       const e = B.quelleFinden(data, ref.sourceType, ref.sourceId);
-      if (!e) continue;
-      const z = B.effektiverZustand(ref.sourceType, e);
-      const belege = Object.values(data.automation.evidenceById).filter((ev) => istKarte(ev) && ev.sourceType === ref.sourceType && ev.sourceId === ref.sourceId).map((ev) => ev.id).sort();
-      out.push(basis("run_context", "ctx_" + ref.sourceType + "_" + ref.sourceId, {
-        runId: run.id, jobId, sourceType: ref.sourceType, sourceId: ref.sourceId,
-        title: ref.sourceType === "chatgptTask" ? String(e.text || "") : String(e.title || ""),
-        text: ref.sourceType === "chatgptLead" ? String(e.rawInput || "") : "",
-        entityVersion: z.unmigrated || z.versionInvalid ? null : z.version, updatedAt: e.updatedAt || null, evidenceRefs: belege,
+      const identity = { runId: run.id, jobId, sourceType: ref.sourceType, sourceId: ref.sourceId };
+      if (!e) {
+        // Keep the historical reference visible without recreating its source
+        // or pretending that an absent original was read successfully.
+        out.push(basis('run_context', 'ctx_' + ref.sourceType + '_' + ref.sourceId, { ...identity,
+          sourceMissing: true, state: 'missing', title: '', text: '', entityVersion: null, evidenceRefs: [] }));
+        continue;
+      }
+      const z = B.QUELLEN[ref.sourceType] ? B.effektiverZustand(ref.sourceType, e) : null;
+      const roles = z ? B.rollenFuer(ref.sourceType, e) : null;
+      const waiting = data.automation.waitingById[ref.sourceType + ':' + ref.sourceId];
+      const belege = Object.values(data.automation.evidenceById).filter(ev => istKarte(ev) && ev.sourceType === ref.sourceType && ev.sourceId === ref.sourceId).map(ev => ev.id).sort();
+      let text = '', details = {};
+      switch (ref.sourceType) {
+        case 'chatgptLead': text = String(e.rawInput || ''); details = pick(e, ['interpretation', 'research', 'plan', 'execution', 'result', 'assignmentReason']); break;
+        case 'chatgptTask': text = String(e.text || ''); details = pick(e, ['notes', 'anchorKind', 'anchorId']); break;
+        case 'task': text = String(e.notes || ''); details = pick(e, ['dueDate']); break;
+        case 'chatgptNote': text = String(e.instruction || e.content || ''); details = pick(e, ['archived', 'archivedAt']); break;
+        case 'project':
+          text = String(e.description || '');
+          if (e.deadlines !== undefined && !Array.isArray(e.deadlines)) throw fail('core_invalid', 'project_deadlines_invalid', 503);
+          details.deadlines = (e.deadlines || []).map(d => {
+            if (!istKarte(d)) throw fail('core_invalid', 'project_deadline_invalid', 503);
+            return pick(d, ['id', 'title', 'date', 'done']);
+          });
+          break;
+        case 'intake': text = String(e.text || ''); details = pick(e, ['channel', 'receivedAt', 'sourceType', 'sourceId']); break;
+        case 'question': text = String(e.text || ''); details = pick(e, ['sourceType', 'sourceId', 'answerId', 'askedAt']);
+          if (Array.isArray(e.options) && e.options.every(x => typeof x === 'string')) details.options = e.options; break;
+        case 'answer': text = String(e.text || ''); details = pick(e, ['questionId', 'answeredAt', 'consumedAt']); break;
+        case 'document': details = { ...pick(e, ['name', 'uploadedAt', 'handledAt']), parse: pick(e.parse, ['outcome', 'textRef', 'extractHash']) }; break;
+        case 'job': text = String(e.purpose || ''); details = { ...pick(e, ['sourceType', 'sourceId', 'executor', 'inputVersion', 'expiresAt']),
+          result: pick(e.result, ['ref', 'hash', 'summary']), review: pick(e.review, ['verdict', 'resultRef', 'resultHash']) }; break;
+        case 'evidence': details = pick(e, ['kind', 'ref', 'sourceType', 'sourceId', 'observedAt', 'fingerprint']); break;
+      }
+      details.anchors = pick(e, ['organizationId', 'personId', 'projectId', 'anchorKind', 'anchorId']);
+      for (const name of ['linkedOrganizations', 'linkedPersons', 'linkedPeople', 'linkedProjects', 'linkedTasks', 'linkedChatgptLeads', 'linkedNotes', 'linkedGoals']) {
+        if (e[name] == null) continue;
+        if (!Array.isArray(e[name]) || e[name].some(id => typeof id !== 'string')) throw fail('core_invalid', 'context_links_invalid', 503);
+        details[name] = [...e[name]];
+      }
+      if (waiting) details.waiting = pick(waiting, ['counterparty', 'nextAction', 'followUpAt']);
+      if (z) details.stateValidation = { unmigrated: Boolean(z.unmigrated), unmapped: Boolean(z.unmapped),
+        versionInvalid: Boolean(z.versionInvalid), legacyDrift: Boolean(z.drift),
+        closureVerified: B.ABGESCHLOSSENE_ZUSTAENDE.includes(z.state) ? B.abschlussBelegPruefen(data, ref.sourceType, ref.sourceId, e).ok : null };
+      out.push(basis('run_context', 'ctx_' + ref.sourceType + '_' + ref.sourceId, {
+        ...identity, sourceMissing: false,
+        title: String(e.title || e.name || (ref.sourceType === 'chatgptTask' ? e.text || '' : '')),
+        text, contextDetails: JSON.stringify(details),
+        state: z ? (z.unmigrated ? 'unmigrated' : z.unmapped ? 'unmapped' : z.state)
+          : ref.sourceType === 'answer' ? (e.consumedAt ? 'consumed' : 'unconsumed')
+          : ref.sourceType === 'chatgptNote' ? (e.archived === true || e.archivedAt ? 'archived' : 'active') : String(e.status || e.state || 'recorded'),
+        accountable: roles?.accountable || null, executor: roles?.executor || null,
+        dueAt: typeof e.dueDate === 'string' ? e.dueDate : null, followUpAt: waiting?.followUpAt || null,
+        entityVersion: z ? (z.unmigrated || z.versionInvalid ? null : z.version) : kartenVersion(e),
+        updatedAt: e.updatedAt || e.askedAt || e.answeredAt || e.registeredAt || null, evidenceRefs: belege,
       }));
     }
     return out.sort(nachId);

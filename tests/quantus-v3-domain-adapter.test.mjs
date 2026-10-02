@@ -251,6 +251,10 @@ test("C3a-03 Spezialist liest NUR seinen konkret gebundenen aktiven Auftrag — 
   const eigener = await lese(d, { query: "run.context", scopeId: RUN_ID, jobId: JOB, token: claude });
   assert.equal(eigener.status, 200, JSON.stringify(eigener.body));
   assert.deepEqual(eigener.body.items.map((x) => x.id), ["ctx_chatgptLead_l1", "ctx_chatgptTask_c1"], "nur Quelle und contextRefs SEINES Auftrags");
+  const completeInventory = bCmd(BASIS, 'syncRunInventory', { date: DATE }, JETZT, { kind: 'system', id: 'inventory-backend' });
+  const stillScoped = await lese(deps({ env, store: FC.makeStore({ snapshot: completeInventory }) }), { query: 'run.context', scopeId: RUN_ID, jobId: JOB, token: claude });
+  assert.equal(stillScoped.status, 200, JSON.stringify(stillScoped.body));
+  assert.deepEqual(stillScoped.body.items.map(x => x.id), ['ctx_chatgptLead_l1', 'ctx_chatgptTask_c1'], 'a full run inventory must not widen specialist access');
   assert.equal((await lese(d, { query: "lead.context", scopeId: "l1", jobId: JOB, token: claude })).status, 403, "kein allgemeiner Leadzugriff");
   assert.equal((await lese(d, { query: "run.context", scopeId: RUN_ID, token: claude })).body.reason, "job_mismatch", "ohne den eigenen Auftrag als jobId: C1 lehnt ab");
   const abgelaufen = structuredClone(BASIS); for (const j of Object.values(abgelaufen.automation.jobsById)) j.expiresAt = new Date(JETZT - 1).toISOString();

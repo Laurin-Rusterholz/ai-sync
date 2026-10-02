@@ -28,7 +28,7 @@ export const VISIBLE_FIELDS = Object.freeze({
   run_status: Object.freeze(["id", "runId", "state", "stage", "entityVersion", "updatedAt", "openQuestions", "blocked",
     "coverage", "operations", "overall", "evaluationCached", "evaluatedAt", "validUntil", "evaluatedRevision", "policyVersion",
     "evaluationReasons", "evaluationReasonCount", "evaluationReasonGroupCount", "evaluationReasonsComplete"]),
-  run_context: Object.freeze(["id", "runId", "sourceType", "sourceId", "kind", "title", "text", "entityVersion", "updatedAt", "evidenceRefs"]),
+  run_context: Object.freeze(["id", "runId", "sourceType", "sourceId", "kind", "title", "text", "contextDetails", "state", "sourceMissing", "accountable", "executor", "dueAt", "followUpAt", "entityVersion", "updatedAt", "evidenceRefs"]),
   lead: Object.freeze(["id", "title", "state", "entityVersion", "updatedAt", "waitUntil", "openQuestionId"]),
   note: Object.freeze(["id", "runId", "leadId", "text", "entityVersion", "createdAt", "author"]),
   policy: Object.freeze(["id", "policyVersion", "mode", "entityVersion", "updatedAt", "timezone", "limits", "closure", "featureFlags", "requiredSources", "noExternalSources"]),
@@ -94,6 +94,13 @@ export function projectItem(category, item) {
     if (!Object.prototype.hasOwnProperty.call(item, feld)) continue;
     const wert = item[feld];
     if (wert === undefined) continue;
+    if (category === 'run_context' && feld === 'evidenceRefs') {
+      // Never silently truncate the proof identifiers while claiming a full
+      // context page. Oversized/invalid sets make the page explicitly unusable.
+      if (!Array.isArray(wert) || wert.length > 1000 || wert.some(x => typeof x !== 'string')) return null;
+      out[feld] = [...wert];
+      continue;
+    }
     if (category === 'policy' && feld === 'requiredSources') {
       if (!Array.isArray(wert) || wert.length > 1000 || wert.some(s => !s || typeof s.id !== 'string'
         || !/^[A-Za-z0-9_.:-]{1,64}$/.test(s.id) || typeof s.kind !== 'string' || !s.kind || s.kind.length > 128)) return null;
