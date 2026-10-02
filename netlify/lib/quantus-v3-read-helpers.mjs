@@ -28,7 +28,7 @@ export const VISIBLE_FIELDS = Object.freeze({
   run_status: Object.freeze(["id", "runId", "state", "stage", "entityVersion", "updatedAt", "openQuestions", "blocked",
     "coverage", "operations", "overall", "evaluationCached", "evaluatedAt", "validUntil", "evaluatedRevision", "policyVersion",
     "evaluationReasons", "evaluationReasonCount", "evaluationReasonGroupCount", "evaluationReasonsComplete"]),
-  run_context: Object.freeze(["id", "runId", "sourceType", "sourceId", "kind", "title", "text", "contextDetails", "state", "sourceMissing", "accountable", "executor", "dueAt", "followUpAt", "entityVersion", "updatedAt", "evidenceRefs", "originalKind", "originalId", "fingerprint"]),
+  run_context: Object.freeze(["id", "runId", "sourceType", "sourceId", "kind", "title", "text", "contextDetails", "state", "sourceMissing", "accountable", "executor", "dueAt", "followUpAt", "entityVersion", "updatedAt", "evidenceRefs", "originalKind", "originalId", "fingerprint", "contextFragment"]),
   lead: Object.freeze(["id", "title", "state", "entityVersion", "updatedAt", "waitUntil", "openQuestionId"]),
   note: Object.freeze(["id", "runId", "leadId", "text", "entityVersion", "createdAt", "author"]),
   policy: Object.freeze(["id", "policyVersion", "mode", "entityVersion", "updatedAt", "timezone", "limits", "closure", "featureFlags", "requiredSources", "noExternalSources"]),
@@ -96,6 +96,13 @@ export function projectItem(category, item) {
     if (!Object.prototype.hasOwnProperty.call(item, feld)) continue;
     const wert = item[feld];
     if (wert === undefined) continue;
+    if (category === 'run_context' && feld === 'contextFragment') {
+      if (!wert || Object.keys(wert).sort().join(',') !== 'count,hash,index,originalId,text'
+        || typeof wert.originalId !== 'string' || !wert.originalId || !/^[a-f0-9]{64}$/.test(wert.hash ?? '')
+        || !Number.isSafeInteger(wert.index) || wert.index < 0 || !Number.isSafeInteger(wert.count) || wert.count <= wert.index
+        || typeof wert.text !== 'string' || wert.text.length > 12000) return null;
+      out[feld] = { ...wert }; continue;
+    }
     if (category === 'run_context' && feld === 'evidenceRefs') {
       // Never silently truncate the proof identifiers while claiming a full
       // context page. Oversized/invalid sets make the page explicitly unusable.
@@ -169,7 +176,7 @@ function projectEvaluationReasons(reasons) {
  * Id mehr hat, ist unbrauchbar — dann gilt die Seite als abgebrochen
  * (`describePage` macht daraus `complete: false`).
  */
-export function projectPage(query, items) {
+export function projectPage(query, items, secretScanOptions) {
   const named = Object.prototype.hasOwnProperty.call(NAMED_QUERIES, query) ? NAMED_QUERIES[query] : null;
   if (!named) return authError("forbidden", "query_not_allowed");
   if (!Array.isArray(items)) return authError("invalid_request", "items_not_a_list");
@@ -184,7 +191,7 @@ export function projectPage(query, items) {
   // Standardtiefe, nicht eine knappe: seit der zweiten Review ist eine
   // abgebrochene Suche eine ABSAGE — ein zu kleines Budget würde also
   // gültige Seiten sperren statt Geheimnisse zu finden.
-  const geheim = assertNoProviderSecrets(out);
+  const geheim = assertNoProviderSecrets(out, secretScanOptions);
   if (!geheim.ok) return authError("forbidden", "secret_in_read_result");
   return authOk({ items: out, usable: true });
 }

@@ -149,3 +149,32 @@ Konfiguration/Probebetrieb. Die alte Gmail-F-Komposition bleibt als separat
 getestetes Modul erhalten, ist aber kein Fallback des v4-Servers. Ein
 `model_complete` bestätigt ausschliesslich das Ende des Modellzyklus; der
 Worker benötigt weiterhin den unabhängigen serverseitigen Abschlussnachweis.
+
+### Grosse Arbeitsbestände
+
+Die produktive Komposition liest `run.workset` als zusammenhängenden, vollständig
+autorisierten Schnappschuss. C2 begrenzt diese Seiten auf 384 KiB Nutzinhalt;
+einzelne grosse Originale werden nach vollständiger Feldprojektion und
+Geheimnisprüfung verlustfrei fragmentiert. Jeder Teil trägt die bisherige
+Mandanten-/Auftragsbindung und bleibt an einen signierten Revisionscursor
+gebunden. Der Worker setzt alle Teile anhand von Identität, Reihenfolge und
+SHA-256 wieder zusammen, bevor ein Schnappschuss als vollständig gilt.
+
+Bestände über 128 KiB werden anschliessend in private, unveränderliche
+Kontextpakete mit Manifest geschrieben und zurückgelesen. Modell-Fortsetzungen
+verwenden `q4packet`-Cursor mit generations- und hashgebundenen Referenzen.
+Jede Fortsetzung wird erneut durch die aktuelle Quantus-API autorisiert und
+durch die Lease geschützt. Eigene Journalrevisionen entwerten diese Pakete
+nicht; eine rückwärts gelaufene Datenrevision, fremder Lauf, fehlendes Original
+im Speicher oder widerrufene Berechtigung sperrt die Fortsetzung.
+
+Die Abschlussprüfung verlangt alle Pakete derselben Manifestgeneration in
+Reihenfolge. Ein Schreibvorgang währenddessen verlangt einen neuen Schnappschuss.
+Eine unterbrochene Kette erhält den nächsten konkreten Cursor; ein finaler Teil
+allein zählt nicht als vollständige Lesung. Anschliessend vergleicht der Backend-
+Prüfer den Inhalt mit einem unabhängig neu gelesenen Gesamtbestand.
+
+Der Schnappschuss bleibt auf 16 MiB bzw. 2000 API-Seiten begrenzt. Das bestehende
+30-Aufrufe-Limit und 16-MiB-Journallese-Limit gelten weiterhin; sehr lange
+Bearbeitungen benötigen noch einen weiteren dauerhaften Batch-/Abschnittswechsel.
+Diese Grenzen erzeugen offene Arbeit und keinen erfolgreichen Abschluss.

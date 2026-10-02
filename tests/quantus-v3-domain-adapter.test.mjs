@@ -35,6 +35,7 @@ import * as A from "../netlify/lib/quantus-v3-auth.mjs";
 import * as R from "../netlify/lib/quantus-v3-runtime.mjs";
 import { createLeadershipGateway } from "../runtime/quantus-v3/src/leadership-gateway.mjs";
 import { createC2HttpTransport } from "../runtime/quantus-v3/src/c2-transport.mjs";
+import { assembleContextItems } from '../netlify/lib/quantus-v4-context-fragments.mjs';
 import * as IDEM from "../netlify/lib/quantus-v3-idempotency.mjs";
 import { COMMAND_VERB_NAMES } from "../netlify/lib/quantus-v3-command-envelope.mjs";
 import { attSegEncode } from "../netlify/lib/blob-key-policy.mjs";
@@ -706,4 +707,34 @@ test('run.workset includes new unregistered work immediately without changing st
   assert.deepEqual((await d._store.readSnapshot()).dailyBriefing.assistantRuns[DATE].itemRefs, refs);
   const specialist = await jobToken(d._env, { role: 'specialist_claude', principalId: 'specialist', jobId: JOB, audience: 'quantus-context' });
   assert.equal((await lese(d, { query: 'run.workset', scopeId: RUN_ID, jobId: JOB, token: specialist })).status, 403);
+});
+
+test('real C2 delivers an oversized original across byte-bounded signed pages without exposing hidden fields', async () => {
+  const data = structuredClone(BASIS), text = 'Original 🧩\\\"\n'.repeat(100000);
+  data.entities.tasks.large = { id: 'large', title: 'Large original', status: 'todo', notes: text, privateDebug: 'HIDDEN-INTERNAL-FIELD' };
+  const d = deps({ store: FC.makeStore({ snapshot: data }) });
+  const token = await jobToken(d._env, { role: 'lead_agent', principalId: 'leader', assignedJobIds: [RUN_ID], audience: 'quantus-context' });
+  const fragments = []; let cursor = null, pages = 0;
+  do {
+    const r = await lese(d, { query: 'run.workset', scopeId: RUN_ID, jobId: RUN_ID, token, pageSize: 50, cursor });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(Buffer.byteLength(JSON.stringify(r.body)) < 512 * 1024);
+    assert.ok(!JSON.stringify(r.body).includes('HIDDEN-INTERNAL-FIELD'));
+    fragments.push(...r.body.items); cursor = r.body.cursor; pages++;
+    assert.ok(pages < 100);
+  } while (cursor);
+  const original = assembleContextItems(fragments).find(i => i.sourceId === 'large');
+  assert.ok(pages > 1); assert.equal(original.text, text);
+  assert.equal(original.tenant, undefined); assert.equal(original.ownerId, undefined); assert.equal(original.jobId, undefined);
+});
+
+test('C2 scans the whole allowed original before fragmentation so split provider secrets cannot escape', async () => {
+  const data = structuredClone(BASIS);
+  data.entities.tasks.large = { id: 'large', title: 'Large original', status: 'todo',
+    notes: 'x'.repeat(1100000) + ' sk-' + 'A'.repeat(25) };
+  const d = deps({ store: FC.makeStore({ snapshot: data }) });
+  const token = await jobToken(d._env, { role: 'lead_agent', principalId: 'leader', assignedJobIds: [RUN_ID], audience: 'quantus-context' });
+  const r = await lese(d, { query: 'run.workset', scopeId: RUN_ID, jobId: RUN_ID, token, pageSize: 50 });
+  assert.equal(r.status, 403); assert.equal(r.body.reason, 'secret_in_read_result');
+  assert.equal(r.body.items, undefined);
 });

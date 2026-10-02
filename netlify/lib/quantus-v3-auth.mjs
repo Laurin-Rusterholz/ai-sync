@@ -1192,8 +1192,13 @@ const SECRET_VALUE_PATTERN =
 
 export const SECRET_SCAN_LIMITS = Object.freeze({ depth: 12, maxNodes: 20_000, maxStringLength: 1_000_000 });
 
-export function assertNoProviderSecrets(value, { depth = SECRET_SCAN_LIMITS.depth, maxNodes = SECRET_SCAN_LIMITS.maxNodes } = {}) {
-  const zustand = { nodes: 0, maxNodes, gesehen: new WeakSet() };
+export function assertNoProviderSecrets(value, { depth = SECRET_SCAN_LIMITS.depth, maxNodes = SECRET_SCAN_LIMITS.maxNodes,
+  maxStringLength = SECRET_SCAN_LIMITS.maxStringLength } = {}) {
+  // Only trusted callers can select a larger bounded original-text scan.
+  // Public routes retain the default; invalid limits never disable scanning.
+  if (!Number.isSafeInteger(maxStringLength) || maxStringLength < 1 || maxStringLength > 16 * 1024 * 1024)
+    return authError('invalid_request', 'provider_secret_scan_limit_invalid');
+  const zustand = { nodes: 0, maxNodes, maxStringLength, gesehen: new WeakSet() };
   const befund = scanForSecrets(value, depth, zustand);
   if (befund === "clean") return authOk({ scanned: zustand.nodes });
   if (["key", "value"].includes(befund)) return authError("invalid_request", `provider_secret_in_context:${befund}`);
@@ -1208,7 +1213,7 @@ function scanForSecrets(value, depth, zustand) {
   if (depth < 0) return "depth";
 
   if (typeof value === "string") {
-    if (value.length > SECRET_SCAN_LIMITS.maxStringLength) return "oversized_string";
+    if (value.length > zustand.maxStringLength) return "oversized_string";
     return SECRET_VALUE_PATTERN.test(value) ? "value" : "clean";
   }
   if (value === null || typeof value !== "object") {

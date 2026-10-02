@@ -7,6 +7,7 @@ import { createQuantusV3DomainAdapter, DOMAIN_PORT_VARS } from '../netlify/lib/q
 import { setup, T, RUN } from './fixtures/quantus-v4-leadership-fixture.mjs';
 import * as F from './quantus-v3-e2-fixtures.mjs';
 import { reserveCost } from '../netlify/lib/quantus-v3-runtime-state.mjs';
+import { projectPage } from '../netlify/lib/quantus-v3-read-helpers.mjs';
 
 const assistantPolicy = { ...POLICY_TEMPLATE, tenant: 'quantus', version: '4.0',
   requiredSources: [{ id: 'quantus-core', kind: 'quantus-core' }], noExternalSources: true };
@@ -17,8 +18,8 @@ const costPolicy = { schema: 'quantus-v3-cost-policy/1', version: 'test-only', c
   dayLimitMicros: 1000000, runLimitMicros: 1000000, callLimitMicros: 100000, unresolvedBlockMicros: 1000000,
   featureFlags: { providers: 'live' }, models: { 'openai:test-model': {
     inputMicrosPerMillionTokens: 1000, outputMicrosPerMillionTokens: 1000, maxCallMicros: 100000 } } };
-async function build({ mode = 'live', providerFailure = false, compaction = false } = {}) {
-  const s = await setup(migrateCore({ entities: { tasks: { task1: { id: 'task1', status: 'todo' } } } }, { now: T }).data);
+async function build({ mode = 'live', providerFailure = false, compaction = false, large = false } = {}) {
+  const s = await setup(migrateCore({ entities: { tasks: { task1: { id: 'task1', status: 'todo', ...(large ? { notes: 'Large original '.repeat(65000) } : {}) } } } }, { now: T }).data);
   const requests = [], tools = [];
   const env = { QUANTUS_V4_OPENAI_API_KEY: 'test-secret-not-real', QUANTUS_V4_OPENAI_MODEL: 'test-model',
     QUANTUS_V4_OPENAI_INPUT_MICROS_PER_MTOK: '1000', QUANTUS_V4_OPENAI_OUTPUT_MICROS_PER_MTOK: '1000',
@@ -47,16 +48,32 @@ async function build({ mode = 'live', providerFailure = false, compaction = fals
         assert.equal(decoded.revision, revision, 'no journal/cost write may occur between context pages');
         afterId = decoded.afterId;
       }
-      const page = domain.listPage(data, { query: params.query, scopeId: params.scopeId, pageSize: 1,
+      const page = domain.listPage(data, { query: params.query, scopeId: params.scopeId, pageSize: large ? Number(params.pageSize) : 1,
         afterId, principal: { role: 'lead_agent', jobId: 'run_2026-10-02' } });
+      const projection = projectPage(params.query, page.items);
+      assert.equal(projection.ok, true); assert.equal(projection.usable, true);
       return { status: 200, body: { ok: true, requestId: `read-${tools.length}`, serverNow: new Date(T).toISOString(),
-        dataRevision: revision, query: params.query, scopeId: params.scopeId, items: page.items, count: page.items.length,
+        dataRevision: revision, query: params.query, scopeId: params.scopeId, items: projection.items, count: projection.items.length,
         hasMore: page.hasMore, complete: !page.hasMore, pageStatus: page.hasMore ? 'more' : 'done',
         cursor: page.hasMore ? JSON.stringify({ revision, afterId: page.nextAfterId }) : null } };
     } },
     providerFetch: async (_, request) => {
       requests.push(JSON.parse(request.body));
       if (providerFailure) throw new Error('test network failed');
+      if (large) {
+        const last = requests.at(-1).input.at(-1);
+        const tool = last.type === 'function_call_output' ? JSON.parse(last.output) : null;
+        const query = !tool ? 'policy.current' : tool.response.body.query === 'policy.current' ? 'run.workset'
+          : tool.response.body.query === 'run.workset' && tool.response.body.hasMore ? 'run.workset'
+          : tool.response.body.query === 'run.workset' ? 'run.status' : null;
+        return Response.json({ id: `response_${requests.length}`, status: 'completed', usage: { input_tokens: 10, output_tokens: 10 },
+          output: [{ type: 'compaction', id: `cmp_${requests.length}`, encrypted_content: 'test-opaque-state' },
+            ...(query ? [{ type: 'function_call', status: 'completed', call_id: `read${requests.length}`,
+              name: query === 'run.status' ? 'quantus_run_status' : 'quantus_context', arguments: JSON.stringify(query === 'run.status' ? { cursor: '' }
+                : { query, scopeId: query === 'policy.current' ? 'policy_current' : 'run_2026-10-02',
+                  cursor: tool?.response.body.query === 'run.workset' ? tool.response.body.cursor : '' }) }]
+              : [{ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'All packets read.' }] }])] });
+      }
       return Response.json({ id: `response_${requests.length}`, status: 'completed', usage: { input_tokens: 10, output_tokens: 10 },
         output: [...(compaction && requests.length === 2 ? [{ type: 'compaction', id: 'cmp_composition', encrypted_content: 'test-opaque-state' }] : []),
           ...(requests.length <= 3 ? [{ type: 'function_call', status: 'completed',
@@ -69,6 +86,28 @@ async function build({ mode = 'live', providerFailure = false, compaction = fals
     }, ...overrides });
   return { ...s, args, make, requests, tools, env, config };
 }
+
+test('production worker completes full large-original packet coverage across fresh instances and changed runtime revisions', async () => {
+  const s = await build({ large: true, compaction: true });
+  let result;
+  for (let n = 0; n < 50; n++) {
+    result = await (await s.make()).sectionWork.impl.next(s.args);
+    if (result.done || result.blocked) break;
+  }
+  assert.equal(result.done, true, JSON.stringify(result));
+  const run = s.store.snapshot().automation.runtime.runsByKey[RUN];
+  assert.equal(run.contextCoverage.proof.itemCount, 2);
+  assert.ok(s.requests.length > 6, 'more than one workset packet was required');
+  assert.ok(s.requests.every(r => Buffer.byteLength(JSON.stringify(r)) < 512 * 1024));
+  const entries = await s.journal.read();
+  const receipts = entries.map(e => e.tool).filter(t => t?.contextPacket);
+  assert.equal(receipts.length, receipts[0].contextPacket.count);
+  const fragments = receipts.flatMap(r => r.response.body.fragments);
+  const original = JSON.parse(fragments.map(f => f.jsonFragment).join(''));
+  assert.equal(original.text, 'Large original '.repeat(65000));
+  assert.ok(s.tools.some(r => r.searchParams.cursor && !r.searchParams.cursor.startsWith('q4packet.')));
+  assert.equal(run.phase, 'active');
+});
 
 test('production compaction retains independent coverage evidence and only uses explicit valid configuration', async () => {
   const s = await build({ compaction: true });
