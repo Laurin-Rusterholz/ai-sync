@@ -134,6 +134,29 @@ Zusammenstellung, vollständiges Kontextladen, verbindlicher Objekt-Readback,
 Archivierung abgeschlossener Journale und die integrierte Abnahme T01–T40.
 Die neue Schleife ist noch nicht als `sectionWork` aktiviert.
 
+### Vollständigkeit und Erreichbarkeit von Kontextabfragen
+
+`leadership-context.mjs` liest benannte Abfragen seitenweise und erklärt sie nur
+bei bestätigter letzter Seite und gleicher Datenrevision für vollständig. Falscher
+Scope, doppelte Kennungen, wiederholte Cursor, Teilantworten und Seiten-/Bytegrenzen
+bleiben ausdrücklich unvollständig. Die Begrenzung dient dem Checkpoint-/Batching-
+Pfad; sie ist keine Erlaubnis, verbleibende Einträge zu überspringen.
+
+Der Gateway hält die queryabhängige Seitengrösse ein; `policy.current` erlaubt
+zehn statt fünfzig Einträge. `policy_current` ist ein versionsunabhängiger Scope
+auch für Richtlinienversionen mit Punkt. Richtlinienzugriff der Leitung bindet an
+den tatsächlich vorhandenen zugewiesenen Lauf; Statusabfragen liefern nur den
+adressierten Tag. Kontextobjekte behalten Quelltyp und Originalkennung. Die
+Policyprojektion zeigt aktive Grenzen, Pflichtquellen, Abschlussregeln und Flags,
+aber keine beliebigen verschachtelten Zusatzdaten.
+
+28 gezielte Kontext-/Gateway-/Domänentests bestanden. Wichtig für die weitere
+Zusammenstellung: Vollständige Pagination beweist nur die jeweilige Abfrage.
+`run.context` enthält bisher die `itemRefs` des Laufs; der deterministische Aufbau
+dieser Arbeitsmenge aus allen relevanten Originalobjekten und das Batch-Verfahren
+bei grossem Kontext sind noch zu integrieren. Eine vollständige V4-Abnahme wird
+daraus nicht abgeleitet.
+
 ## Abnahmeregister
 
 Jede Zeile braucht konkrete Prüfung, geprüfte Revision, tatsächliches Ergebnis

@@ -344,7 +344,10 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
     }
     return null;
   }
-  const policyObjekt = () => basis("policy", "policy_" + POLICY.version, { jobId: null, policyVersion: POLICY.version, mode: modus, entityVersion: 1, updatedAt: null, limits: { maxWaitDays: POLICY.maxWaitDays } });
+  const policyObjekt = (jobId = null) => basis("policy", "policy_" + POLICY.version, { jobId, policyVersion: POLICY.version, mode: modus, entityVersion: 1, updatedAt: null,
+    timezone: POLICY.timezone, limits: { maxWaitDays: POLICY.maxWaitDays, sourceMaxAgeMinutes: POLICY.sourceMaxAgeMinutes,
+      evaluationTtlMinutes: POLICY.evaluationTtlMinutes, deferralLimit: POLICY.deferralLimit },
+    closure: POLICY.closure, featureFlags: POLICY.featureFlags, requiredSources: POLICY.requiredSources, noExternalSources: POLICY.noExternalSources });
   function laufKontextEintraege(data, run, jobId, filter) {
     const out = [];
     for (const ref of Array.isArray(run.itemRefs) ? run.itemRefs : []) {
@@ -400,7 +403,11 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
       case "assignment": return auftragObjekt(data, id);
       case "worker_result": return ergebnisObjekt(data, id);
       case "note": return notizObjekt(data, id);
-      case "policy": return id === "policy_" + POLICY.version ? policyObjekt() : null;
+      case "policy": {
+        if (id !== "policy_current" && id !== "policy_" + POLICY.version) return null;
+        if (runId && !laufNachId(data, runId)) return null;
+        return policyObjekt(runId);
+      }
       default: return null;
     }
   }
@@ -439,8 +446,12 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
       case "lead.context": { const l = leadObjekt(data, scopeId); return seite(l ? [l] : [], { pageSize, afterId }); }
       case "notes.recent": return seite(kommentare(data, "chatgptLead", scopeId), { pageSize, afterId });
       case "run.queue": return seite(laeufe(data).map((r) => laufObjekt(data, r)), { pageSize, afterId });
-      case "run.status": return seite(laeufe(data).map((r) => laufStatusObjekt(data, r)), { pageSize, afterId });
-      case "policy.current": return seite([policyObjekt()], { pageSize, afterId });
+      case "run.status": return seite(laeufe(data).filter(r => "status_" + r.date === scopeId).map((r) => laufStatusObjekt(data, r)), { pageSize, afterId });
+      case "policy.current": {
+        const jobId = rolle === "lead_agent" ? principal.jobId : null;
+        if (rolle === "lead_agent" && (!jobId || !laufNachId(data, jobId))) throw fail("forbidden", "assignment_run_missing", 403);
+        return seite([policyObjekt(jobId)], { pageSize, afterId });
+      }
       case "run.sourceChecks": {
         const run = laufNachId(data, scopeId);
         if (!run) return { items: [], hasMore: false, nextAfterId: null, aborted: true, abortReason: "scope_not_found" };
