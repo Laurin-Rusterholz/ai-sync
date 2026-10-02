@@ -76,7 +76,10 @@ test('v4 factory dispatches full reviewed instructions and actual role contracts
   assert.equal((await (await s.makeV4()).step()).kind, 'tool_recorded');
   assert.equal((await (await s.makeV4()).step()).kind, 'model_recorded');
   assert.equal(s.requests[1].instructions, first.instructions);
-  assert.equal((await (await s.makeV4()).step()).finalized, false);
+  assert.equal((await (await s.makeV4()).step()).kind, 'model_recorded', 'premature completion triggers required context reads');
+  assert.equal(s.requests.length, 3);
+  assert.match(s.requests[2].input.at(-1).content, /required_context_unread/);
+  assert.match(s.requests[2].input.at(-1).content, /run.workset/);
 });
 
 test('v4 factory rejects mismatched tenant and missing or obsolete prompt version before provider work', async () => {
@@ -227,4 +230,14 @@ test('a confirmed version conflict can be returned to the model for deliberate r
   assert.equal((await s.make().step({ initialRequest })).kind, 'tool_recorded');
   assert.equal((await s.make().step({ initialRequest })).kind, 'model_recorded');
   assert.match(s.requests[1].input.at(-1).output, /stale_entity/);
+});
+
+test('a durable context capacity failure does not buy repeated model requests on resume', async () => {
+  const s = await build({ toolReceipt: { confirmed: false, readComplete: false, readFailure: 'read_byte_limit',
+    response: { status: 200, body: { ok: false, error: 'read_byte_limit' } } } });
+  await s.loop.step({ initialRequest });
+  assert.equal((await s.make().step({ initialRequest })).reason, 'context_capacity_exceeded');
+  assert.equal((await s.make().step({ initialRequest })).reason, 'context_capacity_exceeded');
+  assert.equal(s.requests.length, 1);
+  assert.equal(s.executions.length, 1);
 });

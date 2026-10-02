@@ -362,3 +362,31 @@ wird der alte Erfolg nicht mehr bestätigt. Die Fachadapterprüfungen lesen auch
 die Belege der übrigen Leitungsverben unmittelbar zurück. Kontextdeckung,
 Quelladapter, Wiederabgleich blockierter Fälle, Backend-Abschluss und
 produktiver Probebetrieb bleiben offene Integrationspunkte.
+
+### Vollständige Kontextlesung und verbindliche Abschlusskontrolle
+
+Ein echter Integrationsfehler war die eigene Protokollierung zwischen
+Kontextseiten: Sie erhöht die Datenrevision und entwertet dadurch den nächsten
+signierten Cursor. Der Gateway liest jetzt zusammenhängende Seiten vor dem
+Journal-Schreibvorgang. Jede Seite muss vollständig, eindeutig und an dieselbe
+Revision gebunden sein. Grenzen, Wiederholungen, Drift oder Leseausfälle ergeben
+einen begrenzten Fehlerbeleg, keine abgeschnittene Erfolgsantwort.
+
+Die neue Leitungsabfrage `run.workset` vereinigt historische Run-Referenzen mit
+dem frisch bestimmten vollständigen Inventar. Neue offene Vorgänge werden auch
+innerhalb eines Abschnitts sichtbar; der Bootstrap bindet sie vor der nächsten
+Arbeitsphase an den Lauf. Spezialisten erhalten keinen erweiterten Kontext.
+
+Ein v4-Modellabschluss braucht protokollierte vollständige Policy-, Workset- und
+Statuslesungen. Nach Schreibvorgängen sind Workset und Status erneut erforderlich.
+Die Backend-Prüfung liest anschliessend alle drei nochmals, vergleicht Inhalte
+und bindet sie an eine gemeinsame aktuelle Revision. Fehlende Lesungen und neue
+Inhalte führen den Modellzyklus weiter; unlesbare Originale oder widersprüchliche
+Policy bleiben blockiert. Vor dem Speichern des Kontextnachweises prüft CAS die
+Revision nochmals und liest den gespeicherten Nachweis unabhängig zurück.
+
+Diese Durchsetzung ersetzt nicht den Tagesabschluss. Übergrosse Arbeitsbestände
+und wachsende Modellhistorien benötigen weiterhin dauerhafte Kontextpakete;
+der jetzige Leseweg hält bei 384 KiB oder 100 Seiten ausdrücklich unvollständig
+an. Quellaktualisierung, Backend-Antwortkonsum/Finalisierung, Wiederabgleich
+blockierter Fälle, vollständige Client-Umstellung und Probebetrieb bleiben offen.

@@ -19,6 +19,8 @@ import { createWorkArtifactStore } from './work-artifact-store.mjs';
 import { createGoogleAccessTokenSource } from './google-transport.mjs';
 import { assertLeadership, readRuntime } from '../../../netlify/lib/quantus-v3-runtime-state.mjs';
 import { loadQuantusV4Prompts, MAIN_PROMPT_SLOTS } from '../../../netlify/lib/quantus-v4-prompts.mjs';
+import { createHash } from 'node:crypto';
+import { assertActiveRuntimeCapacity } from './runtime-payload.mjs';
 
 export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
   envRead = name => process.env[name], artifactStore, jobTokenIssuer,
@@ -56,15 +58,17 @@ export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
       modelPricing: { inputMicrosPerMillionTokens: Number(rates[0]), outputMicrosPerMillionTokens: Number(rates[1]) } });
     const inner = { async next({ runKey, sectionId, verifiedScope, signal }) {
       const startedAt = clockPort.now();
-      async function activeLease() {
+      function check(data) {
         if (signal?.aborted) throw new HttpError(409, 'leadership_interrupted');
-        const data = (await corePort.read())?.data;
         assertLeadership(data, verifiedScope, clockPort.now());
         const run = readRuntime(data).runsByKey[runKey], section = run?.sections?.[sectionId];
         if (run?.phase !== 'active' || run.currentSectionId !== sectionId || section?.closed !== false
           || section.holder !== verifiedScope.holder || section.fence !== verifiedScope.fence)
           throw new HttpError(409, 'leadership_section_mismatch');
         if (signal?.aborted) throw new HttpError(409, 'leadership_interrupted');
+      }
+      async function activeLease() {
+        check((await corePort.read())?.data);
         return { holder: verifiedScope.holder, fence: verifiedScope.fence };
       }
       await activeLease();
@@ -96,7 +100,25 @@ export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
       if (result.kind === 'blocked') return { done: false, blocked: true, reason: result.reason };
       // Runtime completion still passes through independent closureEvidence.
       // Model text is not a persisted user note or a daily finalization proof.
-      if (result.kind === 'model_complete') return { done: true };
+      if (result.kind === 'model_complete') {
+        if (!result.coverageProof) throw new HttpError(502, 'context_coverage_proof_missing');
+        const proof = { ...result.coverageProof, callId: result.callId };
+        const hash = createHash('sha256').update(JSON.stringify(proof)).digest('hex');
+        const key = 'v4-coverage-' + createHash('sha256').update(JSON.stringify([runKey, hash])).digest('hex');
+        const saved = await corePort.mutate({ commandKey: key, requestId: key, now: clockPort.now(), mutate(data) {
+          check(data);
+          if (data.automation.dataRevision !== proof.dataRevision) throw new HttpError(409, 'context_changed_before_checkpoint');
+          readRuntime(data).runsByKey[runKey].contextCoverage = { hash, proof };
+          assertActiveRuntimeCapacity(data);
+          return { data, result: { hash } };
+        } });
+        const data = (await corePort.read())?.data;
+        check(data);
+        const stored = readRuntime(data).runsByKey[runKey].contextCoverage;
+        if (saved.result?.hash !== hash || stored?.hash !== hash || JSON.stringify(stored.proof) !== JSON.stringify(proof))
+          throw new HttpError(502, 'context_coverage_readback_failed');
+        return { done: true };
+      }
       if (!['model_recorded', 'tool_recorded'].includes(result.kind)) throw new HttpError(502, 'leadership_phase_invalid');
       return { done: false, stepId: `${result.callId}:${result.kind}`, durationMs: Math.max(0, clockPort.now() - startedAt),
         cursor: { schema: 'quantus-leadership-cursor/1', runKey, fence: verifiedScope.fence, callId: result.callId, phase: result.kind } };

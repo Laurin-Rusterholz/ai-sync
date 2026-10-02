@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createOpenAIWorkerPorts } from '../runtime/quantus-v3/src/openai-composition.mjs';
 import { migrateCore } from '../netlify/lib/assistant-migration.mjs';
 import { POLICY_TEMPLATE } from '../netlify/lib/assistant-schema.mjs';
-import { DOMAIN_PORT_VARS } from '../netlify/lib/quantus-v3-domain-adapter.mjs';
+import { createQuantusV3DomainAdapter, DOMAIN_PORT_VARS } from '../netlify/lib/quantus-v3-domain-adapter.mjs';
 import { setup, T, RUN } from './fixtures/quantus-v4-leadership-fixture.mjs';
 import * as F from './quantus-v3-e2-fixtures.mjs';
 import { reserveCost } from '../netlify/lib/quantus-v3-runtime-state.mjs';
@@ -34,16 +34,35 @@ async function build({ mode = 'live', providerFailure = false } = {}) {
     jobTokenIssuer: { available: true, async mint({ jobId, tenant }) {
       assert.equal(jobId, 'run_2026-10-02'); assert.equal(tenant, 'quantus'); return 'test-job-token';
     } },
-    c2Transport: { async send(request) { tools.push(request); return { status: 200, body: {
-      ok: true, requestId: 'read-receipt', serverNow: new Date(T).toISOString(), dataRevision: s.store.snapshot().automation.dataRevision,
-      query: 'run.context', scopeId: 'run_2026-10-02', items: [], count: 0, hasMore: false, complete: true, pageStatus: 'done', cursor: null,
-    } }; } },
+    c2Transport: { async send(request) {
+      tools.push(request);
+      const params = request.searchParams, data = s.store.snapshot();
+      const domain = createQuantusV3DomainAdapter({ policyVersion: '4.0', tenantId: 'quantus', mode: 'enforce',
+        now: () => T, ports: { policy: assistantPolicy, ownerId: 'test-owner' } });
+      const revision = data.automation.dataRevision;
+      let afterId = null;
+      if (params.cursor) {
+        const decoded = JSON.parse(params.cursor);
+        assert.equal(decoded.revision, revision, 'no journal/cost write may occur between context pages');
+        afterId = decoded.afterId;
+      }
+      const page = domain.listPage(data, { query: params.query, scopeId: params.scopeId, pageSize: 1,
+        afterId, principal: { role: 'lead_agent', jobId: 'run_2026-10-02' } });
+      return { status: 200, body: { ok: true, requestId: `read-${tools.length}`, serverNow: new Date(T).toISOString(),
+        dataRevision: revision, query: params.query, scopeId: params.scopeId, items: page.items, count: page.items.length,
+        hasMore: page.hasMore, complete: !page.hasMore, pageStatus: page.hasMore ? 'more' : 'done',
+        cursor: page.hasMore ? JSON.stringify({ revision, afterId: page.nextAfterId }) : null } };
+    } },
     providerFetch: async (_, request) => {
       requests.push(JSON.parse(request.body));
       if (providerFailure) throw new Error('test network failed');
       return Response.json({ id: `response_${requests.length}`, status: 'completed', usage: { input_tokens: 10, output_tokens: 10 },
-        output: requests.length === 1 ? [{ type: 'function_call', status: 'completed', name: 'quantus_context', call_id: 'read1',
-          arguments: JSON.stringify({ query: 'run.context', scopeId: 'run_2026-10-02', cursor: '' }) }]
+        output: requests.length <= 3 ? [{ type: 'function_call', status: 'completed',
+          name: requests.length === 3 ? 'quantus_run_status' : 'quantus_context', call_id: `read${requests.length}`,
+          arguments: JSON.stringify(requests.length === 3 ? { cursor: '' } : {
+            query: requests.length === 1 ? 'policy.current' : 'run.workset',
+            scopeId: requests.length === 1 ? 'policy_current' : 'run_2026-10-02', cursor: '',
+          }) }]
           : [{ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'Review complete; backend proof still required.' }] }] });
     }, ...overrides });
   return { ...s, args, make, requests, tools, env, config };
@@ -65,8 +84,19 @@ test('production composition bootstraps real domain, journals provider/tool step
   assert.equal(s.tools.length, 1);
   assert.equal(s.tools[0].credential, 'test-job-token');
   assert.match((await p.sectionWork.impl.next(s.args)).stepId, /:model_recorded$/);
-  assert.equal((await (await s.make()).sectionWork.impl.next(s.args)).done, true);
-  assert.equal(s.requests.length, 2);
+  for (let i = 0; i < 2; i++) {
+    assert.match((await (await s.make()).sectionWork.impl.next(s.args)).stepId, /:tool_recorded$/);
+    assert.match((await (await s.make()).sectionWork.impl.next(s.args)).stepId, /:model_recorded$/);
+  }
+  const complete = await (await s.make()).sectionWork.impl.next(s.args);
+  assert.equal(complete.done, true, JSON.stringify(complete));
+  assert.equal(s.requests.length, 4);
+  const proof = s.store.snapshot().automation.runtime.runsByKey[RUN].contextCoverage.proof;
+  assert.equal(proof.itemCount, 2);
+  assert.match(proof.worksetHash, /^[a-f0-9]{64}$/);
+  const recordedTools = (await s.journal.read()).filter(e => e.tool);
+  assert.equal(recordedTools[1].tool.readPages.length, 2, 'workset spans both pages before journal mutation');
+  assert.equal(recordedTools[1].tool.response.body.count, 2);
   assert.equal(s.store.snapshot().dailyBriefing.assistantRuns['2026-10-02'].phase, 'active');
   assert.ok(Object.values(s.store.snapshot().automation.runtime.cost.callsById).every(c => c.state === 'settled'));
   assert.equal(JSON.stringify(s.store.snapshot()).includes('Review complete; backend proof still required.'), false, 'raw response is external');
@@ -127,4 +157,27 @@ test('production OpenAI reservation enforces the shared 50 USD monthly cap', asy
   assert.equal(result.blocked, true);
   assert.equal(result.reason, 'monthly_budget_exceeded');
   assert.equal(s.requests.length, 0);
+});
+
+test('a concurrent original write after the fresh check prevents saving coverage and prompts fresh work on resume', async () => {
+  const s = await build();
+  for (let i = 0; i < 7; i++) await (await s.make()).sectionWork.impl.next(s.args);
+  let changed = false;
+  const p = await s.make({ corePort: { ...s.core, async mutate(args) {
+    if (!changed && args.commandKey.startsWith('v4-coverage-')) {
+      changed = true;
+      s.store.forceWrite(d => {
+        d.entities.tasks.late = { id: 'late', title: 'Arrived during final check', status: 'todo' };
+        d.automation.dataRevision++;
+        return d;
+      });
+    }
+    return s.core.mutate(args);
+  } } });
+  await assert.rejects(p.sectionWork.impl.next(s.args), { error: 'context_changed_before_checkpoint' });
+  assert.equal(s.store.snapshot().automation.runtime.runsByKey[RUN].contextCoverage, undefined);
+  assert.equal(s.requests.length, 4);
+  const resumed = await (await s.make()).sectionWork.impl.next(s.args);
+  assert.equal(resumed.done, false);
+  assert.match(s.requests[4].input.at(-1).content, /context_contents_changed/);
 });

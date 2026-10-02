@@ -82,6 +82,17 @@ export function createBriefingSectionWork({ core, clock, policy, config, inner }
       if (existing !== undefined && existing !== marker) fail('briefing_bootstrap_marker_invalid', 503);
       if (existing === marker) {
         verifyDomain(initial);
+        const refs = new Set((initial.dailyBriefing.assistantRuns[parsed.localDate].itemRefs || []).map(r => `${r.sourceType}:${r.sourceId}`));
+        const missing = collectRunInventory(initial).filter(r => !refs.has(`${r.sourceType}:${r.sourceId}`));
+        if (missing.length) {
+          // Work arriving inside a section must be bound before the next
+          // model/tool phase; otherwise live workset reads would reveal it
+          // while legitimate commands still failed the stored run binding.
+          await command('syncRunInventory', { date: parsed.localDate }, [sectionId, 'arrivals', hash(missing)]);
+          const refreshed = await snapshot();
+          verifyDomain(refreshed, { inventory: true });
+          return inner.next(innerArgs(refreshed));
+        }
         return inner.next(innerArgs(initial));
       }
       async function command(type, payload, identityParts) {

@@ -58,7 +58,7 @@ export const CORE_KEY = "app-data.json";
 /* Welche benannte Abfrage an welcher Route bedient wird. Eine Route ist kein
    Selbstbedienungsladen: was hier nicht steht, gibt es dort nicht. */
 export const ROUTE_QUERIES = Object.freeze({
-  "quantus-context": Object.freeze(["run.context", "lead.context", "notes.recent", "policy.current"]),
+  "quantus-context": Object.freeze(["run.context", "run.workset", "lead.context", "notes.recent", "policy.current"]),
   "quantus-read": Object.freeze(["lead.context", "notes.recent", "policy.current", "run.queue", "run.readback"]),
   "quantus-run-status": Object.freeze(["run.status", "run.queue", "run.sourceChecks"]),
 });
