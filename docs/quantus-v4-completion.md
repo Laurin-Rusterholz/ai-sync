@@ -84,8 +84,23 @@ Credentials. 363 gezielte Auth-/C2-/Laufzeit-/v4-Prüfungen bestanden.
 
 Noch offen: Gateway mit dem dauerhaften Arbeitszyklus verbinden, Modellantwort
 vor Aktion sichern, vollständigen Kontext/Readback/Checkpoint-Wiederaufnahme
-integrieren, Statusprojektion um die vollständigen Bewertungsnachweise ergänzen.
+integrieren. Der Gateway ist nach vollständiger CI-Prüfung als PR #277 übernommen.
 Der lokale vollständige Testlauf des ersten Pakets endete ebenfalls erfolgreich.
+
+### Serverbewertung in der Statusschnittstelle
+
+Der bestehende Fachkern liefert jetzt beide Ampeln, Gesamtstatus, Bewertungszeit,
+Gültigkeitsende, geprüfte Revision und Policyversion über den echten C2-Leseweg.
+Abgelaufene oder durch neue Daten ungültige Bewertungen werden dort neu berechnet.
+Die Gründe werden nach Achse, Code und Schwere mit Häufigkeiten zusammengefasst;
+Quellkennungen und Freitext aus anderen Objekten werden dabei nicht offengelegt.
+Bei mehr als 50 unterschiedlichen Gruppen oder ungültigen Gründen meldet die
+Projektion ausdrücklich `evaluationReasonsComplete: false` samt Gesamtzahlen.
+Die Originalobjekte bleiben über ihre gesondert autorisierten Kontextabfragen lesbar.
+
+26 Prüfungen bestanden, einschließlich echter Kern-/C2-Abschlusskette, zeitlich
+abgelaufener grüner Bewertung, nachträglichem Widerspruch, Begrenzung und
+Feldprojektion. Das ist kein Nachweis eines produktiv laufenden Leitungszyklus.
 
 ## Abnahmeregister
 
