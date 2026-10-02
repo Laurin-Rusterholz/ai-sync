@@ -104,6 +104,16 @@ test('unknown provider outcome stays blocked across retries without tool executi
   assert.equal(s.requests.length, 1); assert.equal(s.executions.length, 0);
 });
 
+test('lost external response blocks recovery without another provider call or tool execution', async () => {
+  const s = await build();
+  await s.loop.step({ initialRequest });
+  const response = s.store.snapshot().automation.runtime.runsByKey[RUN].leadershipJournal.entries[0].response;
+  s.artifacts.objects.delete(response.artifact.objectName);
+  await assert.rejects(s.make().step({ initialRequest }), /artifact_read_failed/);
+  assert.equal(s.requests.length, 1);
+  assert.equal(s.executions.length, 0);
+});
+
 test('response lost before persistence cannot be blindly requested again', async () => {
   const s = await build();
   const broken = { ...s.journal, async recordResponse() { throw new Error('storage unavailable'); } };

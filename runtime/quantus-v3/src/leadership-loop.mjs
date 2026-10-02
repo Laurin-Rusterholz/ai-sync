@@ -26,6 +26,9 @@ export function createLeadershipLoop({ runKey, journal, openai, gateway, costAda
     async step({ initialRequest, signal } = {}) {
       const checkAbort = () => { if (signal?.aborted) throw new HttpError(409, 'leadership_interrupted'); };
       checkAbort();
+      // Older inline journals move only after immutable storage readback and
+      // an exact CAS match. Failure leaves their original payloads untouched.
+      if (journal.migrateInline) await journal.migrateInline();
       const entries = await journal.read();
       const tools = gateway.definitions();
       const trusted = { instructions: initialRequest?.instructions, tools,

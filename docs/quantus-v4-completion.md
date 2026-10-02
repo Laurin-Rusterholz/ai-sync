@@ -105,8 +105,9 @@ Feldprojektion. Das ist kein Nachweis eines produktiv laufenden Leitungszyklus.
 ### Dauerhafter OpenAI-Werkzeugzyklus
 
 `leadership-journal.mjs` speichert aktive Anfragen, Modellantworten und
-Werkzeugquittungen unveränderlich über den echten Core-Port samt CAS und
-Idempotenz. Jede Mutation prüft die Lease erneut; bestätigte Schreibvorgänge
+Werkzeugquittungen unveränderlich im geprüften Dateispeicher; ihre Referenzen
+werden über den echten Core-Port samt CAS und Idempotenz bestätigt. Jede Mutation
+prüft die Lease erneut; bestätigte Schreibvorgänge
 werden unabhängig nachgelesen. Payload-Hashes binden die gespeicherten Inhalte.
 Wiederholungsbelege enthalten nur kleine Quittungen statt vollständiger Antworten.
 Ein Initialisierungsmarker verhindert stillen Neuaufbau eines gelöschten Journals.
@@ -275,8 +276,22 @@ Ein kleiner CAS-Beleg beansprucht jeden Schritt vor seiner Ausführung.
 Bestätigte Ergebnisse werden nach Neustart wiedergegeben; ein beanspruchter
 Schritt ohne bestätigtes Ergebnis bleibt unklar und wird nicht automatisch
 wiederholt. Aktive Inhalte und Belege werden hier nicht gekürzt. Die spätere
-Archivierung und die Migration großer Leitungs-Journale in diesen Speicher
-sind weiterhin offen, ebenso die vollständige OpenAI-Komposition.
+Archivierung abgeschlossener Abläufe und die vollständige OpenAI-Komposition
+sind weiterhin offen.
+
+Auch das Leitungsjournal speichert Anfragen, Modellantworten und Werkzeug-
+Ergebnisse extern. Der Kern enthält ausschließlich unveränderliche Referenzen;
+die Kostenabrechnung verwendet nur eine separat gelesene und hashgeprüfte
+Providerquittung, deren Referenz im selben CAS erneut abgeglichen wird.
+Anfragen/Werkzeug-Ergebnisse bleiben auf 512 KiB, Providerantworten auf 3 MiB
+und ein vollständiger Journal-Lesevorgang auf 16 MiB begrenzt.
+
+Bestehende Inline-Journale werden vor einem neuen Leitungszyklus umgestellt:
+erst sämtliche Inhalte extern schreiben und zurücklesen, dann ausschließlich
+die weiterhin identische Journalrevision per CAS durch Referenzen ersetzen.
+Speicherfehler, Abbruch, verlorene Lease oder zwischenzeitliche Änderungen
+lassen die alten Inhalte ungekürzt bestehen. Eine fehlende externe Antwort
+berechtigt weder zu einem erneuten Modellaufruf noch zur Werkzeugausführung.
 
 Grundlagen: [Cloud Storage Preconditions](https://docs.cloud.google.com/storage/docs/request-preconditions)
 und [Bucket-IAM-Konfiguration](https://docs.cloud.google.com/storage/docs/json_api/v1/buckets).

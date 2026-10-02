@@ -1,6 +1,6 @@
 import { createWorkArtifactStore } from '../../runtime/quantus-v3/src/work-artifact-store.mjs';
 
-export function artifactFixture({ tenant = 'quantus', bucket = 'quantus-test-artifacts', timeoutMs = 1000, intercept } = {}) {
+export function artifactFixture({ tenant = 'quantus', bucket = 'quantus-test-artifacts', timeoutMs = 1000, maxPayloadBytes, intercept } = {}) {
   const objects = new Map(), calls = [];
   let generation = 100, privateBucket = true;
   const json = (v, status = 200) => new Response(JSON.stringify(v), { status, headers: { 'content-type': 'application/json' } });
@@ -26,5 +26,5 @@ export function artifactFixture({ tenant = 'quantus', bucket = 'quantus-test-art
     return json({ bucket, name, generation: found.generation, size: String(Buffer.byteLength(found.text)) });
   };
   return { objects, calls, setPrivate: v => { privateBucket = v; },
-    store: createWorkArtifactStore({ bucket, tenant, timeoutMs, getAccessToken: async () => 'test-token', fetchImpl }) };
+    store: createWorkArtifactStore({ bucket, tenant, timeoutMs, maxPayloadBytes, getAccessToken: async () => 'test-token', fetchImpl }) };
 }
