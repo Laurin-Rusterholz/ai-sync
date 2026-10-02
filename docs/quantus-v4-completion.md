@@ -567,3 +567,35 @@ während des Rücklesens und Leaseverlust vor CAS. Der Worker importiert damit n
 nicht produktiv: Seiten-/History-Fortsetzung, Intake-/Arbeitsbestandseinbindung,
 autorisierter OAuth-Zugang und produktive T28-Nachweise bleiben offen. Registrierung
 allein bedeutet weder Klassifikation noch Bearbeitung oder erfolgreichen Quellenabschluss.
+
+### Fortsetzbarer Gmail-Seitenabgleich und History-Gap-Nachabgleich
+
+`gmail-source-sync` verbindet den vollständigen Leser mit dem dauerhaften Register.
+Jeder Aufruf erledigt genau einen Quellenarbeitsschritt: Profil/Wasserzeichen,
+Seitenabruf, einzelne Nachrichtenübernahme oder bestätigter Seitenwechsel. Die
+unveränderliche Seite wird vor dem ersten Eintrag privat gespeichert und unabhängig
+zurückgelesen; im Core bleiben nur Referenz, Position, Suchumfang und Abgleichstand.
+Jede Nachrichtenposition wird erst nach bestätigter Registrierung weitergesetzt.
+Innerhalb derselben CAS-Transaktion muss der betreffende Registereintrag weiterhin
+exakt dem zuvor unabhängig gelesenen Beleg entsprechen.
+
+Der erste vollständige Abruf sichert vorab die aktuelle Profil-History-ID. Nach
+der letzten Listenseite zieht der Worker sämtliche seitdem eingegangenen Änderungen
+über den Verlauf nach. Nur die vollständig verarbeitete letzte Verlaufsseite
+schreibt das neue Wasserzeichen. Ein History-404 startet einen neuen vollständigen
+Nachabgleich; bestehende Registereinträge, Originale und Leselücken bleiben erhalten.
+Seitenschleifen und rückwärts laufende History-IDs erzeugen einen offenen Fehler.
+
+Verlorene Register- oder Checkpointquittungen überspringen keine Nachricht und
+erzeugen keine zweite Originalversion. Ein neuer Lauf übernimmt eine noch offene
+Seite mit ihrer gespeicherten Position. Nach abgeschlossenem Abruf beginnt der
+nächste Lauf inkrementell am zuletzt bestätigten Wasserzeichen. Ein Message-404
+ist ausdrücklich eine fehlende Quelle und kein Löschbeweis; ungelesene Anhänge
+bleiben ebenfalls sichtbare Lücken. Diese Lücken überleben einen Gap-Nachabgleich.
+
+Belegt ist die Kette aus echtem Gmail-Leser, Artefaktspeicher, Originalbündeln,
+Register und CAS-Umschlag mit synthetischen Gmail-/Storage-Antworten. Seiten sind
+auf 3 MiB und 10000 IDs begrenzt; darüber bleibt der Abgleich offen. Der Baustein
+meldet ausschliesslich das Ende des Abrufs, keinen fachlichen Quellenabschluss.
+Intake-/Arbeitsbestandseinbindung, Anhangsauswertung, OAuth-/Produktionsanbindung
+und Laufzeitnachweise im 90-Sekunden-Worker folgen noch. T28 bleibt produktiv offen.
