@@ -21,6 +21,7 @@ import { assertLeadership, readRuntime } from '../../../netlify/lib/quantus-v3-r
 import { loadQuantusV4Prompts, MAIN_PROMPT_SLOTS } from '../../../netlify/lib/quantus-v4-prompts.mjs';
 import { createHash } from 'node:crypto';
 import { assertActiveRuntimeCapacity } from './runtime-payload.mjs';
+import { createGmailContextHydrator } from './gmail-context-hydrator.mjs';
 
 export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
   envRead = name => process.env[name], artifactStore, jobTokenIssuer,
@@ -78,8 +79,11 @@ export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
       }
       await activeLease();
       const journal = createLeadershipJournal({ core: corePort, clock: clockPort, runKey, verifiedScope, artifacts: artifactStore, signal });
+      const gmailContext = createGmailContextHydrator({ core: corePort, clock: clockPort, artifacts: artifactStore,
+        runKey, tenant: config.tenant, sectionId, verifiedScope, signal });
       const gateway = createLeadershipGateway({ transport: c2Transport, jobTokenIssuer, clock: clockPort,
-        runKey, tenant: config.tenant, toolsEnabled: config.toolsEnabled, lease: activeLease, signal, artifacts: artifactStore });
+        runKey, tenant: config.tenant, toolsEnabled: config.toolsEnabled, lease: activeLease, signal, artifacts: artifactStore,
+        hydrateWorkset: gmailContext.hydrate });
       const costAdapter = createCostAdapter({ config, now: startedAt, verifiedScope, requestId: `leadership:${sectionId}`,
         ports: { require(name) {
           if (name === 'core') return corePort;
