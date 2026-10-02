@@ -417,3 +417,34 @@ weiteren bezahlten Aufruf an. Die lokale Durchsetzung folgt der
 [offiziellen Responses-Kompaktierung](https://developers.openai.com/api/docs/guides/compaction).
 Modellunterstützung, Schwelle und echte Providerantworten sind produktiv noch
 nachzuweisen; grosse einzelne Arbeitsbestände benötigen weiterhin Kontextpakete.
+
+### Dauerhafte Kontextpakete mit vollständiger Lesekette
+
+`run.workset` kann jetzt auch grosse Originale über bytebegrenzte C2-Seiten
+ausliefern. Die Feldprojektion und Geheimnisprüfung erfolgen vor jeder Aufteilung;
+dadurch können weder interne Felder noch ein über eine Fragmentgrenze laufender
+Geheimniswert den bisherigen Schutz umgehen. Standardlesungen behalten ihre
+bestehende Textgrenze; nur die vertrauenswürdige Vorprüfung eines ganzen Workset-
+Originals nutzt eine ausdrücklich begrenzte 16-MiB-Textprüfung.
+
+Der Leitungsworker liest den vollständigen Bestand bei einer gemeinsamen Revision,
+setzt grosse Originale mit Hashprüfung wieder zusammen und schreibt unveränderliche
+128-KiB-Pakete samt vollständigem Manifest in den privaten Artefaktspeicher.
+Generation, Hash, Lauf, Mandant, Umfang und Originalinhalt sind gebunden. Vor jeder
+Paketfortsetzung erfolgen eine aktuelle C2-Autorisierung und Leaseprüfung; eigene
+Journalmutationen verändern den gesicherten Inhalt nicht. Restore auf eine ältere
+Datenrevision, Speicherverlust, fremder Lauf und widerrufene Rechte bleiben gesperrt.
+
+Der Abschlussprüfer zählt nur eine lückenlose, geordnete Manifestkette. Fehlende
+Pakete ergeben den konkreten nächsten Cursor. Nach einer Änderung während der
+Lesekette ist eine neue vollständige Lesung erforderlich; vermischte Generationen
+oder nur das letzte Paket genügen nicht. Der anschliessende Frischabgleich liest
+den Gesamtbestand neu und vergleicht dessen vollständigen Inhaltsfingerabdruck.
+
+Belegt sind der echte autorisierte C2-Weg mit einem Original über einem Megabyte,
+verlustfreie Unicode-Rekonstruktion, geschützte interne Felder, fortgesetzte
+Produktionskomposition über neue Workerinstanzen und unabhängige Kontextdeckung.
+Schnappschüsse sind noch auf 16 MiB/2000 API-Seiten begrenzt. Für Bearbeitungen über
+30 Modellaufrufe oder das 16-MiB-Journallese-Limit fehlt weiterhin der dauerhafte
+Abschnittswechsel. Quellaktualisierung, Antwortkonsum/Tagesabschluss, Client-
+Umstellung und produktiver Probebetrieb bleiben ebenfalls offen.

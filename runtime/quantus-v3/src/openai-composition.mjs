@@ -79,7 +79,7 @@ export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
       await activeLease();
       const journal = createLeadershipJournal({ core: corePort, clock: clockPort, runKey, verifiedScope, artifacts: artifactStore, signal });
       const gateway = createLeadershipGateway({ transport: c2Transport, jobTokenIssuer, clock: clockPort,
-        runKey, tenant: config.tenant, toolsEnabled: config.toolsEnabled, lease: activeLease, signal });
+        runKey, tenant: config.tenant, toolsEnabled: config.toolsEnabled, lease: activeLease, signal, artifacts: artifactStore });
       const costAdapter = createCostAdapter({ config, now: startedAt, verifiedScope, requestId: `leadership:${sectionId}`,
         ports: { require(name) {
           if (name === 'core') return corePort;

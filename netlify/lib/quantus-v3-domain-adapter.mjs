@@ -54,6 +54,8 @@ import * as B from "./assistant-core.mjs";
 import * as E1 from "./quantus-v3-runtime-state.mjs";
 import { createHash } from 'node:crypto';
 import { ORIGINAL_READBACK_KINDS, validOriginalId } from './quantus-v4-readback.mjs';
+import { fragmentContextItems } from './quantus-v4-context-fragments.mjs';
+import { projectPage } from './quantus-v3-read-helpers.mjs';
 
 export const ADAPTER_VERSION = "quantus-v3-domain-adapter/2.0.0";
 
@@ -500,15 +502,21 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
     if (typeof id !== "string" || !id) return null;
     return objektLaden(kernLesen(snapshot), String(kind || ""), id, { runId: runId ? String(runId) : null });
   }
-  function seite(alle, { pageSize, afterId }) {
+  function seite(alle, { pageSize, afterId, byteLimit = Infinity }) {
     let start = 0;
     if (afterId != null && afterId !== "") {
       const i = alle.findIndex((x) => x.id === afterId);
       if (i < 0) return { items: [], hasMore: false, nextAfterId: null, aborted: true, abortReason: "after_id_unknown" };
       start = i + 1;
     }
-    const items = alle.slice(start, start + pageSize);
-    const hasMore = start + pageSize < alle.length;
+    const items = []; let bytes = 2;
+    for (const item of alle.slice(start, start + pageSize)) {
+      const size = Buffer.byteLength(JSON.stringify(item)) + 1;
+      if (bytes + size > byteLimit) break;
+      items.push(item); bytes += size;
+    }
+    if (!items.length && start < alle.length) return { items: [], hasMore: false, nextAfterId: null, aborted: true, abortReason: 'context_item_over_capacity' };
+    const hasMore = start + items.length < alle.length;
     return { items, hasMore, nextAfterId: hasMore && items.length ? items[items.length - 1].id : null, total: alle.length };
   }
   function listPage(snapshot, { query, scopeId, pageSize, afterId, principal, targetKind, targetId } = {}) {
@@ -524,7 +532,15 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
         for (const ref of B.collectRunInventory(data)) refs.set(ref.sourceType + ':' + ref.sourceId, ref);
         // Read-only snapshot union: new arrivals are visible immediately,
         // not only after the next bootstrap writes stored itemRefs.
-        return seite(laufKontextEintraege(data, { ...run, itemRefs: [...refs.values()] }, run.id, null), { pageSize, afterId });
+        return seite(fragmentContextItems(laufKontextEintraege(data, { ...run, itemRefs: [...refs.values()] }, run.id, null), item => {
+          // Scan the complete allowed original before splitting: a secret
+          // crossing a fragment boundary must not bypass the normal filter.
+          const projected = projectPage('run.workset', [item], { maxStringLength: 16 * 1024 * 1024 });
+          if (!projected.ok) throw fail(projected.error, projected.reason, 403);
+          if (!projected.usable) throw fail('core_invalid', 'context_projection_incomplete', 503);
+          return projected.items[0];
+        }),
+          { pageSize, afterId, byteLimit: 384 * 1024 });
       }
       case 'run.readback': {
         if (rolle !== 'lead_agent' || principal.jobId !== scopeId) throw fail('forbidden', 'readback_role_or_job_invalid', 403);

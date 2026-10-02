@@ -65,7 +65,7 @@ export function createLeadershipLoop({ runKey, journal, openai, gateway, costAda
           const input = continueLeadershipInput({ input: current.request.input, output: result.output, compactionEnabled,
             appended: [{ role: 'user', content: JSON.stringify({
             backendContinuation: { reason: coverage.reason, requiredReads: coverage.requiredReads,
-              instruction: 'Die Backend-Prüfung bestätigt den Abschluss noch nicht. Lies diese Abfragen vollständig ab leerem Cursor und bearbeite neue oder geänderte Originale.' },
+              instruction: 'Die Backend-Prüfung bestätigt den Abschluss noch nicht. Lies diese Abfragen vollständig; verwende den angegebenen Fortsetzungscursor oder starte bei fehlendem Cursor leer. Bearbeite neue oder geänderte Originale.' },
           }) }] });
           current = { callId: callIdAt(entries.length), request: { ...trusted, input }, response: null };
         } else if (!current.tool) {

@@ -11,6 +11,8 @@ import { runIdForRunKey, statusScopeIdForRunKey } from './run-ids.mjs';
 import { HttpError } from './errors.mjs';
 import { ORIGINAL_READBACK_KINDS, validOriginalId } from '../../../netlify/lib/quantus-v4-readback.mjs';
 import { completeToolRead } from './complete-tool-read.mjs';
+import { createContextPackets, isPacketCursor, SNAPSHOT_LIMITS } from './context-packets.mjs';
+import { assembleContextItems } from '../../../netlify/lib/quantus-v4-context-fragments.mjs';
 
 const ID = { type: 'string', pattern: '^[A-Za-z0-9_:-]{1,120}$' };
 const CURSOR = { type: 'string', maxLength: 4096 };
@@ -33,11 +35,12 @@ export function leadershipToolDefinitions() {
   ];
 }
 
-export function createLeadershipGateway({ transport, jobTokenIssuer, clock, runKey, tenant, toolsEnabled, lease, signal }) {
+export function createLeadershipGateway({ transport, jobTokenIssuer, clock, runKey, tenant, toolsEnabled, lease, signal, artifacts }) {
   const jobId = runIdForRunKey(runKey);
   const statusId = statusScopeIdForRunKey(runKey);
   const definitions = leadershipToolDefinitions();
   if (!transport?.send || !jobTokenIssuer?.mint || !clock?.now || typeof tenant !== 'string' || !tenant || typeof lease !== 'function') throw new TypeError('leadership_gateway_configuration_missing');
+  const packets = artifacts ? createContextPackets({ artifacts, runKey, tenant, lease, signal }) : null;
   return Object.freeze({
     definitions: () => structuredClone(definitions),
     async execute({ name, arguments: args }, { responseId, callId } = {}) {
@@ -49,6 +52,8 @@ export function createLeadershipGateway({ transport, jobTokenIssuer, clock, runK
       if (![responseId, callId].every(x => typeof x === 'string' && /^[A-Za-z0-9_.:-]{1,160}$/.test(x))) throw new HttpError(400, 'leadership_call_identity_missing');
       const route = ROUTES[name];
       const stableKey = 'q4-' + createHash('sha256').update(JSON.stringify([jobId, responseId, callId])).digest('hex');
+      const packetRead = packets && name === 'quantus_context' && args.query === 'run.workset';
+      const resumePacket = packetRead && isPacketCursor(args.cursor);
       let payload = null, searchParams = null;
       if (name === 'quantus_command') {
         let parsed;
@@ -63,7 +68,8 @@ export function createLeadershipGateway({ transport, jobTokenIssuer, clock, runK
         const query = name === 'quantus_run_status' ? 'run.status' : args.query;
         searchParams = { query: name === 'quantus_run_status' ? 'run.status' : args.query,
           scopeId: name === 'quantus_run_status' ? statusId : args.scopeId,
-          jobId, pageSize: String(Math.min(50, NAMED_QUERIES[query].maxPageSize)), ...(args.cursor ? { cursor: args.cursor } : {}) };
+          jobId, pageSize: String(Math.min(50, NAMED_QUERIES[query].maxPageSize)),
+          ...(args.cursor && !resumePacket ? { cursor: args.cursor } : {}) };
       }
       const credential = await jobTokenIssuer.mint({ audience: route, jobId, tenant, now: clock.now() });
       if (typeof credential !== 'string' || !credential) throw new HttpError(503, 'job_token_mint_failed');
@@ -71,10 +77,21 @@ export function createLeadershipGateway({ transport, jobTokenIssuer, clock, runK
       let response = await transport.send({ route, method: payload ? 'POST' : 'GET', credential,
         payload, searchParams, idempotencyKey: payload ? stableKey : null, timeoutMs: 20000, signal });
       checkAbort();
+      if (resumePacket) {
+        // Reauthorize through the current C2 route before reading a historical
+        // snapshot. The packet cursor is never passed to the live API.
+        const b = response?.body;
+        if (response?.status !== 200 || b?.ok !== true || b.query !== args.query || b.scopeId !== args.scopeId
+          || !Number.isSafeInteger(b.dataRevision) || b.dataRevision < 0 || typeof b.requestId !== 'string' || !b.requestId
+          || typeof b.serverNow !== 'string' || !Number.isFinite(Date.parse(b.serverNow))
+          || !Array.isArray(b.items) || b.count !== b.items.length)
+          throw new HttpError(403, 'context_packet_authorization_unconfirmed');
+        return packets.resume({ cursor: args.cursor, query: args.query, scopeId: args.scopeId, currentRevision: b.dataRevision });
+      }
       let read;
       if (!payload) {
         read = await completeToolRead({ first: response, query: searchParams.query, scopeId: searchParams.scopeId,
-          cursor: args.cursor, signal, next: async cursor => {
+          cursor: args.cursor, signal, ...(packetRead ? SNAPSHOT_LIMITS : {}), next: async cursor => {
             checkAbort();
             const token = await jobTokenIssuer.mint({ audience: route, jobId, tenant, now: clock.now() });
             checkAbort();
@@ -82,6 +99,13 @@ export function createLeadershipGateway({ transport, jobTokenIssuer, clock, runK
               searchParams: { ...searchParams, cursor }, timeoutMs: 20000, signal });
           } });
         response = read.response;
+        if (packetRead && read.readComplete) {
+          const items = assembleContextItems(response.body.items);
+          response.body = { ...response.body, items, count: items.length,
+            entityVersions: Object.fromEntries(items.filter(i => Number.isSafeInteger(i.entityVersion)).map(i => [i.id, i.entityVersion])) };
+          const packet = await packets.capture(read);
+          if (packet) return packet;
+        }
       }
       // HTTP success alone never proves a write; preserve a dry-run distinctly.
       // HTTP/schema/permission failures go back for deliberate reevaluation.
