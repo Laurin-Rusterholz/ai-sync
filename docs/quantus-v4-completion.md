@@ -627,7 +627,7 @@ Ein Test über die echte installierte Bibliothek bestätigt den tatsächlichen
 
 Die Tests verwenden künstliche Zugangsdaten und HTTP-Antworten. Produktive Secrets
 wurden weder gelesen noch konfiguriert; ein tatsächlicher Kontozugriff ist noch
-nicht nachgewiesen. Der Adapter ist noch an die OpenAI-Workerkomposition anzuschliessen.
+nicht nachgewiesen. Die aktuelle Workeranbindung ist weiter unten beschrieben.
 Der bisherige Netlify-Refreshpfad in `gcal-shared` verwendet nun denselben
 bedingten Schreibweg und unterstützt weiterhin erzwungenes Erneuern. Bestehende
 Kalender-Anmeldungen benötigen dort keinen zusätzlichen Gmail-Scope. Auch die
@@ -656,8 +656,8 @@ Unabhängige Benutzereingaben ausserhalb des Registers bleiben möglich.
 Dies ist die serverinterne Lesegrundlage für die nächste Arbeitsbestandseinbindung.
 Eine Fortsetzungsposition ist ausdrücklich kein Vollständigkeitsnachweis für das
 Modell. Der Verbraucher muss die gesamte Seitenkette speichern und prüfen; die
-Verbindung zu Intake und Kontextpaketen ist unten beschrieben; die automatische
-Quellenaufnahme im Worker und der fachliche Abschluss bleiben offen.
+Verbindung zu Intake, Kontextpaketen und automatischer Quellenaufnahme ist unten
+beschrieben; produktiver Nachweis und fachlicher Abschluss bleiben offen.
 
 ### Registrierte Mailversion als offener Eingang
 
@@ -677,8 +677,8 @@ vollständigen Originalauflösung ausdrücklich als `sourceMissing` mit
 `external_read_required`; interne Speicherorte werden nicht an das Modell gegeben.
 Normale Intake-Kommandos dürfen das serverseitige Referenzfeld nicht setzen.
 
-Die anschliessende Auflösung in den Kontextpaketen ist unten beschrieben. Die
-automatische Quellenaufnahme und Bindung im produktiven Worker fehlen weiterhin.
+Die anschliessende Auflösung und automatische Quellenaufnahme sind unten
+beschrieben. Produktive Konfiguration und Nachweis fehlen weiterhin.
 Ein kompakter Eingang ist kein gelesener Mailinhalt und kein Quellenabschluss.
 T28 und die integrierte Abnahme bleiben offen.
 
@@ -710,6 +710,35 @@ ungelesenen Anhängen. Es erfolgt kein echter Provideraufruf in diesen Tests.
 
 Der gesamte Kontext bleibt derzeit auf 16 MiB begrenzt und die historische
 Versionssuche auf 1000 Vorgänger; Überschreitungen brechen ausdrücklich ab. Die
-automatische Quellenaufnahme und Bindung im Worker, grössere produktive Bestände,
+produktive Aktivierung von Quellenaufnahme und Bindung, grössere Bestände,
 Anhangsauswertung und Laufzeitnachweise bleiben offen. Dies ist kein produktiver
 T28-Nachweis und kein abgeschlossener Probebetrieb.
+
+### Automatischer Quellenabgleich und Eingang vor dem Modell
+
+`gmail-worker-preparation` ist jetzt in die tatsächliche OpenAI-Komposition
+eingebunden. Eine ausdrücklich konfigurierte Pflichtquelle und ein festes
+Mailkonto sind erforderlich; allgemeine Mailquellen benötigen eine explizite
+Gmail-Zuordnung. Fehlende Credentials, mehrere Mailkonten oder widersprüchliche
+Policy-Zuordnung bleiben unavailable. Vor jedem externen Abruf gelten weiterhin
+die vorhandenen Betriebs-/Freigabetore. Der reine Core-Betrieb benötigt keine
+Gmail-Zugangsdaten, sofern keine Mailquelle als Pflichtquelle deklariert ist.
+
+Der Adapter führt dauerhaften Abgleich und aktuelle Originalbindung in Batches
+von höchstens acht internen Checkpoint-Einheiten aus. Jeder zurückgegebene Batch
+wird vom bestehenden Worker als Werkzeugschritt gezählt; 30 Schritte, 20 Minuten
+und Abschnittsfristen werden nicht erweitert. Fehlende Bindungen werden anhand
+des validierten dauerhaften Registers gefunden. Bereits angelegte Eingänge
+behalten Zustand und Kennung. Nach abgeschlossener Aufnahme werden Quellenstatus
+und Laufmarker in derselben CAS-Transaktion geschrieben und zurückgelesen. Vor
+dem ersten Modellaufruf nimmt der nächste Bootstrap alle neuen Eingänge in den
+Tageslauf auf. Quellenstatus `ok` bedeutet Aufnahme und Einbindung, keine fachliche
+Erledigung; Quelllücken bleiben `partial` und erhalten ihre Belege.
+
+Tests mit echtem Gmail-Leser, Originalspeicher, Register, Domain und tatsächlicher
+OpenAI-Komposition belegen die automatische Kette bis zum Modelltransport. Weitere
+Gegenproben prüfen leeres Postfach gegenüber Message-404, verlorene Bestätigung,
+konkurrierende Nutzereingaben, manipulierte Bindungen/Quellenchecks und abgelaufene
+Lease. Alle externen Antworten sind künstlich; produktive Credentials wurden nicht
+eingerichtet. Die tatsächliche Laufzeit grosser Bestände, der Gesamtumfang von
+Anhängen und der vollständige produktive Worker-/14-Tage-Nachweis bleiben offen.
