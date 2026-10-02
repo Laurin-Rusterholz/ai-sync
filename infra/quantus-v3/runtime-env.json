@@ -1,0 +1,31 @@
+{
+  "public": {
+    "worker": ["FIREBASE_PROJECT_ID", "FIREBASE_DATABASE_URL", "QUANTUS_V3_FIREBASE_PROJECT_ID", "QUANTUS_V3_ALLOWED_ORIGINS", "QUANTUS_V3_C2_BASE_URL", "QUANTUS_V3_REQUIRED_SOURCES", "QUANTUS_V3_TOOLS_ENABLED", "QUANTUS_V4_OPENAI_MODEL", "QUANTUS_V4_OPENAI_INPUT_MICROS_PER_MTOK", "QUANTUS_V4_OPENAI_OUTPUT_MICROS_PER_MTOK", "QUANTUS_V4_PROMPT_VERSION", "QUANTUS_V4_ARTIFACT_BUCKET"],
+    "monitor": ["FIREBASE_PROJECT_ID", "FIREBASE_DATABASE_URL"],
+    "watchdog": ["FIREBASE_PROJECT_ID", "FIREBASE_DATABASE_URL"]
+  },
+  "secrets": {
+    "worker": {
+      "FIREBASE_SERVICE_ACCOUNT_JSON": "firebase_worker",
+      "QUANTUS_V3_TAGESBRIEFING_POLICY_JSON": "assistant_policy",
+      "QUANTUS_V3_TOOL_CREDENTIAL_SCHEDULER": "tool_credential",
+      "QUANTUS_V3_COST_POLICY_JSON": "cost_policy",
+      "QUANTUS_V3_WORKER_TOKEN_KEYS": "worker_token_keys",
+      "QUANTUS_V3_SERVICE_CREDENTIALS": "service_credentials",
+      "QUANTUS_V4_OPENAI_API_KEY": "openai_api_key"
+    },
+    "monitor": {
+      "FIREBASE_SERVICE_ACCOUNT_JSON": "firebase_monitor",
+      "QUANTUS_V3_TAGESBRIEFING_POLICY_JSON": "assistant_policy"
+    },
+    "watchdog": { "FIREBASE_SERVICE_ACCOUNT_JSON": "firebase_watchdog" }
+  },
+  "gmail": {
+    "public": ["QUANTUS_V4_GMAIL_ACCOUNT", "QUANTUS_V4_GMAIL_SOURCE_ID", "QUANTUS_V4_GOOGLE_NETLIFY_SITE_ID"],
+    "secrets": {
+      "QUANTUS_V4_GOOGLE_NETLIFY_TOKEN": "gmail_netlify_token",
+      "QUANTUS_V4_GOOGLE_CLIENT_ID": "gmail_client_id",
+      "QUANTUS_V4_GOOGLE_CLIENT_SECRET": "gmail_client_secret"
+    }
+  }
+}

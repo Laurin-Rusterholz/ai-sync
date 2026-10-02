@@ -79,6 +79,8 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Run Quantus regression tests
         run: npm test
+      - name: Run runtime and v4 leadership regressions
+        run: node --test tests/quantus-v3-e2-*.test.mjs tests/quantus-v4-*.test.mjs tests/quantus-v3-cost-policy-port-freshness.test.mjs
 
   runtime-image:
     runs-on: ubuntu-latest
@@ -93,3 +95,19 @@ jobs:
           docker run --rm --network none
           --mount type=bind,source="${{ github.workspace }}/scripts/check-quantus-runtime-image.mjs",target=/check.mjs,readonly
           quantus-runtime-check node /check.mjs
+
+  runtime-infrastructure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.3
+      - name: Validate and exercise infrastructure with an offline Google mock
+        working-directory: infra/quantus-v3
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false -input=false -lockfile=readonly
+          terraform validate
+          terraform test -var-file=tests/runtime.auto.tfvars.json

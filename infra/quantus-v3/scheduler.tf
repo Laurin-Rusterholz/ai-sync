@@ -51,7 +51,7 @@ resource "google_cloud_scheduler_job" "slot" {
   }
 
   http_target {
-    uri         = "${google_cloud_run_v2_service.worker.uri}/v3/slot/start"
+    uri         = "${local.worker_url}/v3/slot/start"
     http_method = "POST"
     headers     = { "Content-Type" = "application/json" }
     # Nur der Slotname. Mandant, Policy-Version und lokales Datum bestimmt
@@ -61,7 +61,7 @@ resource "google_cloud_scheduler_job" "slot" {
 
     oidc_token {
       service_account_email = google_service_account.scheduler_start.email
-      audience              = "${google_cloud_run_v2_service.worker.uri}/v3/slot/start"
+      audience              = "${local.worker_url}/v3/slot/start"
     }
   }
 }
@@ -85,14 +85,14 @@ resource "google_cloud_scheduler_job" "monitor_tick" {
   }
 
   http_target {
-    uri         = "${google_cloud_run_v2_service.monitor.uri}/v3/monitor/tick"
+    uri         = "${local.monitor_url}/v3/monitor/tick"
     http_method = "POST"
     headers     = { "Content-Type" = "application/json" }
     body        = base64encode("{}")
 
     oidc_token {
       service_account_email = google_service_account.scheduler_monitor.email
-      audience              = "${google_cloud_run_v2_service.monitor.uri}/v3/monitor/tick"
+      audience              = "${local.monitor_url}/v3/monitor/tick"
     }
   }
 }
@@ -116,14 +116,14 @@ resource "google_cloud_scheduler_job" "monitor_preflight" {
   }
 
   http_target {
-    uri         = "${google_cloud_run_v2_service.monitor.uri}/v3/monitor/preflight"
+    uri         = "${local.monitor_url}/v3/monitor/preflight"
     http_method = "POST"
     headers     = { "Content-Type" = "application/json" }
     body        = base64encode("{}")
 
     oidc_token {
       service_account_email = google_service_account.scheduler_monitor.email
-      audience              = "${google_cloud_run_v2_service.monitor.uri}/v3/monitor/preflight"
+      audience              = "${local.monitor_url}/v3/monitor/preflight"
     }
   }
 }
@@ -150,14 +150,14 @@ resource "google_cloud_scheduler_job" "watchdog" {
   }
 
   http_target {
-    uri         = "${google_cloud_run_v2_service.watchdog.uri}/v3/watchdog/check"
+    uri         = "${local.watchdog_url}/v3/watchdog/check"
     http_method = "POST"
     headers     = { "Content-Type" = "application/json" }
     body        = base64encode("{}")
 
     oidc_token {
       service_account_email = google_service_account.scheduler_watchdog.email
-      audience              = "${google_cloud_run_v2_service.watchdog.uri}/v3/watchdog/check"
+      audience              = "${local.watchdog_url}/v3/watchdog/check"
     }
   }
 }

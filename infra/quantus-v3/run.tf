@@ -9,38 +9,40 @@
 # Abschnittsfrist (90 s): der Worker beendet sich selbst mit einem
 # Checkpoint, bevor die Plattform ihn abschneidet.
 
+data "google_project" "current" {}
+
 locals {
   gates_json = jsonencode(var.activation_gates)
 
-  worker_url   = google_cloud_run_v2_service.worker.uri
-  monitor_url  = google_cloud_run_v2_service.monitor.uri
-  watchdog_url = google_cloud_run_v2_service.watchdog.uri
+  worker_url   = "https://${local.prefix}-worker-${data.google_project.current.number}.${var.region}.run.app"
+  monitor_url  = "https://${local.prefix}-monitor-${data.google_project.current.number}.${var.region}.run.app"
+  watchdog_url = "https://${local.prefix}-watchdog-${data.google_project.current.number}.${var.region}.run.app"
 
   endpoints_worker = jsonencode({
     "slot.start" = {
-      audience               = "${google_cloud_run_v2_service.worker.uri}/v3/slot/start"
+      audience               = "${local.worker_url}/v3/slot/start"
       allowedServiceAccounts = [google_service_account.scheduler_start.email]
     }
     "run.continue" = {
-      audience               = "${google_cloud_run_v2_service.worker.uri}/v3/run/continue"
+      audience               = "${local.worker_url}/v3/run/continue"
       allowedServiceAccounts = [google_service_account.tasks.email]
     }
   })
 
   endpoints_monitor = jsonencode({
     "monitor.tick" = {
-      audience               = "${google_cloud_run_v2_service.monitor.uri}/v3/monitor/tick"
+      audience               = "${local.monitor_url}/v3/monitor/tick"
       allowedServiceAccounts = [google_service_account.scheduler_monitor.email]
     }
     "monitor.preflight" = {
-      audience               = "${google_cloud_run_v2_service.monitor.uri}/v3/monitor/preflight"
+      audience               = "${local.monitor_url}/v3/monitor/preflight"
       allowedServiceAccounts = [google_service_account.scheduler_monitor.email]
     }
   })
 
   endpoints_watchdog = jsonencode({
     "watchdog.check" = {
-      audience               = "${google_cloud_run_v2_service.watchdog.uri}/v3/watchdog/check"
+      audience               = "${local.watchdog_url}/v3/watchdog/check"
       allowedServiceAccounts = [google_service_account.scheduler_watchdog.email]
     }
   })
@@ -55,6 +57,8 @@ locals {
 }
 
 resource "google_cloud_run_v2_service" "worker" {
+  depends_on          = [google_secret_manager_secret_iam_member.runtime, google_storage_bucket_iam_member.artifact_worker]
+  custom_audiences    = [for endpoint in values(jsondecode(local.endpoints_worker)) : endpoint.audience]
   name                = "${local.prefix}-worker"
   location            = var.region
   ingress             = var.ingress
@@ -72,6 +76,26 @@ resource "google_cloud_run_v2_service" "worker" {
 
     containers {
       image = var.image
+
+      dynamic "env" {
+        for_each = local.runtime_public.worker
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+      dynamic "env" {
+        for_each = local.runtime_secrets.worker
+        content {
+          name = env.key
+          value_source {
+            secret_key_ref {
+              secret  = data.google_secret_manager_secret.runtime[env.value].secret_id
+              version = var.secret_version
+            }
+          }
+        }
+      }
 
       dynamic "env" {
         for_each = local.common_env
@@ -95,37 +119,17 @@ resource "google_cloud_run_v2_service" "worker" {
       }
       env {
         name  = "QUANTUS_V3_TASKS_TARGET_URL"
-        value = "${google_cloud_run_v2_service.worker.uri}/v3/run/continue"
+        value = "${local.worker_url}/v3/run/continue"
       }
       env {
         name  = "QUANTUS_V3_TASKS_OIDC_SERVICE_ACCOUNT"
         value = google_service_account.tasks.email
       }
       env {
-        name  = "QUANTUS_V3_LEASE_HOLDER"
+        name = "QUANTUS_V3_LEASE_HOLDER"
         # Jede Revision ist ein eigener Besitzer; ein Fence unterscheidet
         # zusaetzlich die Instanzen derselben Revision.
         value = "${local.prefix}-worker"
-      }
-
-      # Geheimnisse ausschliesslich als Verweis.
-      env {
-        name = "QUANTUS_V3_TOOL_SERVICE_CREDENTIAL"
-        value_source {
-          secret_key_ref {
-            secret  = data.google_secret_manager_secret.tool_credential.secret_id
-            version = var.secret_version
-          }
-        }
-      }
-      env {
-        name = "QUANTUS_V3_COST_POLICY"
-        value_source {
-          secret_key_ref {
-            secret  = data.google_secret_manager_secret.cost_policy.secret_id
-            version = var.secret_version
-          }
-        }
       }
 
       resources {
@@ -137,14 +141,12 @@ resource "google_cloud_run_v2_service" "worker" {
     }
   }
 
-  lifecycle {
-    # Die Adresse des eigenen Dienstes wird in seine eigene Umgebung
-    # geschrieben; das ist beim ersten Anlegen zwangslaeufig zweistufig.
-    ignore_changes = []
-  }
+
 }
 
 resource "google_cloud_run_v2_service" "monitor" {
+  depends_on          = [google_secret_manager_secret_iam_member.runtime]
+  custom_audiences    = [for endpoint in values(jsondecode(local.endpoints_monitor)) : endpoint.audience]
   name                = "${local.prefix}-monitor"
   location            = var.region
   ingress             = var.ingress
@@ -162,6 +164,26 @@ resource "google_cloud_run_v2_service" "monitor" {
 
     containers {
       image = var.image
+
+      dynamic "env" {
+        for_each = local.runtime_public.monitor
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+      dynamic "env" {
+        for_each = local.runtime_secrets.monitor
+        content {
+          name = env.key
+          value_source {
+            secret_key_ref {
+              secret  = data.google_secret_manager_secret.runtime[env.value].secret_id
+              version = var.secret_version
+            }
+          }
+        }
+      }
 
       dynamic "env" {
         for_each = local.common_env
@@ -189,7 +211,7 @@ resource "google_cloud_run_v2_service" "monitor" {
       }
       env {
         name  = "QUANTUS_V3_TASKS_TARGET_URL"
-        value = "${google_cloud_run_v2_service.worker.uri}/v3/run/continue"
+        value = "${local.worker_url}/v3/run/continue"
       }
       env {
         name  = "QUANTUS_V3_TASKS_OIDC_SERVICE_ACCOUNT"
@@ -207,6 +229,8 @@ resource "google_cloud_run_v2_service" "monitor" {
 }
 
 resource "google_cloud_run_v2_service" "watchdog" {
+  depends_on          = [google_secret_manager_secret_iam_member.runtime]
+  custom_audiences    = [for endpoint in values(jsondecode(local.endpoints_watchdog)) : endpoint.audience]
   name                = "${local.prefix}-watchdog"
   location            = var.region
   ingress             = var.ingress
@@ -224,6 +248,26 @@ resource "google_cloud_run_v2_service" "watchdog" {
 
     containers {
       image = var.image
+
+      dynamic "env" {
+        for_each = local.runtime_public.watchdog
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+      dynamic "env" {
+        for_each = local.runtime_secrets.watchdog
+        content {
+          name = env.key
+          value_source {
+            secret_key_ref {
+              secret  = data.google_secret_manager_secret.runtime[env.value].secret_id
+              version = var.secret_version
+            }
+          }
+        }
+      }
 
       dynamic "env" {
         for_each = local.common_env
