@@ -217,6 +217,14 @@ test("C3a-02 kanonisches Lesen aus dem echten Kern: Notizinhalte, Lead, Laufkont
   assert.equal(kontext.status, 200, JSON.stringify(kontext.body));
   assert.deepEqual(kontext.body.items.map((x) => x.id), ["ctx_chatgptLead_l1", "ctx_chatgptLead_l:9", "ctx_chatgptTask_c1", "ctx_task_t1"]);
   assert.equal(kontext.body.items[0].text, "Bitte Firma Muster AG als Kunde anlegen."); assert.deepEqual(kontext.body.items[0].evidenceRefs, ["ev_l1"]); assert.equal(kontext.body.complete, true);
+  assert.deepEqual(kontext.body.items.map(x => [x.sourceType, x.sourceId]), [['chatgptLead', 'l1'], ['chatgptLead', 'l:9'], ['chatgptTask', 'c1'], ['task', 't1']]);
+  const leaderPolicy = await lese(d, { query: 'policy.current', scopeId: 'policy_current', jobId: RUN_ID, token: leitung });
+  assert.equal(leaderPolicy.status, 200, JSON.stringify(leaderPolicy.body));
+  assert.equal(leaderPolicy.body.items[0].limits.maxWaitDays, POLICY.maxWaitDays);
+  assert.equal(leaderPolicy.body.items[0].limits.sourceMaxAgeMinutes, POLICY.sourceMaxAgeMinutes);
+  assert.deepEqual(leaderPolicy.body.items[0].requiredSources, POLICY.requiredSources);
+  assert.deepEqual(leaderPolicy.body.items[0].closure, POLICY.closure);
+  assert.deepEqual(leaderPolicy.body.items[0].featureFlags, POLICY.featureFlags);
   const warteschlange = await lese(d, { route: "quantus-read", query: "run.queue", scopeId: RUN_ID });
   assert.deepEqual(warteschlange.body.items.map((r) => [r.id, r.date, r.state, r.slot, r.entityVersion]), [[RUN_ID, DATE, "active", "process09", laufVersion(BASIS)]]);
   const policy = await lese(d, { query: "policy.current", scopeId: "policy_" + POLICY_VERSION });
@@ -589,6 +597,20 @@ test("C3a-10 ein Tag ueber C2: Slot-Quittungen, Quellenpruefungen, Belege, Absch
   assert.equal(dw.domain.listPage(w, { query: "run.status", scopeId: "status_" + DATE, pageSize: 5, afterId: null, principal: { role: "backend_checker" } }).items[0].evaluationCached, false);
   const wieder = await sende(dw, { verb: "run.finalize", payload: { outcome: "complete" }, token: checker, expectedEntityVersion: laufVersion(w) });
   assert.equal(wieder.status, 409); assert.equal(wieder.body.reason, "RUN_EXCEPTION_OPEN");
+});
+
+test('v4 assigned status excludes other dates and policy_current works with dotted policy versions', async () => {
+  const env = umgebung();
+  const tomorrow = bCmd(structuredClone(BASIS), 'ensureRun', { date: '2026-09-21' }, K.slotBeginnMs('2026-09-21', 'briefing04') + MIN);
+  const d = deps({ env, store: FC.makeStore({ snapshot: tomorrow }) });
+  const token = await jobToken(env, { role: 'lead_agent', principalId: 'leader', assignedJobIds: [RUN_ID], audience: 'quantus-run-status' });
+  const status = await lese(d, { route: 'quantus-run-status', query: 'run.status', scopeId: 'status_' + DATE, jobId: RUN_ID, token });
+  assert.equal(status.status, 200, JSON.stringify(status.body));
+  assert.deepEqual(status.body.items.map(x => x.runId), [RUN_ID]);
+  const dotted = createQuantusV3DomainAdapter({ policyVersion: '3.0', tenantId: TENANT, mode: 'enforce', now: () => JETZT,
+    ports: { ...PORTS, policy: { ...POLICY, version: '3.0' } } });
+  assert.equal(dotted.loadObject(BASIS, { kind: 'policy', id: 'policy_current', runId: RUN_ID }).policyVersion, '3.0');
+  assert.equal(dotted.loadObject(BASIS, { kind: 'policy', id: 'policy_current', runId: 'run_missing' }), null);
 });
 
 /* ══ 9. Bilanz: jedes Verb positiv nachgewiesen ═════════════════════════ */

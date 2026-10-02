@@ -5,6 +5,7 @@
 import { createHash } from 'node:crypto';
 import { ROLE_POLICY } from '../../../netlify/lib/quantus-v3-auth.mjs';
 import { COMMAND_VERBS, parseCommandEnvelope } from '../../../netlify/lib/quantus-v3-command-envelope.mjs';
+import { NAMED_QUERIES } from '../../../netlify/lib/quantus-v3-cursor.mjs';
 import { validateSchema } from './schema.mjs';
 import { runIdForRunKey, statusScopeIdForRunKey } from './run-ids.mjs';
 import { HttpError } from './errors.mjs';
@@ -55,9 +56,10 @@ export function createLeadershipGateway({ transport, jobTokenIssuer, clock, runK
         if (!envelope.command.lease) throw new HttpError(409, 'leadership_lease_missing');
         payload = envelope.command;
       } else {
+        const query = name === 'quantus_run_status' ? 'run.status' : args.query;
         searchParams = { query: name === 'quantus_run_status' ? 'run.status' : args.query,
           scopeId: name === 'quantus_run_status' ? statusId : args.scopeId,
-          jobId, pageSize: '50', ...(args.cursor ? { cursor: args.cursor } : {}) };
+          jobId, pageSize: String(Math.min(50, NAMED_QUERIES[query].maxPageSize)), ...(args.cursor ? { cursor: args.cursor } : {}) };
       }
       const credential = await jobTokenIssuer.mint({ audience: route, jobId, tenant, now: clock.now() });
       if (typeof credential !== 'string' || !credential) throw new HttpError(503, 'job_token_mint_failed');

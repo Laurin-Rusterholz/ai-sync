@@ -28,10 +28,10 @@ export const VISIBLE_FIELDS = Object.freeze({
   run_status: Object.freeze(["id", "runId", "state", "stage", "entityVersion", "updatedAt", "openQuestions", "blocked",
     "coverage", "operations", "overall", "evaluationCached", "evaluatedAt", "validUntil", "evaluatedRevision", "policyVersion",
     "evaluationReasons", "evaluationReasonCount", "evaluationReasonGroupCount", "evaluationReasonsComplete"]),
-  run_context: Object.freeze(["id", "runId", "kind", "title", "text", "entityVersion", "updatedAt", "evidenceRefs"]),
+  run_context: Object.freeze(["id", "runId", "sourceType", "sourceId", "kind", "title", "text", "entityVersion", "updatedAt", "evidenceRefs"]),
   lead: Object.freeze(["id", "title", "state", "entityVersion", "updatedAt", "waitUntil", "openQuestionId"]),
   note: Object.freeze(["id", "runId", "leadId", "text", "entityVersion", "createdAt", "author"]),
-  policy: Object.freeze(["id", "policyVersion", "mode", "entityVersion", "updatedAt", "limits"]),
+  policy: Object.freeze(["id", "policyVersion", "mode", "entityVersion", "updatedAt", "timezone", "limits", "closure", "featureFlags", "requiredSources", "noExternalSources"]),
   task: Object.freeze(["id", "leadId", "title", "state", "dueAt", "entityVersion", "updatedAt"]),
   intake: Object.freeze(["id", "source", "title", "state", "entityVersion", "createdAt"]),
   question: Object.freeze(["id", "leadId", "text", "state", "entityVersion", "updatedAt"]),
@@ -48,7 +48,9 @@ export const VISIBLE_FIELDS = Object.freeze({
 
 /* Verschachtelte Felder, die ausnahmsweise mitdürfen — mit eigener Liste. */
 const NESTED_FIELDS = Object.freeze({
-  "policy.limits": Object.freeze(["maxLeads", "maxTasks", "maxTokens"]),
+  "policy.limits": Object.freeze(["maxLeads", "maxTasks", "maxTokens", "maxWaitDays", "sourceMaxAgeMinutes", "evaluationTtlMinutes", "deferralLimit"]),
+  "policy.closure": Object.freeze(["earliestLocalTime", "requiredReceipts"]),
+  "policy.featureFlags": Object.freeze(["writes", "runner", "providers"]),
 });
 
 /*
@@ -92,6 +94,12 @@ export function projectItem(category, item) {
     if (!Object.prototype.hasOwnProperty.call(item, feld)) continue;
     const wert = item[feld];
     if (wert === undefined) continue;
+    if (category === 'policy' && feld === 'requiredSources') {
+      if (!Array.isArray(wert) || wert.length > 1000 || wert.some(s => !s || typeof s.id !== 'string'
+        || !/^[A-Za-z0-9_.:-]{1,64}$/.test(s.id) || typeof s.kind !== 'string' || !s.kind || s.kind.length > 128)) return null;
+      out[feld] = wert.map(s => ({ id: s.id, kind: s.kind }));
+      continue;
+    }
     if (category === "run_status" && feld === "evaluationReasons") {
       Object.assign(out, projectEvaluationReasons(wert));
       continue;
@@ -103,7 +111,12 @@ export function projectItem(category, item) {
     if (nested) {
       if (!wert || typeof wert !== "object" || Array.isArray(wert)) continue;
       const teil = {};
-      for (const k of nested) if (Object.prototype.hasOwnProperty.call(wert, k)) teil[k] = wert[k];
+      for (const k of nested) if (Object.prototype.hasOwnProperty.call(wert, k)) {
+        const v = wert[k];
+        if (v === null || ['string', 'boolean'].includes(typeof v) || (typeof v === 'number' && Number.isFinite(v))) teil[k] = v;
+        else if (category === 'policy' && feld === 'closure' && k === 'requiredReceipts' && Array.isArray(v)
+          && v.length <= 4 && v.every(x => ['briefing04', 'process09', 'continue14', 'close23'].includes(x))) teil[k] = [...v];
+      }
       out[feld] = teil;
       continue;
     }
