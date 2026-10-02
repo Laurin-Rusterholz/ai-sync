@@ -387,11 +387,14 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
           });
           break;
         case 'intake': text = String(e.text || ''); details = pick(e, ['channel', 'receivedAt', 'sourceType', 'sourceId']);
+          if (e.answerContext) details.answerContext = pick(e.answerContext, ['answerId', 'questionId', 'sourceType', 'sourceId', 'answeredAt', 'answeredBy']);
           if (e.externalSource !== undefined) details.originalState = 'external_read_required';
           break;
         case 'question': text = String(e.text || ''); details = pick(e, ['sourceType', 'sourceId', 'answerId', 'askedAt']);
           if (Array.isArray(e.options) && e.options.every(x => typeof x === 'string')) details.options = e.options; break;
-        case 'answer': text = String(e.text || ''); details = pick(e, ['questionId', 'answeredAt', 'consumedAt']); break;
+        case 'answer': text = String(e.text || ''); details = pick(e, ['questionId', 'answeredAt', 'consumedAt']);
+          if (e.consumption?.kind === 'intake') details.consumedIntoIntakeId = e.consumption.intakeId;
+          break;
         case 'document': details = { ...pick(e, ['name', 'uploadedAt', 'handledAt']), parse: pick(e.parse, ['outcome', 'textRef', 'extractHash']) }; break;
         case 'job': text = String(e.purpose || ''); details = { ...pick(e, ['sourceType', 'sourceId', 'executor', 'inputVersion', 'expiresAt']),
           result: pick(e.result, ['ref', 'hash', 'summary']), review: pick(e.review, ['verdict', 'resultRef', 'resultHash']) }; break;

@@ -8,6 +8,7 @@ import { setup, T, RUN } from './fixtures/quantus-v4-leadership-fixture.mjs';
 import * as F from './quantus-v3-e2-fixtures.mjs';
 import { reserveCost } from '../netlify/lib/quantus-v3-runtime-state.mjs';
 import { projectPage } from '../netlify/lib/quantus-v3-read-helpers.mjs';
+import { applyCommand } from '../netlify/lib/assistant-core.mjs';
 import { createGmailMessageRegistry } from '../runtime/quantus-v3/src/gmail-message-registry.mjs';
 import { createGmailIntakeBinding } from '../runtime/quantus-v3/src/gmail-intake-binding.mjs';
 
@@ -20,11 +21,20 @@ const costPolicy = { schema: 'quantus-v3-cost-policy/1', version: 'test-only', c
   dayLimitMicros: 1000000, runLimitMicros: 1000000, callLimitMicros: 100000, unresolvedBlockMicros: 1000000,
   featureFlags: { providers: 'live' }, models: { 'openai:test-model': {
     inputMicrosPerMillionTokens: 1000, outputMicrosPerMillionTokens: 1000, maxCallMicros: 100000 } } };
-async function build({ mode = 'live', providerFailure = false, compaction = false, large = false, gmail = false, acquire = false } = {}) {
+async function build({ mode = 'live', providerFailure = false, compaction = false, large = false, gmail = false, acquire = false, reply = false } = {}) {
   const s = await setup(migrateCore({ entities: { tasks: { task1: { id: 'task1', status: 'todo', ...(large ? { notes: 'Large original '.repeat(large === 'long' ? 280000 : 65000) } : {}) } } } }, { now: T }).data);
   const requests = [], tools = [], sourceRequests = [];
   const runPolicy = acquire ? { ...assistantPolicy, noExternalSources: false,
     requiredSources: [...assistantPolicy.requiredSources, { id: 'gmail-inbox', kind: 'mail' }] } : assistantPolicy;
+  if (reply) {
+    for (const [type, payload, actor] of [
+      ['askQuestion', { questionId: 'q1', sourceType: 'task', sourceId: 'task1', text: 'Wie weiter?', options: ['Ja', 'Nein'] }, { kind: 'agent', id: 'agent' }],
+      ['recordAnswer', { answerId: 'a1', questionId: 'q1', text: 'Bitte den bestehenden Auftrag ausführen.' }, { kind: 'user', id: 'owner' }],
+    ]) s.store.forceWrite(data => {
+      const result = applyCommand(data, { type, payload, commandId: 'fixture-' + type, now: T }, { policy: runPolicy, actor });
+      assert.equal(result.ok, true); return result.data;
+    });
+  }
   if (gmail) {
     const source = { core: s.core, clock: s.clock, artifacts: s.artifacts.store, tenant: 'quantus',
       account: 'mail@example.test', sourceId: 'gmail-test', runKey: RUN, sectionId: 'section-1', verifiedScope: s.scope, policy: assistantPolicy };
@@ -112,6 +122,26 @@ async function build({ mode = 'live', providerFailure = false, compaction = fals
     }, ...overrides });
   return { ...s, args, make, requests, tools, env, config, sourceRequests };
 }
+
+test('actual worker consumes user replies into persistent open work before model delivery, with dry-run protection', async () => {
+  const s = await build({ reply: true }); let result;
+  for (let n = 0; n < 25; n++) {
+    result = await (await s.make()).sectionWork.impl.next(s.args);
+    if (result.done || result.blocked) break;
+  }
+  assert.equal(result.done, true, JSON.stringify(result));
+  const data = s.store.snapshot(), answer = data.automation.answersById.a1;
+  assert.ok(answer.consumedAt); assert.equal(answer.consumption.kind, 'intake');
+  assert.equal(data.automation.intakeById[answer.consumption.intakeId].status, 'open');
+  const items = s.requests.flatMap(r => r.input).filter(i => i.type === 'function_call_output')
+    .map(i => JSON.parse(i.output)).flatMap(t => t.response.body.items || []);
+  assert.ok(items.some(i => i.sourceId === answer.consumption.intakeId && i.text.includes('Bitte den bestehenden Auftrag ausführen.')));
+  assert.ok(items.some(i => i.sourceType === 'answer' && JSON.parse(i.contextDetails).consumedIntoIntakeId === answer.consumption.intakeId));
+  const dry = await build({ reply: true, mode: 'dry_run' });
+  assert.equal((await (await dry.make()).sectionWork.impl.next(dry.args)).blocked, true);
+  assert.equal(dry.store.snapshot().automation.answersById.a1.consumedAt, null);
+  assert.equal(dry.requests.length, 0);
+});
 
 test('actual OpenAI worker acquires Gmail, binds intake and persists source status before the first model call', async () => {
   const s = await build({ acquire: true }); let result;

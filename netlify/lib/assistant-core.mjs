@@ -50,6 +50,7 @@ const HANDLER = Object.freeze({
   askQuestion: B.askQuestion,
   recordAnswer: B.recordAnswer,
   consumeAnswer: B.consumeAnswer,
+  consumeAnswerToIntake: B.consumeAnswerToIntake,
   registerEvidence: B.registerEvidence,
   registerDocument: B.registerDocument,
   recordDocumentParse: B.recordDocumentParse,
