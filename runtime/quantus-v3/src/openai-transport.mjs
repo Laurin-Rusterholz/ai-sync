@@ -104,6 +104,7 @@ export function createOpenAITransport({ apiKey, model, modelPricing, fetchImpl =
   const preparedRequests = new WeakMap();
   return Object.freeze({
     provider: 'openai', model, maxOutputTokens,
+    modelPricing: Object.freeze({ inputMicrosPerMillionTokens: inputRate, outputMicrosPerMillionTokens: outputRate }),
     prepare({ instructions, input, tools }) {
       if (typeof instructions !== 'string' || !instructions.trim() || !Array.isArray(input) || !input.length
         || !Array.isArray(tools) || !tools.length || tools.length > 4) throw new TypeError('request_invalid');
@@ -154,6 +155,7 @@ export function createOpenAITransport({ apiKey, model, modelPricing, fetchImpl =
           // Valid billed usage settles even a refused/incomplete/invalid output.
           // Such an output is never handed to the command dispatcher.
           return { outcome: 'settled', actualMicros, usageReceiptId: body.id,
+            usage: { inputTokens: body.usage.input_tokens, outputTokens: body.usage.output_tokens },
             providerRequestId: providerRequestId || body.id, result: modelResult(body, request.definitions) };
         })()]);
         return result;

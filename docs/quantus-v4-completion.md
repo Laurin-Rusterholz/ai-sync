@@ -102,6 +102,38 @@ Die Originalobjekte bleiben über ihre gesondert autorisierten Kontextabfragen l
 abgelaufener grüner Bewertung, nachträglichem Widerspruch, Begrenzung und
 Feldprojektion. Das ist kein Nachweis eines produktiv laufenden Leitungszyklus.
 
+### Dauerhafter OpenAI-Werkzeugzyklus
+
+`leadership-journal.mjs` speichert aktive Anfragen, Modellantworten und
+Werkzeugquittungen unveränderlich über den echten Core-Port samt CAS und
+Idempotenz. Jede Mutation prüft die Lease erneut; bestätigte Schreibvorgänge
+werden unabhängig nachgelesen. Payload-Hashes binden die gespeicherten Inhalte.
+Wiederholungsbelege enthalten nur kleine Quittungen statt vollständiger Antworten.
+Ein Initialisierungsmarker verhindert stillen Neuaufbau eines gelöschten Journals.
+Vor dem nächsten Modellaufruf wird Platz für Antworten und Werkzeugquittungen
+berücksichtigt; bei Kapazitätsmangel stoppt der Ablauf sichtbar.
+
+`leadership-loop.mjs` setzt je Aufruf eine Phase fort: bezahlte Modellantwort,
+Werkzeugquittung oder Modellabschluss. Die Antwort wird vor Werkzeugausführung
+gespeichert; bestätigte Kosten werden aus dem dauerhaften Providerbeleg abgeglichen.
+Auch ein Absturz zwischen Speicherung und Abrechnung benötigt keinen zweiten
+Modellaufruf. Ohne gespeicherte Antwort bleibt eine beanspruchte Anfrage gesperrt.
+Werkzeugwiederholungen behalten die ursprünglichen Response-/Call-Kennungen.
+Unklare Schreibquittungen bleiben blockiert; belegte Versionskonflikte dürfen dem
+Modell zur bewussten Neubewertung zurückgegeben werden. Modelltext finalisiert
+keinen Tageslauf. Modellkonfiguration, Werkzeugkatalog und Leitungsinstruktionen
+bleiben gebunden; Transportpreise müssen bei Reservierung und Versand mit der
+frischen Kostenrichtlinie übereinstimmen.
+
+58 gezielte v4-/Kostenadapterprüfungen bestanden. Die neue Integrationsstrecke
+verwendet das echte Kostenbuch, den echten Idempotenzumschlag, CAS-Prüfstand und
+Responses-Transport mit kontrolliertem Netzersatz. Werkzeugwirkungen werden in
+diesen Loop-Tests durch einen deterministischen Testport dargestellt; die echte
+Gateway-/C2-Strecke hat gesonderte Tests. Noch offen sind die produktive
+Zusammenstellung, vollständiges Kontextladen, verbindlicher Objekt-Readback,
+Archivierung abgeschlossener Journale und die integrierte Abnahme T01–T40.
+Die neue Schleife ist noch nicht als `sectionWork` aktiviert.
+
 ## Abnahmeregister
 
 Jede Zeile braucht konkrete Prüfung, geprüfte Revision, tatsächliches Ergebnis
