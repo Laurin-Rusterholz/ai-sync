@@ -23,7 +23,7 @@ import { createToolClient } from "./tool-ports.mjs";
 import { createGoogleJwksPort, createGoogleAccessTokenSource, createCloudTasksHttpTransport } from "./google-transport.mjs";
 import { createJobTokenIssuer } from "./job-token-issuer.mjs";
 import { externalEffectsAllowed } from "./config.mjs";
-import { createFSourcePorts } from "./f-composition.mjs";
+import { createOpenAIWorkerPorts } from "./openai-composition.mjs";
 
 function structuredLog(entry) {
   process.stdout.write(`${JSON.stringify({ ...entry, service: "quantus-v3" })}\n`);
@@ -103,12 +103,10 @@ if (!resolved.ok) {
       return () => clearTimeout(t);
     },
   });
-  // Baustein F/G: die frueher immer leeren Ports. Fehlt eine Angabe
-  // (Anthropic-Schluessel/-Modell/-Preise, Tagesbriefing-Policy, Gmail-
-  // Zugangsdatum, Kostenrichtlinie), bleibt der jeweilige Port leer mit
-  // benanntem Grund — kein Ersatzbetrieb.
+  // v4-Leitung: kein stiller Rueckfall auf den alten Anthropic-Entwurf.
+  // Fehlende Modelle, Preise, Prompts oder Rechte bleiben benannte Sperren.
   const fPorts = config.role === "worker"
-    ? await createFSourcePorts({ config, corePort, clockPort: clockPort.impl })
+    ? await createOpenAIWorkerPorts({ config, corePort, clockPort: clockPort.impl })
     : { sectionWork: null, costPolicy: null };
   const registry = createPortRegistry(config.role, {
     clock: clockPort,

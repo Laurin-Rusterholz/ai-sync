@@ -27,7 +27,7 @@ async function workerService(options = {}) {
     clock: clock.port, jwks: F.jwksPort(key),
     core: options.coreUnavailable ? F.unavailablePort("core", "integration_cas_envelope_not_wired") : core.port,
     tasks: options.tasksUnavailable ? F.unavailablePort("tasks", "cloud_tasks_client_not_wired") : tasks.port,
-    sectionWork: options.workUnavailable ? F.unavailablePort("sectionWork", "section_work_provider_not_wired") : work.port,
+    sectionWork: options.workPort ?? (options.workUnavailable ? F.unavailablePort("sectionWork", "section_work_provider_not_wired") : work.port),
   };
   const service = await F.startService({ role: "worker", ports, configOverrides: options.configOverrides ?? {} });
   const startToken = () => F.schedulerToken(key, { audience: F.AUD.slotStart, email: F.SA.schedulerStart, nowMs: clock.value });
@@ -44,6 +44,22 @@ function taskHeaders(runKey, continuationId, retryCount = 0) {
 }
 
 /* ── Startlauf ─────────────────────────────────────────────────────────── */
+
+test('blocked leadership phase persists an exception instead of completing or spinning', async t => {
+  let calls = 0;
+  const s = await workerService({ workPort: F.availablePort('sectionWork', { async next() {
+    calls++; return { done: false, blocked: true, reason: 'command_outcome_unconfirmed' };
+  } }) });
+  t.after(() => s.service.close());
+  const res = await s.service.post('/v3/slot/start', { token: s.startToken(), body: { slot: 'process09' } });
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.json.outcome, 'exception_open');
+  assert.equal(res.json.providerOutcome, 'blocked');
+  assert.equal(res.json.reason, 'command_outcome_unconfirmed');
+  assert.equal(res.json.green, false);
+  assert.equal(calls, 1);
+  assert.equal(s.core.store.snapshot().automation.runtime.runsByKey[RUNKEY].phase, 'exception_open');
+});
 
 test("ein Slotstart legt genau einen Lauf an und endet ohne Gruen", async (t) => {
   const s = await workerService({ steps: 2 });

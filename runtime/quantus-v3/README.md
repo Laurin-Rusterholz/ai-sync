@@ -98,3 +98,34 @@ Keine Abhaengigkeiten, kein Bauschritt, kein Geheimnis im Abbild.
 `npm run test:v3-cloud` startet die echten Dienste auf einem lokalen Port
 und spricht sie ueber HTTP an, mit echten RSA-Schluesseln und echten
 Signaturen. Ohne Netz, ohne Zugangsdaten, ohne bezahlten Aufruf.
+
+## v4 OpenAI-Leitung im Worker
+
+`server.mjs` verwendet jetzt `createOpenAIWorkerPorts`, nicht mehr den alten
+Gmail/Anthropic-Entwurfsport. Fehlende Konfiguration sperrt den Worker; sie löst
+keinen Providerwechsel aus. Zusätzlich zu der vorhandenen Runtime-/C2-/Policy-
+Konfiguration werden ausdrücklich benötigt:
+
+- `QUANTUS_V4_OPENAI_API_KEY` als Secret zur Laufzeit
+- `QUANTUS_V4_OPENAI_MODEL` als freigegebene Modellkennung
+- `QUANTUS_V4_OPENAI_INPUT_MICROS_PER_MTOK` und
+  `QUANTUS_V4_OPENAI_OUTPUT_MICROS_PER_MTOK`: ganzzahlige Mikro-USD je Million
+  Tokens; müssen zur aktuell freigegebenen Kostenrichtlinie passen
+- `QUANTUS_V4_PROMPT_VERSION=4.0.0`
+- `QUANTUS_V4_ARTIFACT_BUCKET`: expliziter privater Bucket, dessen öffentliche
+  Zugriffe verhindert sind und der einheitliche Bucket-Rechte nutzt
+- bestehende C1-Job-Token-Konfiguration sowie aktivierte Quantus-Werkzeuge
+
+Quellcode und Konfiguration erteilen keine Aktivierungsfreigabe. Der bekannte
+Live-Gate, die frische Kostenrichtlinie, Lease/Fence und die gemeinsame atomare
+Monatsgrenze gelten unverändert. Ein Abschnitt nutzt den externen Journalstand
+zur Wiederaufnahme. Ein unbekanntes Provider-Ergebnis bleibt blockiert, ebenso
+explizite Budget-/Policy-Sperren; diese werden als offene Ausnahme gespeichert.
+Die Abbruchsignale reichen bis zum C2-Antwortstream.
+
+Noch ausstehend: vollständige Quelladapter/Arbeitsdeckung, unabhängiges Rücklesen
+veränderter Originale, Backend-Antwortkonsum und Abschluss sowie produktive
+Konfiguration/Probebetrieb. Die alte Gmail-F-Komposition bleibt als separat
+getestetes Modul erhalten, ist aber kein Fallback des v4-Servers. Ein
+`model_complete` bestätigt ausschliesslich das Ende des Modellzyklus; der
+Worker benötigt weiterhin den unabhängigen serverseitigen Abschlussnachweis.
