@@ -339,3 +339,26 @@ Nachweise: 158 gezielte v4-/Worker-/C2-/Kostenprüfungen bestehen, einschliessli
 des expliziten Budget-Sperrpfads. Keine produktiven Provideraufrufe oder Gate-Freigaben wurden ausgeführt.
 Quellaktualisierung, Kontextdeckung, Original-Rücklesen und Backend-Finalisierung
 bleiben unvollständig; `model_complete` ersetzt keinen dieser Nachweise.
+
+### Unabhängiges Rücklesen nach Leitungsbefehlen
+
+Erfolgreiche Leitungsbefehle liefern typisierte Referenzen mit Objektversion und
+SHA-256 des vollständigen Originalinhalts (bei Leads/Tasks einschliesslich
+Wartedatensatz). Die neue enge Abfrage `run.readback` liest genau dieses Original
+frisch aus dem Kern, gebunden an den zugewiesenen Tageslauf. Sie ist nur der
+Leitung zugänglich, erlaubt keine Cursor oder beliebigen Pfade und liefert
+Fingerabdrücke statt zusätzliche Rohdaten. Neu angelegte Tasks bleiben über
+ihren bereits zugewiesenen Lead prüfbar, bevor das nächste Inventar läuft.
+
+Der produktive Gateway bestätigt einen Schreibvorgang erst nach den separaten
+Leseaufrufen für alle betroffenen Originale. Identität, Fingerabdruck, Version,
+Tageslauf, vollständige Antwort und Datenrevision müssen passen. Ein fehlender
+Beleg alter Server, ausgeschaltetes Lesewerkzeug, widersprüchliche Version oder
+Leseausfall bleiben unbestätigt. Es entsteht kein zweiter Schreibaufruf.
+
+Die echte C2-Kette bestätigt Lead und Kommentar; die Wiederholung bleibt
+idempotent. Nach Änderung des Originaltexts ohne Änderung des Zustandszählers
+wird der alte Erfolg nicht mehr bestätigt. Die Fachadapterprüfungen lesen auch
+die Belege der übrigen Leitungsverben unmittelbar zurück. Kontextdeckung,
+Quelladapter, Wiederabgleich blockierter Fälle, Backend-Abschluss und
+produktiver Probebetrieb bleiben offene Integrationspunkte.

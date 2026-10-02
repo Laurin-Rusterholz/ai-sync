@@ -33,6 +33,8 @@ import * as E1 from "../netlify/lib/quantus-v3-runtime-state.mjs";
 import * as S from "../netlify/lib/quantus-v3-service.mjs";
 import * as A from "../netlify/lib/quantus-v3-auth.mjs";
 import * as R from "../netlify/lib/quantus-v3-runtime.mjs";
+import { createLeadershipGateway } from "../runtime/quantus-v3/src/leadership-gateway.mjs";
+import { createC2HttpTransport } from "../runtime/quantus-v3/src/c2-transport.mjs";
 import * as IDEM from "../netlify/lib/quantus-v3-idempotency.mjs";
 import { COMMAND_VERB_NAMES } from "../netlify/lib/quantus-v3-command-envelope.mjs";
 import { attSegEncode } from "../netlify/lib/blob-key-policy.mjs";
@@ -135,15 +137,26 @@ const GEPRUEFT = new Set();   // positiv nachgewiesene Verben
 async function sende(d, { verb, payload, token = nutzerToken(), jobId = RUN_ID, expectedEntityVersion = 0, idempotencyKey = null, validateOnly = false, lease = null }) {
   const body = { ...FC.commandBody({ verb, jobId, expectedEntityVersion, payload }), ...(lease ? { lease } : {}) };
   const res = await S.handleCommandRequest(FC.makeRequest({ headers: FC.commandHeaders({ token, origin: APP, idempotencyKey, validateOnly }), body }), d);
+  if (res.body.readbackRefs && res.body.replayed === false) {
+    const current = await d._store.readSnapshot();
+    for (const ref of res.body.readbackRefs) {
+      const page = d.domain.listPage(current, { query: 'run.readback', scopeId: jobId, pageSize: 1,
+        principal: { role: 'lead_agent', jobId }, targetKind: ref.originalKind, targetId: ref.originalId });
+      assert.equal(page.items.length, 1, verb);
+      for (const field of Object.keys(ref)) assert.equal(page.items[0][field], ref[field], `${verb}: ${field}`);
+    }
+  }
   if (res.status === 200 && res.body.applied === true && res.body.replayed === false) GEPRUEFT.add(verb);
   return res;
 }
-async function lese(d, { route = "quantus-context", query, scopeId, pageSize = null, cursor = null, token = nutzerToken(), jobId = null }) {
+async function lese(d, { route = "quantus-context", query, scopeId, pageSize = null, cursor = null, token = nutzerToken(), jobId = null, targetKind = null, targetId = null }) {
   const url = new URL(`${APP}/.netlify/functions/${route}`);
   url.searchParams.set("query", query); url.searchParams.set("scopeId", scopeId);
   if (pageSize != null) url.searchParams.set("pageSize", String(pageSize));
   if (cursor) url.searchParams.set("cursor", cursor);
   if (jobId) url.searchParams.set("jobId", jobId);
+  if (targetKind) url.searchParams.set("targetKind", targetKind);
+  if (targetId) url.searchParams.set("targetId", targetId);
   return S.handleReadRequest(FC.makeRequest({ method: "GET", url: url.toString(), headers: { authorization: `Bearer ${token}`, origin: APP } }), d, { route });
 }
 /* Lease fuer die Leitung — ueber E1, mit dem echten Fence als Rueckgabe. */
@@ -622,4 +635,61 @@ test("C3a-11 Bilanz: alle 23 Verben des Umschlags wurden ueber die echte Kette m
   const fehlend = [...COMMAND_VERB_NAMES].filter((v) => !GEPRUEFT.has(v));
   assert.deepEqual(fehlend, [], "ohne positiven Nachweis: " + fehlend.join(", "));
   assert.equal(GEPRUEFT.size, 23);
+});
+
+
+test('v4 command is confirmed only after independent original readback through real C2 and replay detects content drift', async () => {
+  const leased = mitLease(structuredClone(BASIS));
+  const d = deps({ store: FC.makeStore({ snapshot: leased.data }) });
+  const calls = [];
+  const transport = createC2HttpTransport({ baseUrl: APP, fetchImpl: async (url, init) => {
+    calls.push({ url, method: init.method });
+    const route = new URL(url).pathname.split('/').at(-1);
+    const req = new Request(url, init);
+    const res = init.method === 'POST' ? await S.handleCommandRequest(req, d) : await S.handleReadRequest(req, d, { route });
+    return Response.json(res.body, { status: res.status });
+  } });
+  const gateway = createLeadershipGateway({ transport, tenant: TENANT,
+    runKey: `${TENANT}:${DATE}:process09:${POLICY_VERSION}`, clock: { now: () => JETZT },
+    lease: async () => leased.lease, toolsEnabled: { quantus_command: true, quantus_read: true },
+    jobTokenIssuer: { mint: ({ audience, jobId }) => jobToken(d._env, {
+      audience, jobId, role: 'lead_agent', principalId: 'readback-leader', assignedJobIds: [jobId],
+    }) } });
+  const command = { name: 'quantus_command', arguments: { verb: 'lead.comment', expectedEntityVersion: ver(leased.data, 'chatgptLead', 'l1'),
+    payloadJson: JSON.stringify({ leadId: 'l1', commentId: 'readback-comment', text: 'Persisted original proof' }) } };
+  const identity = { responseId: 'response-readback', callId: 'call-readback' };
+  const first = await gateway.execute(command, identity);
+  assert.equal(first.confirmed, true, JSON.stringify(first));
+  assert.equal(first.readback.originals.length, 2, 'lead and exact new comment are independently checked');
+  assert.deepEqual(calls.map(c => c.method), ['POST', 'GET', 'GET']);
+  const repeated = await gateway.execute(command, identity);
+  assert.equal(repeated.confirmed, true, JSON.stringify(repeated));
+  assert.equal(repeated.response.body.replayed, true);
+  const snapshot = await d._store.readSnapshot();
+  snapshot.entities.chatgptLeads.l1.title = 'Changed outside the operational state counter';
+  await d._store.mutate('app-data.json', () => ({ data: snapshot, result: {} }));
+  const changed = await gateway.execute(command, identity);
+  assert.equal(changed.confirmed, false);
+  assert.equal(changed.response.body.replayed, true);
+  assert.equal(changed.readback.reason, 'original_readback_unconfirmed');
+  const final = await d._store.readSnapshot();
+  assert.equal(final.entities.chatgptLeads.l1.comments.filter(c => c.id === 'readback-comment').length, 1);
+});
+
+
+test('readback endpoint refuses foreign originals, specialists, unsupported kinds and cursors', async () => {
+  const d = deps();
+  const token = await jobToken(d._env, { role: 'lead_agent', principalId: 'readback-leader', assignedJobIds: [RUN_ID], audience: 'quantus-read' });
+  const query = { route: 'quantus-read', query: 'run.readback', scopeId: RUN_ID, jobId: RUN_ID, token, targetKind: 'lead', targetId: 'l1' };
+  const own = await lese(d, query);
+  assert.equal(own.status, 200, JSON.stringify(own.body));
+  assert.equal(own.body.items[0].originalId, 'l1');
+  assert.match(own.body.items[0].fingerprint, /^[a-f0-9]{64}$/);
+  assert.equal(Object.hasOwn(own.body.items[0], 'rawInput'), false);
+  assert.equal((await lese(d, { ...query, targetId: 'l2' })).status, 403);
+  assert.equal((await lese(d, { ...query, targetKind: 'policy' })).status, 400);
+  assert.equal((await lese(d, { ...query, targetKind: null })).status, 400);
+  assert.equal((await lese(d, { ...query, cursor: 'forged' })).status, 400);
+  const specialist = await jobToken(d._env, { role: 'specialist_claude', principalId: 'specialist', jobId: JOB, audience: 'quantus-read' });
+  assert.equal((await lese(d, { ...query, token: specialist, jobId: JOB })).status, 403);
 });

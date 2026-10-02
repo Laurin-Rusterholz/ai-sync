@@ -12,7 +12,7 @@ const metadata = { requestId: 'server_1', serverNow: '2026-10-02T10:00:00Z', dat
 function setup(response = { status: 200, body: { ...metadata, ok: true, applied: true, dryRun: false } }) {
   const calls = [], minted = [];
   const gateway = createLeadershipGateway({
-    transport: { async send(r) { calls.push(r); return structuredClone(response); } },
+    transport: { async send(r) { calls.push(r); return typeof response === 'function' ? response(r) : structuredClone(response); } },
     jobTokenIssuer: { async mint(r) { minted.push(r); return 'fixture-job-token'; } }, clock: { now: () => 1790935200000 },
     runKey: 'tenant:2026-10-02:briefing04:v4', tenant: 'tenant',
     lease: async () => ({ holder: 'holder-1', fence: 2 }),
@@ -32,7 +32,8 @@ test('commands use real envelope validation and stable runtime-owned job, lease 
   const { gateway, calls, minted } = setup();
   const first = await gateway.execute(command, invocation);
   const second = await gateway.execute(command, invocation);
-  assert.equal(first.confirmed, true);
+  assert.equal(first.confirmed, false, "HTTP acknowledgement without original proof is insufficient");
+  assert.equal(first.readback.reason, "readback_references_invalid");
   assert.equal(first.idempotencyKey, second.idempotencyKey);
   assert.equal(calls[0].payload.jobId, 'run_2026-10-02');
   assert.deepEqual(calls[0].payload.lease, { holder: 'holder-1', fence: 2 });
@@ -145,5 +146,38 @@ test('gateway reads through real C2 authentication, signed job token, object bin
     assert.equal(result.confirmed, bound, JSON.stringify(result));
     assert.equal(result.response.status, bound ? 200 : 403);
     assert.ok(!JSON.stringify(result).includes('must not appear'));
+  }
+});
+
+
+test('independent proof must match original identity, full fingerprint, exact version and fresh revision', async () => {
+  const ref = { originalKind: 'lead', originalId: 'lead-1', entityVersion: 6, fingerprint: 'a'.repeat(64) };
+  const ack = { status: 200, body: { ...metadata, ok: true, applied: true, dryRun: false,
+    entityVersions: { 'lead-1': 6 }, readbackRefs: [ref] } };
+  const complete = { ...metadata, ok: true, query: 'run.readback', scopeId: 'run_2026-10-02',
+    items: [{ id: 'proof', runId: 'run_2026-10-02', ...ref }], count: 1, hasMore: false, complete: true, pageStatus: 'done', cursor: null };
+  for (const flaw of ['none', 'fingerprint', 'version', 'identity', 'old_revision', 'wrong_run', 'partial', 'timeout']) {
+    const s = setup(request => {
+      if (request.method === 'POST') return structuredClone(ack);
+      assert.equal(request.route, 'quantus-read');
+      assert.equal(request.searchParams.targetKind, 'lead');
+      assert.equal(request.searchParams.targetId, 'lead-1');
+      assert.equal(request.searchParams.scopeId, 'run_2026-10-02');
+      const body = structuredClone(complete);
+      if (flaw === 'fingerprint') body.items[0].fingerprint = 'b'.repeat(64);
+      if (flaw === 'version') body.items[0].entityVersion++;
+      if (flaw === 'identity') body.items[0].originalId = 'other';
+      if (flaw === 'old_revision') body.dataRevision--;
+      if (flaw === 'wrong_run') body.items[0].runId = 'run_foreign';
+      if (flaw === 'partial') body.complete = false;
+      if (flaw === 'timeout') throw new Error('transport error must not be exposed');
+      return { status: 200, body };
+    });
+    const result = await s.gateway.execute(command, invocation);
+    assert.equal(result.confirmed, flaw === 'none', flaw);
+    assert.equal(s.calls.filter(c => c.method === 'POST').length, 1, 'no command retry');
+    assert.equal(s.calls.length, 2);
+    assert.equal(s.minted[1].audience, 'quantus-read');
+    assert.equal(JSON.stringify(result).includes('transport error must not be exposed'), false);
   }
 });

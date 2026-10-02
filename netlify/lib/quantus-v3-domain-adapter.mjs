@@ -52,6 +52,8 @@
 
 import * as B from "./assistant-core.mjs";
 import * as E1 from "./quantus-v3-runtime-state.mjs";
+import { createHash } from 'node:crypto';
+import { ORIGINAL_READBACK_KINDS, validOriginalId } from './quantus-v4-readback.mjs';
 
 export const ADAPTER_VERSION = "quantus-v3-domain-adapter/2.0.0";
 
@@ -462,6 +464,37 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
     }
   }
 
+  // Fingerprint authoritative originals, not a cached evaluation or the
+  // limited UI projection. Waiting records belong to their source object.
+  function originalReadback(data, kind, id, runId) {
+    if (!ORIGINAL_READBACK_KINDS.includes(kind) || !validOriginalId(id)) throw fail('invalid_request', 'readback_target_invalid', 400);
+    const object = objektLaden(data, kind, id);
+    const createdTaskAnchor = kind === 'task' && object && !object.jobId && object.leadId
+      && leadObjekt(data, object.leadId)?.jobId === runId;
+    if (!object || (!createdTaskAnchor && (kind === 'assignment' ? object.runId : object.jobId) !== runId))
+      throw fail('forbidden', 'readback_target_not_assigned', 403);
+    let raw;
+    if (kind === 'run') raw = laufNachId(data, id);
+    else if (kind === 'lead' || kind === 'task') {
+      const type = object.sourceType;
+      raw = { sourceType: type, source: B.quelleFinden(data, type, id), waiting: data.automation.waitingById[type + ':' + id] || null };
+    } else if (kind === 'question') raw = data.automation.questionsById[id];
+    else if (kind === 'document') raw = data.automation.documentsById[id];
+    else if (kind === 'assignment') raw = data.automation.jobsById[id];
+    else if (kind === 'worker_result') raw = data.automation.jobsById[object.assignmentId];
+    else if (kind === 'note') {
+      const matches = Object.values(data.entities.chatgptLeads).flatMap(l =>
+        Array.isArray(l?.comments) ? l.comments.filter(c => c?.id === id) : []);
+      if (data.entities.chatgptNotes[id]?.assistantNote) matches.push(data.entities.chatgptNotes[id]);
+      if (matches.length !== 1) throw fail('core_invalid', 'readback_note_ambiguous', 503);
+      raw = matches[0];
+    }
+    if (!raw || !Number.isSafeInteger(object.entityVersion) || object.entityVersion < 0)
+      throw fail('core_invalid', 'readback_original_invalid', 503);
+    return { originalKind: kind, originalId: id, entityVersion: object.entityVersion,
+      fingerprint: createHash('sha256').update(B.canonicalJson({ kind, id, raw })).digest('hex') };
+  }
+
   /* ── Lesen ─────────────────────────────────────────────────────────── */
   function loadObject(snapshot, { kind, id, runId = null } = {}) {
     if (typeof id !== "string" || !id) return null;
@@ -478,11 +511,18 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
     const hasMore = start + pageSize < alle.length;
     return { items, hasMore, nextAfterId: hasMore && items.length ? items[items.length - 1].id : null, total: alle.length };
   }
-  function listPage(snapshot, { query, scopeId, pageSize, afterId, principal } = {}) {
+  function listPage(snapshot, { query, scopeId, pageSize, afterId, principal, targetKind, targetId } = {}) {
     const data = kernLesen(snapshot);
     if (!Number.isInteger(pageSize) || pageSize < 1) throw fail("invalid_request", "page_size_invalid", 400);
     const rolle = String(principal?.role || "");
     switch (query) {
+      case 'run.readback': {
+        if (rolle !== 'lead_agent' || principal.jobId !== scopeId) throw fail('forbidden', 'readback_role_or_job_invalid', 403);
+        if (afterId) throw fail('invalid_request', 'readback_cursor_not_allowed', 400);
+        const proof = originalReadback(data, targetKind, targetId, scopeId);
+        const id = 'proof_' + createHash('sha256').update(B.canonicalJson([targetKind, targetId])).digest('hex');
+        return seite([basis('run_context', id, { runId: scopeId, jobId: scopeId, ...proof })], { pageSize, afterId });
+      }
       case "run.context": {
         const run = laufNachId(data, scopeId);
         if (!run) return { items: [], hasMore: false, nextAfterId: null, aborted: true, abortReason: "scope_not_found" };
@@ -816,7 +856,10 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
       if (["ok", "replayed", "serverNow", "dataRevision", "requestId", "data"].includes(k)) continue;
       if (v === null || ["string", "number", "boolean"].includes(typeof v)) effect[k] = v;
     }
-    return { data: r.data, result: { entityVersions, verb, command: VERB_BINDINGS[verb], effect } };
+    const readbackRefs = principal.role === 'lead_agent'
+      ? ids.map(([kind, id]) => originalReadback(r.data, kind, id, befehl.jobId)) : undefined;
+    return { data: r.data, result: { entityVersions, verb, command: VERB_BINDINGS[verb], effect,
+      ...(readbackRefs ? { readbackRefs } : {}) } };
   }
 
   return Object.freeze({

@@ -28,7 +28,7 @@ export const VISIBLE_FIELDS = Object.freeze({
   run_status: Object.freeze(["id", "runId", "state", "stage", "entityVersion", "updatedAt", "openQuestions", "blocked",
     "coverage", "operations", "overall", "evaluationCached", "evaluatedAt", "validUntil", "evaluatedRevision", "policyVersion",
     "evaluationReasons", "evaluationReasonCount", "evaluationReasonGroupCount", "evaluationReasonsComplete"]),
-  run_context: Object.freeze(["id", "runId", "sourceType", "sourceId", "kind", "title", "text", "contextDetails", "state", "sourceMissing", "accountable", "executor", "dueAt", "followUpAt", "entityVersion", "updatedAt", "evidenceRefs"]),
+  run_context: Object.freeze(["id", "runId", "sourceType", "sourceId", "kind", "title", "text", "contextDetails", "state", "sourceMissing", "accountable", "executor", "dueAt", "followUpAt", "entityVersion", "updatedAt", "evidenceRefs", "originalKind", "originalId", "fingerprint"]),
   lead: Object.freeze(["id", "title", "state", "entityVersion", "updatedAt", "waitUntil", "openQuestionId"]),
   note: Object.freeze(["id", "runId", "leadId", "text", "entityVersion", "createdAt", "author"]),
   policy: Object.freeze(["id", "policyVersion", "mode", "entityVersion", "updatedAt", "timezone", "limits", "closure", "featureFlags", "requiredSources", "noExternalSources"]),
@@ -63,6 +63,7 @@ const NESTED_FIELDS = Object.freeze({
  * zur vollen Rechteprüfung jedes einzelnen Eintrags im Dienst.
  */
 export const SCOPE_RELATION = Object.freeze({
+  "run.readback": (item, scopeId) => String(item.runId || '') === scopeId,
   "run.context": (item, scopeId) => String(item.runId || item.jobId || "") === scopeId,
   "lead.context": (item, scopeId) => String(item.id || "") === scopeId,
   "notes.recent": (item, scopeId) => String(item.leadId || "") === scopeId,
