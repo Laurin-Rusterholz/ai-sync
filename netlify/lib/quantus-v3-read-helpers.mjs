@@ -25,7 +25,9 @@ import { NAMED_QUERIES } from "./quantus-v3-cursor.mjs";
    Zeitstempel, kurze Bezeichnung. Freitext nur dort, wo er der Zweck ist. */
 export const VISIBLE_FIELDS = Object.freeze({
   run: Object.freeze(["id", "slot", "date", "state", "entityVersion", "createdAt", "updatedAt", "leaseExpiresAt"]),
-  run_status: Object.freeze(["id", "runId", "state", "stage", "entityVersion", "updatedAt", "openQuestions", "blocked"]),
+  run_status: Object.freeze(["id", "runId", "state", "stage", "entityVersion", "updatedAt", "openQuestions", "blocked",
+    "coverage", "operations", "overall", "evaluationCached", "evaluatedAt", "validUntil", "evaluatedRevision", "policyVersion",
+    "evaluationReasons", "evaluationReasonCount", "evaluationReasonGroupCount", "evaluationReasonsComplete"]),
   run_context: Object.freeze(["id", "runId", "kind", "title", "text", "entityVersion", "updatedAt", "evidenceRefs"]),
   lead: Object.freeze(["id", "title", "state", "entityVersion", "updatedAt", "waitUntil", "openQuestionId"]),
   note: Object.freeze(["id", "runId", "leadId", "text", "entityVersion", "createdAt", "author"]),
@@ -90,6 +92,13 @@ export function projectItem(category, item) {
     if (!Object.prototype.hasOwnProperty.call(item, feld)) continue;
     const wert = item[feld];
     if (wert === undefined) continue;
+    if (category === "run_status" && feld === "evaluationReasons") {
+      Object.assign(out, projectEvaluationReasons(wert));
+      continue;
+    }
+    // Completeness/counts are derived from the actual list, not copied from
+    // a field that could contradict a truncated or malformed projection.
+    if (category === "run_status" && ["evaluationReasonCount", "evaluationReasonGroupCount", "evaluationReasonsComplete"].includes(feld)) continue;
     const nested = NESTED_FIELDS[`${category}.${feld}`];
     if (nested) {
       if (!wert || typeof wert !== "object" || Array.isArray(wert)) continue;
@@ -108,6 +117,29 @@ export function projectItem(category, item) {
     out[feld] = wert;
   }
   return out;
+}
+
+/** Aggregate only server reason codes. No source IDs, details or nested text.
+ * Explicit completeness prevents a bounded list being mistaken for all issues.
+ */
+function projectEvaluationReasons(reasons) {
+  const groups = new Map();
+  let valid = Array.isArray(reasons);
+  for (const reason of Array.isArray(reasons) ? reasons : []) {
+    if (!reason || !["coverage", "operations"].includes(reason.axis)
+      || !["yellow", "red"].includes(reason.severity)
+      || typeof reason.code !== "string" || !/^[A-Z][A-Z0-9_]{0,79}$/.test(reason.code)) { valid = false; continue; }
+    const key = `${reason.axis}:${reason.code}:${reason.severity}`;
+    const group = groups.get(key) || { axis: reason.axis, code: reason.code, severity: reason.severity, count: 0 };
+    group.count++;
+    groups.set(key, group);
+  }
+  return {
+    evaluationReasons: [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).slice(0, 50).map(([, value]) => value),
+    evaluationReasonCount: Array.isArray(reasons) ? reasons.length : null,
+    evaluationReasonGroupCount: groups.size,
+    evaluationReasonsComplete: valid && groups.size <= 50,
+  };
 }
 
 /*

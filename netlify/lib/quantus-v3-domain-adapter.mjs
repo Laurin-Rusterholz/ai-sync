@@ -234,8 +234,8 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
     const jetzt = now();
     let bewertung;
     const cache = istKarte(run.finalEvaluation) ? run.finalEvaluation : null;
-    if (cache && B.isEvaluationCurrent(cache, { run, data, now: jetzt, policy: POLICY }).current === true) bewertung = { coverage: cache.coverage, operations: cache.operations, cached: true };
-    else { const e = B.dailyAssistantTrafficLight(run, data, jetzt, POLICY); bewertung = { coverage: e.coverage, operations: e.operations, cached: false }; }
+    if (cache && B.isEvaluationCurrent(cache, { run, data, now: jetzt, policy: POLICY }).current === true) bewertung = { ...cache, cached: true };
+    else { const e = B.dailyAssistantTrafficLight(run, data, jetzt, POLICY); bewertung = { ...e, cached: false }; }
     const offeneFragen = Object.values(data.automation.questionsById).filter((q) => istKarte(q) && q.status === "open"
       && (q.runDate === run.date || (Array.isArray(run.itemRefs) && run.itemRefs.some((r) => r && r.sourceType === q.sourceType && r.sourceId === q.sourceId)))).length;
     return basis("run_status", "status_" + run.date, {
@@ -243,7 +243,12 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
       entityVersion: Number.isInteger(run.revision) ? run.revision : 0, updatedAt: run.updatedAt || null,
       openQuestions: offeneFragen,
       blocked: run.phase === "exception_open" || bewertung.coverage !== "green" || bewertung.operations !== "green",
-      coverage: bewertung.coverage, operations: bewertung.operations, evaluationCached: bewertung.cached,
+      coverage: bewertung.coverage, operations: bewertung.operations, overall: bewertung.overall,
+      evaluationCached: bewertung.cached, evaluatedAt: bewertung.evaluatedAt, validUntil: bewertung.validUntil,
+      evaluatedRevision: bewertung.evaluatedRevision, policyVersion: bewertung.policyVersion,
+      // The public projection groups reasons by code; source IDs and free text
+      // never leave this status route. Original context requires its own check.
+      evaluationReasons: bewertung.reasons,
     });
   }
   /*
