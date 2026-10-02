@@ -321,6 +321,13 @@ async function runSection(ctx, { runKey, sectionId, lease, resumedFrom, cursor: 
     if (!next || typeof next !== "object" || typeof next.done !== "boolean") {
       throw new HttpError(502, "section_work_response_invalid", { sectionId });
     }
+    if (next.blocked === true) {
+      if (next.done || typeof next.reason !== 'string' || !/^[a-z][a-z0-9_]{0,119}$/.test(next.reason))
+        throw new HttpError(502, 'section_work_response_invalid', { sectionId });
+      stopReason = next.reason;
+      providerOutcome = 'blocked';
+      break;
+    }
     if (next.done) { stopReason = "work_done"; break; }
     if (typeof next.stepId !== "string" || !next.stepId) {
       throw new HttpError(502, "section_work_response_invalid", { sectionId, reason: "step_id" });
@@ -814,7 +821,7 @@ async function advance(ctx, { runKey, sectionId, lease, resumedFrom, cursor = nu
   if (run.stopReason === "work_done") {
     return finishSection(ctx, { runKey, sectionId, fence: lease.fence, steps: run.steps, cursor: run.cursor });
   }
-  if (run.providerOutcome === "unknown") {
+  if (run.providerOutcome === "unknown" || run.providerOutcome === "blocked") {
     // Unklarer externer Ausgang: Checkpoint schreiben, aber sichtbar als
     // Ausnahme — der naechste Versuch darf nicht einfach weiterlaufen.
     const aus = await openException(ctx, {
@@ -825,7 +832,7 @@ async function advance(ctx, { runKey, sectionId, lease, resumedFrom, cursor = nu
       status: 200,
       body: {
         outcome: "exception_open", runKey, sectionId, mode: ctx.config.mode, steps: run.steps, green: false,
-        reason: (run.stopReason || "provider_outcome_unknown").slice(0, 120), providerOutcome: "unknown",
+        reason: (run.stopReason || "provider_outcome_unknown").slice(0, 120), providerOutcome: run.providerOutcome,
         continuationId: aus.continuationId, taskId: aus.taskId ?? undefined,
         enqueued: aus.enqueued, duplicateTask: aus.duplicate,
       },

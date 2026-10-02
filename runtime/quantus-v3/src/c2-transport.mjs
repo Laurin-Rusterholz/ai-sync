@@ -53,7 +53,8 @@ export function createC2HttpTransport({
 
   return {
     baseUrl,
-    async send({ route, method, searchParams = null, payload = null, credential, idempotencyKey = null, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+    async send({ route, method, searchParams = null, payload = null, credential, idempotencyKey = null, timeoutMs = DEFAULT_TIMEOUT_MS, signal }) {
+      if (signal?.aborted) throw new HttpError(409, 'c2_request_interrupted');
       if (!ROUTE_RE.test(String(route))) throw new HttpError(500, "c2_route_unknown", { route: String(route) });
       if (typeof credential !== "string" || !credential) throw new HttpError(503, "tool_credential_missing");
 
@@ -91,6 +92,12 @@ export function createC2HttpTransport({
       const abbruch = new AbortController();
       let reader, rejectDeadline;
       const deadline = new Promise((_, reject) => { rejectDeadline = reject; });
+      const interrupt = () => {
+        abbruch.abort();
+        if (reader) void reader.cancel().catch(() => {});
+        rejectDeadline(new HttpError(409, 'c2_request_interrupted'));
+      };
+      signal?.addEventListener('abort', interrupt, { once: true });
       const frist = setTimeout(() => {
         abbruch.abort();
         if (reader) void reader.cancel().catch(() => {});
@@ -139,7 +146,7 @@ export function createC2HttpTransport({
           if (json !== null && (typeof json !== "object" || Array.isArray(json))) throw new HttpError(502, "c2_response_not_json", { route: String(route), status: antwort.status });
           return { status: antwort.status, body: json };
         })()]);
-      } finally { clearTimeout(frist); }
+      } finally { clearTimeout(frist); signal?.removeEventListener('abort', interrupt); }
 
     },
   };

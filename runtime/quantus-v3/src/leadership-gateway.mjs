@@ -31,7 +31,7 @@ export function leadershipToolDefinitions() {
   ];
 }
 
-export function createLeadershipGateway({ transport, jobTokenIssuer, clock, runKey, tenant, toolsEnabled, lease }) {
+export function createLeadershipGateway({ transport, jobTokenIssuer, clock, runKey, tenant, toolsEnabled, lease, signal }) {
   const jobId = runIdForRunKey(runKey);
   const statusId = statusScopeIdForRunKey(runKey);
   const definitions = leadershipToolDefinitions();
@@ -39,6 +39,8 @@ export function createLeadershipGateway({ transport, jobTokenIssuer, clock, runK
   return Object.freeze({
     definitions: () => structuredClone(definitions),
     async execute({ name, arguments: args }, { responseId, callId } = {}) {
+      const checkAbort = () => { if (signal?.aborted) throw new HttpError(409, 'leadership_interrupted'); };
+      checkAbort();
       const definition = definitions.find(t => t.name === name);
       if (!definition || !validateSchema(args, definition.parameters).ok) throw new HttpError(400, 'leadership_tool_arguments_invalid');
       if (toolsEnabled?.[name] !== true) throw new HttpError(503, 'tool_disabled');
@@ -63,8 +65,10 @@ export function createLeadershipGateway({ transport, jobTokenIssuer, clock, runK
       }
       const credential = await jobTokenIssuer.mint({ audience: route, jobId, tenant, now: clock.now() });
       if (typeof credential !== 'string' || !credential) throw new HttpError(503, 'job_token_mint_failed');
+      checkAbort();
       const response = await transport.send({ route, method: payload ? 'POST' : 'GET', credential,
-        payload, searchParams, idempotencyKey: payload ? stableKey : null, timeoutMs: 20000 });
+        payload, searchParams, idempotencyKey: payload ? stableKey : null, timeoutMs: 20000, signal });
+      checkAbort();
       // HTTP success alone never proves a write; preserve a dry-run distinctly.
       // HTTP/schema/permission failures go back for deliberate reevaluation.
       const receipt = response?.body;

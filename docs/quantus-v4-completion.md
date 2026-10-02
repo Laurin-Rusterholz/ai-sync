@@ -320,3 +320,22 @@ dynamische OAuth-/Kernimporte, beide Prompt-Versionen und einen HTTP-Start
 mit fehlender Konfiguration (503). Die neue v4-Factory muss noch mit dem
 produktiven Abschnittsablauf verbunden werden; vollständige Kontextdeckung,
 Original-Rücklesen, Backend-Prüfung und 14-Tage-Nachweis bleiben offen.
+
+### OpenAI im produktiven Worker-Aufrufweg
+
+`server.mjs` verwendet die neue OpenAI-Komposition. Sie verbindet Startanlage,
+Originalinventar, v4-Anweisungen, echte C2-Werkzeuge, externe Journalablage und
+frische Kostenprüfung mit dem Abschnittsablauf. Die feste gemeinsame
+50-USD-Monatsgrenze wird innerhalb derselben Reservierung geprüft. Fehlende
+Konfiguration wechselt nicht zu Anthropic. Der alte F-Entwurfsadapter bleibt
+separat erhalten, ist nicht mehr der Server-Einstieg.
+
+Explizite Sperren erzeugen eine dauerhafte offene Ausnahme. Ein unbekanntes
+Provider-Ergebnis wird über neu aufgebaute Worker hinweg nicht erneut gesendet.
+Das Abschnitts-Abbruchsignal unterbricht auch hängende C2-Antwortstreams und
+verhindert Werkzeugversand nach abgebrochener Token-Ausstellung.
+
+Nachweise: 158 gezielte v4-/Worker-/C2-/Kostenprüfungen bestehen, einschliesslich
+des expliziten Budget-Sperrpfads. Keine produktiven Provideraufrufe oder Gate-Freigaben wurden ausgeführt.
+Quellaktualisierung, Kontextdeckung, Original-Rücklesen und Backend-Finalisierung
+bleiben unvollständig; `model_complete` ersetzt keinen dieser Nachweise.
