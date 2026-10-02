@@ -26,6 +26,7 @@ import { createGmailWorkerPreparation } from './gmail-worker-preparation.mjs';
 import { createGmailV4Reader } from './gmail-v4-reader.mjs';
 import { createNetlifyGoogleTokenSource } from './google-oauth-token-source.mjs';
 import { externalEffectsAllowed } from './config.mjs';
+import { createAnswerPreparation } from './answer-preparation.mjs';
 
 export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
   envRead = name => process.env[name], artifactStore, jobTokenIssuer,
@@ -95,6 +96,10 @@ export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
         return { holder: verifiedScope.holder, fence: verifiedScope.fence };
       }
       await activeLease();
+      const answers = await createAnswerPreparation({ core: corePort, clock: clockPort, policy: policyResult.policy,
+        tenant: config.tenant, runKey, sectionId, verifiedScope, signal, enabled: externalEffectsAllowed(config) }).next();
+      if (!answers.ready) return answers.blocked ? { done: false, blocked: true, reason: answers.reason }
+        : { done: false, stepId: answers.stepId, durationMs: answers.durationMs, cursor: answers.cursor };
       if (gmailReader) {
         if (!externalEffectsAllowed(config)) return { done: false, blocked: true, reason: 'external_effects_not_allowed' };
         const preparation = createGmailWorkerPreparation({ reader: gmailReader, core: corePort, clock: clockPort,

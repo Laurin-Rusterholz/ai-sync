@@ -338,3 +338,22 @@ in den Lauf auf, bevor das Modell arbeiten darf. Originalauflösung und fachlich
 Abschluss bleiben eigenständige Prüfungen. Dry-run und geschlossene externe
 Freigabetore verhindern schon den Gmail-Abruf. Produktive Zugangsdaten, grosse
 Bestände und Laufzeitnachweise im echten 90-Sekunden-Worker bleiben offen.
+
+### Nutzerantworten als offene Aufträge
+
+Vor Gmail und OpenAI übernimmt `answer-preparation` je Aufruf eine neue Antwort
+mit dem Backend-Befehl `consumeAnswerToIntake`. Verbrauch und neuer offener
+Eingang sind eine CAS-Transaktion und eine Domain-Revision. Der Eingang zeigt
+Frage, Optionen und Antwort als lesbaren Text; `answerContext` erhält die
+ursprüngliche Quellen- und Ereigniszuordnung. Ein deterministischer Schlüssel,
+unveränderte Originale und unabhängiges Zurücklesen sichern Wiederholungen.
+Früher übernommene Eingänge werden bei jedem Aufruf geprüft, auch nach
+verlorener Bestätigung, aber nicht erneut geöffnet. Der nachfolgende Bootstrap
+liefert die neue offene Arbeit an das Modell. Dry-run verbraucht keine Antwort.
+
+Der Befehl ist ausschliesslich systemintern und erweitert weder C2-Rechte noch
+Modellwerkzeuge. Eine auf diesem Weg übernommene Antwort ist kein Beleg für die
+Erledigung ihrer Anweisung (`DONE_ANSWER_IS_INSTRUCTION`). Der ältere allgemeine
+Verbrauchsbefehl bleibt unverändert; diese Garantie beschreibt den neuen
+Backend-Pfad. Produktive Ausführung und abschliessende Tagesprüfung bleiben
+separate, noch offene Nachweise.

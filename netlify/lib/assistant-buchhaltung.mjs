@@ -619,6 +619,9 @@ function abschlussBeleg(data, sourceType, sourceId, evidence) {
     const q = ans && a.questionsById[ans.questionId];
     if (!ans || !q || q.sourceType !== sourceType || q.sourceId !== sourceId) return { ok: false, code: "DONE_EVIDENCE_FOREIGN" };
     if (!ans.consumedAt) return { ok: false, code: "DONE_ANSWER_NOT_CONSUMED" };
+    // Transferring a reply into work proves receipt, not that its requested
+    // action happened. Even an accepted/linked intake is not an action result.
+    if (ans.consumption?.kind === "intake") return { ok: false, code: "DONE_ANSWER_IS_INSTRUCTION" };
     return { ok: true, ref: { kind: "answer", answerId: ans.id } };
   }
   return { ok: false, code: "DONE_EVIDENCE_KIND_UNKNOWN" };
@@ -798,6 +801,43 @@ export function consumeAnswer(input, { answerId, consumer }, ctx) {
   a.consumedBy = String(consumer).trim();
   bump(data, ctx.now);
   return { ok: true, data, answer: a };
+}
+
+export function answerIntakeText(answer, question) {
+  const options = Array.isArray(question.options) && question.options.length
+    ? "\n\nAntwortoptionen:\n" + question.options.map(value => "- " + String(value)).join("\n") : "";
+  return "Frage: " + question.text + options + "\n\nDeine Antwort: " + answer.text;
+}
+export function answerIntakeContext(answer, question) {
+  return { answerId: answer.id, questionId: question.id, sourceType: question.sourceType,
+    sourceId: question.sourceId, answeredAt: answer.answeredAt, answeredBy: answer.answeredBy };
+}
+
+export function consumeAnswerToIntake(input, { answerId, intakeId, consumer }, ctx) {
+  ctxPruefen(ctx);
+  const core = requireCore(input), answer = core.automation.answersById[answerId];
+  const question = answer && core.automation.questionsById[answer.questionId];
+  pruefeId(answerId, "answerId"); pruefeId(intakeId, "intakeId");
+  if (!answer) return fehler("ANSWER_NOT_FOUND", answerId);
+  if (answer.consumedAt) return fehler("ANSWER_ALREADY_CONSUMED", answerId);
+  if (!question || question.id !== answer.questionId || question.status !== "answered" || question.answerId !== answerId
+    || question.answeredAt !== answer.answeredAt || typeof answer.answeredBy !== "string" || !answer.answeredBy
+    || !Number.isFinite(msAus(answer.answeredAt)) || msAus(answer.answeredAt) > ctx.now
+    || !quelleFinden(core, question.sourceType, question.sourceId))
+    return fehler("ANSWER_ORIGIN_INVALID");
+  if (!String(consumer || "").trim()) return fehler("CONSUMER_MISSING");
+  if (core.automation.intakeById[intakeId]) return fehler("INTAKE_IMMUTABLE", intakeId);
+  const text = answerIntakeText(answer, question);
+  const out = registerIntake(core, { intakeId, text, channel: "quantus-answer", receivedAt: answer.answeredAt,
+    sourceType: "answer", sourceId: answerId }, ctx);
+  if (!out.ok || !out.created) return out;
+  out.entry.answerContext = answerIntakeContext(answer, question);
+  // registerIntake already cloned and advanced exactly one domain revision.
+  // The answer is consumed in that same transaction, never ahead of its work.
+  const stored = out.data.automation.answersById[answerId];
+  stored.consumedAt = isoAus(ctx.now); stored.consumedBy = String(consumer).trim();
+  stored.consumption = { kind: "intake", intakeId };
+  return { ok: true, data: out.data, answer: stored, entry: out.entry };
 }
 
 /* ── Dokumente (nur Adapter) ────────────────────────────────────────────

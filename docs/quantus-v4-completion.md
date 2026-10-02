@@ -742,3 +742,29 @@ konkurrierende Nutzereingaben, manipulierte Bindungen/Quellenchecks und abgelauf
 Lease. Alle externen Antworten sind künstlich; produktive Credentials wurden nicht
 eingerichtet. Die tatsächliche Laufzeit grosser Bestände, der Gesamtumfang von
 Anhängen und der vollständige produktive Worker-/14-Tage-Nachweis bleiben offen.
+
+### Antworten einmalig in offene Arbeit übernehmen
+
+Die tatsächliche OpenAI-Komposition übernimmt neue Nutzerantworten vor dem
+Quellenabruf und Modellschritt durch `answer-preparation`. Frage, Antwort und
+ursprüngliche Quelle bleiben verknüpft. Ein lesbarer Eingang mit Frage,
+Antwortoptionen und unverändertem Antworttext entsteht zusammen mit dem
+Verbrauchsvermerk in derselben Domain-Revision. Nur der Backend-Systemakteur
+darf diesen neuen Befehl ausführen. Bestehende Aktivierungs-, Lease- und
+Abschnittsprüfungen gelten weiterhin.
+
+CAS-Wiederholungen prüfen die unveränderten Originalereignisse. Unabhängiges
+Zurücklesen bestätigt Eingang und Verbrauch; nach verlorener Bestätigung wird
+kein zweiter Eingang angelegt. Jeder spätere Durchlauf kontrolliert die vorhandene
+Verknüpfung erneut, ohne bereits bearbeitete Eingänge wieder zu öffnen. Fehlende
+übernommene Arbeit verhindert stillen Fortschritt. Der nächste Bootstrap nimmt
+neue Eingänge in den Tageslauf und den vollständigen Modellkontext auf.
+
+Eine so übernommene Anweisung ist ausdrücklich kein Abschlussbeleg für den Lead:
+Auch ein bereits verknüpfter Eingang und eine behauptete Erledigung genügen
+nicht. Der ältere allgemeine `consumeAnswer`-Pfad wurde damit nicht ersetzt;
+dessen bestehende Belegsemantik bleibt getrennt zu prüfen. Tests decken die
+atomare Übernahme, Wiederholung, verlorene Bestätigung, parallele Nutzereingaben,
+geänderte Originale, fehlenden Rücklesebeleg, Rollen und den tatsächlichen
+Modellkontext ab. Externe Antworten sind künstlich. Produktiver T33-Nachweis,
+fachliche Ausführung des Auftrags und Tagesfinalisierung bleiben offen.

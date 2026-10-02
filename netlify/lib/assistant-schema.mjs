@@ -290,7 +290,7 @@ export const PROTECTED_FIELDS = Object.freeze([
   "finalAt", "closureRevision", "closureCutoff", "closureOutcomes", "finalEvaluation", "phase",
   "invalidatedAt", "archiveRef", "overallGreen", "userApproval", "approved", "approvedBy",
   "operationalState", "operationalStateSource", "operationalStateVersion", "operationalStateUnmapped", "operationalRoles",
-  "consumedAt", "answeredAt", "deferrals", "reviewedAt", "handledAt", "verifiedAt", "verifiedBy",
+  "consumedAt", "consumption", "answerContext", "answeredAt", "deferrals", "reviewedAt", "handledAt", "verifiedAt", "verifiedBy",
   "dataRevision", "revision", "evaluatedRevision", "validUntil", "coverage", "operations", "waitingSince",
   "idempotencyByKey", "activeLease",
 ]);
@@ -333,6 +333,7 @@ export const COMMAND_SCHEMAS = Object.freeze({
   askQuestion:          Object.freeze({ required: ["questionId", "sourceType", "sourceId", "text"], optional: ["date", "options"], actors: ["agent"] }),
   recordAnswer:         Object.freeze({ required: ["answerId", "questionId", "text"], optional: [], actors: ["user"] }),
   consumeAnswer:        Object.freeze({ required: ["answerId", "consumer"], optional: [], actors: ["agent", "system"] }),
+  consumeAnswerToIntake: Object.freeze({ required: ["answerId", "intakeId", "consumer"], optional: [], actors: ["system"] }),
   registerEvidence:     Object.freeze({ required: ["evidenceId", "kind", "ref", "sourceType", "sourceId", "origin", "observedAt", "fingerprint"], optional: ["summary"], actors: ["adapter"] }),
   registerDocument:     Object.freeze({ required: ["documentId", "attachmentId", "name", "hash", "mime", "size", "origin", "linkedTo"], optional: [], actors: ["adapter", "user"] }),
   recordDocumentParse:  Object.freeze({ required: ["documentId", "outcome"], optional: ["error", "textRef", "extractHash"], actors: ["adapter", "agent", "system"] }),
