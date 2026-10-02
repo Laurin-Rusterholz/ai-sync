@@ -27,6 +27,7 @@ import { createGmailV4Reader } from './gmail-v4-reader.mjs';
 import { createNetlifyGoogleTokenSource } from './google-oauth-token-source.mjs';
 import { externalEffectsAllowed } from './config.mjs';
 import { createAnswerPreparation } from './answer-preparation.mjs';
+import { createDailyFinalization } from './daily-finalization.mjs';
 
 export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
   envRead = name => process.env[name], artifactStore, jobTokenIssuer,
@@ -80,7 +81,12 @@ export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
     const openai = createOpenAITransport({ apiKey, model, fetchImpl: providerFetch,
       compactionThreshold: compact === undefined ? null : Number(compact),
       modelPricing: { inputMicrosPerMillionTokens: Number(rates[0]), outputMicrosPerMillionTokens: Number(rates[1]) } });
-    const inner = { async next({ runKey, sectionId, verifiedScope, signal, deadlineAtMs }) {
+    const inner = {
+      resumeFinalized({ runKey, sectionId, verifiedScope, signal }) {
+        return createDailyFinalization({ core: corePort, clock: clockPort, policy: policyResult.policy,
+          tenant: config.tenant, runKey, sectionId, verifiedScope, signal, enabled: externalEffectsAllowed(config) }).next();
+      },
+      async next({ runKey, sectionId, verifiedScope, signal, deadlineAtMs }) {
       const startedAt = clockPort.now();
       function check(data) {
         if (signal?.aborted) throw new HttpError(409, 'leadership_interrupted');
@@ -96,6 +102,10 @@ export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
         return { holder: verifiedScope.holder, fence: verifiedScope.fence };
       }
       await activeLease();
+      const finalization = createDailyFinalization({ core: corePort, clock: clockPort, policy: policyResult.policy,
+        tenant: config.tenant, runKey, sectionId, verifiedScope, signal, enabled: externalEffectsAllowed(config) });
+      if (readRuntime((await corePort.read()).data).runsByKey[runKey].dailyFinalization)
+        return finalization.next();
       const answers = await createAnswerPreparation({ core: corePort, clock: clockPort, policy: policyResult.policy,
         tenant: config.tenant, runKey, sectionId, verifiedScope, signal, enabled: externalEffectsAllowed(config) }).next();
       if (!answers.ready) return answers.blocked ? { done: false, blocked: true, reason: answers.reason }
@@ -147,16 +157,17 @@ export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
         const saved = await corePort.mutate({ commandKey: key, requestId: key, now: clockPort.now(), mutate(data) {
           check(data);
           if (data.automation.dataRevision !== proof.dataRevision) throw new HttpError(409, 'context_changed_before_checkpoint');
-          readRuntime(data).runsByKey[runKey].contextCoverage = { hash, proof };
+          readRuntime(data).runsByKey[runKey].contextCoverage = { hash, proof, checkpointRevision: data.automation.dataRevision + 1 };
           assertActiveRuntimeCapacity(data);
           return { data, result: { hash } };
         } });
         const data = (await corePort.read())?.data;
         check(data);
         const stored = readRuntime(data).runsByKey[runKey].contextCoverage;
-        if (saved.result?.hash !== hash || stored?.hash !== hash || JSON.stringify(stored.proof) !== JSON.stringify(proof))
+        if (saved.result?.hash !== hash || stored?.hash !== hash || JSON.stringify(stored.proof) !== JSON.stringify(proof)
+          || stored.checkpointRevision !== proof.dataRevision + 1 || data.automation.dataRevision !== stored.checkpointRevision)
           throw new HttpError(502, 'context_coverage_readback_failed');
-        return { done: true };
+        return finalization.next();
       }
       if (!['model_recorded', 'tool_recorded'].includes(result.kind)) throw new HttpError(502, 'leadership_phase_invalid');
       return { done: false, stepId: `${result.callId}:${result.kind}`, durationMs: Math.max(0, clockPort.now() - startedAt),

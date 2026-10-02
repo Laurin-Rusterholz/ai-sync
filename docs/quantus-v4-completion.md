@@ -768,3 +768,34 @@ atomare Übernahme, Wiederholung, verlorene Bestätigung, parallele Nutzereingab
 geänderte Originale, fehlenden Rücklesebeleg, Rollen und den tatsächlichen
 Modellkontext ab. Externe Antworten sind künstlich. Produktiver T33-Nachweis,
 fachliche Ausführung des Auftrags und Tagesfinalisierung bleiben offen.
+
+### Backend-Abschluss nach vollständigem Modellkontext
+
+Der `close23`-Pfad der tatsächlichen OpenAI-Komposition ruft jetzt
+`daily-finalization` nach der unabhängigen Kontextprüfung auf. Deren Nachweis
+bindet Originalrevision und die direkt folgende Checkpoint-Revision; ein
+beliebiger späterer Stand oder eine parallele Nutzeränderung reicht nicht.
+Nur der neue Systembefehl `closeRunAfterCoreRead` darf den gerade in derselben
+CAS gelesenen Quantus-Kern prüfen. Externe Quellen behalten ihre echten
+Adapter-Ergebnisse und Zeitpunkte. Anschliessend gelten unverändert alle
+Domain-Bedingungen: Zeitfenster, Slotquittungen, vollständiger Bestand, frische
+Quellen, gültige Belege und beide grünen Achsen.
+
+Kernprüfung, finaler Zustand, Abschlussrevision, Finalnote und Laufmarker werden
+atomar mit einer Domain-Revision gespeichert. Bei verweigertem Abschluss wird
+auch keine vorläufige Kernprüfung geschrieben. Unabhängiges Zurücklesen bindet
+die vollständige Note und den Domain-Bestand. Wiederholung nach verlorener
+Bestätigung oder Fortsetzung mit neuem Fence kann ohne Modellaufruf denselben
+Abschluss bestätigen. Dafür dürfen sich ausschliesslich Laufzeitdaten,
+Idempotenzprotokoll und globale Revision geändert haben; geänderte fachliche
+Originale verweigern diese Wiederholung. Die bestehenden unabhängigen
+Worker-Abschlussbelege bleiben zusätzlich erforderlich.
+
+Tests mit echtem CAS-Umschlag und tatsächlicher OpenAI-Komposition decken den
+berechtigten Abschluss sowie offene Leads, fehlende externe Quellen, geänderte
+Originale, Rollen, verlorene Bestätigung und echte Lease-Fortsetzung ab. Die
+Modell- und Infrastrukturantworten sind künstlich. Tageswellen vor `close23`
+erstellen weiterhin keine Finalnote; ihre Laufzeit-Disposition benötigt noch
+eine explizite Lösung ohne unnötige Abschlusswiederholung. Produktiver T17-/T36-
+Nachweis, spätere Invalidierung im tatsächlichen Worker und Probebetrieb sind
+damit weiterhin nicht abgeschlossen.

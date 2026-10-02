@@ -357,3 +357,25 @@ Erledigung ihrer Anweisung (`DONE_ANSWER_IS_INSTRUCTION`). Der ältere allgemein
 Verbrauchsbefehl bleibt unverändert; diese Garantie beschreibt den neuen
 Backend-Pfad. Produktive Ausführung und abschliessende Tagesprüfung bleiben
 separate, noch offene Nachweise.
+
+### Backend-Tagesabschluss
+
+Nach verifizierter Kontextabdeckung führt `close23` jetzt `daily-finalization`
+aus. `contextCoverage.checkpointRevision` bindet die unmittelbar auf die gelesene
+Originalrevision folgende Protokollierung. Jede weitere Domain-Änderung vor der
+Abschluss-CAS verweigert den Abschluss. Der Systembefehl `closeRunAfterCoreRead`
+erneuert nur den gerade gelesenen Quantus-Kern; externe Quellbelege werden nicht
+ersetzt. Die vollständige bestehende Domain-Prüfung bleibt verbindlich.
+
+Kerncheck, Finalnote, Phase, Abschlussrevision und Marker bilden eine CAS und
+eine Domain-Revision. Nach unabhängiger Rückleseprüfung liefert der Schritt
+`finalized: true`; der HTTP-Worker verlangt zusätzlich seine unabhängigen
+Abschlussbelege. Wiederholung und neue Abschnitts-Lease prüfen den vorhandenen
+Marker vor Quellen-/Modellarbeit. Hashes umfassen den Domain-Bestand und die
+Finalnote; ausschliesslich Laufzeitdaten, Idempotenzprotokoll und globale Revision
+sind für reine technische Fortsetzungen ausgenommen. Änderungen an Originalen
+werden nicht durch ein veraltetes Finalzeichen übergangen.
+
+Vor `close23` bleibt `finalized: false`. Die Tageswellen-Disposition, produktive
+End-to-End-Abnahme und automatische spätere Abschlussinvalidierung bleiben
+offen. Die Tests verwenden künstliche externe Antworten.

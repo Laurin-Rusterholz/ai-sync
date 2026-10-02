@@ -124,6 +124,18 @@ export function closeRun(input, { date, finalNoteId }, ctx) {
   if (run.phase === "final" && run.finalNoteId) return { ok: true, data, already: true, finalNoteId: run.finalNoteId, run };
   if (run.phase === "exception_open") return fehler("RUN_EXCEPTION_OPEN", { invalidatedAt: run.invalidatedAt });
   pruefeId(finalNoteId, "finalNoteId");
+  if (ctx.refreshCoreSourceChecks === true) {
+    if (ctx.actor?.kind !== "system") return fehler("ACTOR_FORBIDDEN");
+    if (!validatePolicy(ctx.policy).ok) return fehler("POLICY_INVALID");
+    // Only this transaction's core read is renewed. External adapters retain
+    // their outcomes, timestamps and cursors. Failure discards this clone.
+    for (const source of ctx.policy.requiredSources.filter(s => s.kind === "quantus-core")) {
+      const check = { cursor: `core-revision:${data.automation.dataRevision}`, checkedAt: isoAus(ctx.now),
+        outcome: "ok", detail: null, checkedBy: ctx.actor.id };
+      run.sourceChecks[source.id] = check;
+      data.automation.sourceCursors[source.id] = { cursor: check.cursor, checkedAt: check.checkedAt, outcome: check.outcome };
+    }
+  }
   const p = pruefeAbschluss(data, { date }, ctx);
   if (!p.ok) return { ok: false, error: "CLOSURE_BLOCKED", detail: p.blockers, evaluation: p.evaluation };
   if (data.entities.chatgptNotes[finalNoteId]) return fehler("NOTE_ID_TAKEN", finalNoteId);
@@ -145,6 +157,11 @@ export function closeRun(input, { date, finalNoteId }, ctx) {
     kind: "assistantFinal", date, runRevision: run.revision, now: ctx.now,
   });
   return { ok: true, data, already: false, finalNoteId, run, evaluation: p.evaluation };
+}
+
+export function closeRunAfterCoreRead(input, payload, ctx) {
+  if (ctx?.actor?.kind !== "system") return fehler("ACTOR_FORBIDDEN");
+  return closeRun(input, payload, { ...ctx, refreshCoreSourceChecks: true });
 }
 
 function finalnotizText(run, evaluation) {
