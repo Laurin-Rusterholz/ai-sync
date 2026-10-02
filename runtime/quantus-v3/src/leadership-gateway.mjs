@@ -9,6 +9,7 @@ import { NAMED_QUERIES } from '../../../netlify/lib/quantus-v3-cursor.mjs';
 import { validateSchema } from './schema.mjs';
 import { runIdForRunKey, statusScopeIdForRunKey } from './run-ids.mjs';
 import { HttpError } from './errors.mjs';
+import { ORIGINAL_READBACK_KINDS, validOriginalId } from '../../../netlify/lib/quantus-v4-readback.mjs';
 
 const ID = { type: 'string', pattern: '^[A-Za-z0-9_:-]{1,120}$' };
 const CURSOR = { type: 'string', maxLength: 4096 };
@@ -77,9 +78,53 @@ export function createLeadershipGateway({ transport, jobTokenIssuer, clock, runK
         && Number.isSafeInteger(receipt.dataRevision) && receipt.dataRevision >= 0);
       const pageValid = Boolean(receipt && Array.isArray(receipt.items) && typeof receipt.hasMore === 'boolean'
         && typeof receipt.complete === 'boolean' && (!receipt.hasMore || (typeof receipt.cursor === 'string' && receipt.cursor)));
-      const confirmed = Boolean(response?.status === 200 && receipt?.ok === true && metadataValid
+      let confirmed = Boolean(response?.status === 200 && receipt?.ok === true && metadataValid
         && (payload ? receipt.applied === true && receipt.dryRun === false : pageValid));
-      return { confirmed, idempotencyKey: payload ? stableKey : null, response };
+      let readback;
+      if (payload && confirmed) {
+        // The acknowledgement proves application, not the independently read
+        // original. Old servers without typed proof references cannot pass.
+        const refs = receipt.readbackRefs;
+        const validRefs = Array.isArray(refs) && refs.length > 0 && refs.length <= 8
+          && refs.every(r => r && Object.keys(r).sort().join(',') === 'entityVersion,fingerprint,originalId,originalKind'
+            && ORIGINAL_READBACK_KINDS.includes(r.originalKind) && validOriginalId(r.originalId)
+            && Number.isSafeInteger(r.entityVersion) && r.entityVersion >= 0
+            && receipt.entityVersions?.[r.originalId] === r.entityVersion
+            && typeof r.fingerprint === 'string' && /^[a-f0-9]{64}$/.test(r.fingerprint))
+          && new Set(refs.map(r => `${r.originalKind}:${r.originalId}`)).size === refs.length;
+        readback = { confirmed: false, reason: 'readback_references_invalid', originals: [] };
+        if (validRefs && toolsEnabled?.quantus_read === true) {
+          try {
+            let revision = null;
+            for (const ref of refs) {
+              checkAbort(); await lease(); checkAbort();
+              const token = await jobTokenIssuer.mint({ audience: 'quantus-read', jobId, tenant, now: clock.now() });
+              checkAbort();
+              const reread = await transport.send({ route: 'quantus-read', method: 'GET', credential: token,
+                searchParams: { query: 'run.readback', scopeId: jobId, jobId, pageSize: '1', targetKind: ref.originalKind, targetId: ref.originalId },
+                timeoutMs: 20000, signal });
+              checkAbort();
+              const body = reread?.body, original = body?.items?.[0];
+              if (reread?.status !== 200 || body?.ok !== true || typeof body.requestId !== 'string' || !body.requestId
+                || typeof body.serverNow !== 'string' || !Number.isFinite(Date.parse(body.serverNow)) || !Number.isSafeInteger(body.dataRevision)
+                || body.dataRevision < receipt.dataRevision || (revision !== null && revision !== body.dataRevision)
+                || body.query !== 'run.readback' || body.scopeId !== jobId || body.hasMore !== false
+                || body.complete !== true || body.pageStatus !== 'done' || body.cursor !== null
+                || body.count !== 1 || body.items.length !== 1 || original?.runId !== jobId
+                || original.originalKind !== ref.originalKind || original.originalId !== ref.originalId
+                || original.entityVersion !== ref.entityVersion || original.fingerprint !== ref.fingerprint)
+                throw new HttpError(502, 'original_readback_mismatch');
+              revision = body.dataRevision;
+              readback.originals.push({ ...ref, dataRevision: revision, requestId: body.requestId, serverNow: body.serverNow });
+            }
+            readback.confirmed = true; readback.reason = null;
+          } catch {
+            readback.reason = signal?.aborted ? 'readback_interrupted' : 'original_readback_unconfirmed';
+          }
+        } else if (validRefs) readback.reason = 'readback_tool_disabled';
+        confirmed = readback.confirmed;
+      }
+      return { confirmed, idempotencyKey: payload ? stableKey : null, response, ...(readback ? { readback } : {}) };
     },
   });
 }

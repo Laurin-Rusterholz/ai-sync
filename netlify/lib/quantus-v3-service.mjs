@@ -51,6 +51,7 @@ import {
 import { parseCommandEnvelope, parseIdempotencyKey } from "./quantus-v3-command-envelope.mjs";
 import { resolveCursorConfig, signCursor, verifyCursor, describePage, isDataRevision, NAMED_QUERIES, SCOPE_OBJECT_KINDS } from "./quantus-v3-cursor.mjs";
 import { projectPage, pageSizeFor, entityVersionsOf, belongsToScope } from "./quantus-v3-read-helpers.mjs";
+import { ORIGINAL_READBACK_KINDS, validOriginalId } from './quantus-v4-readback.mjs';
 
 export const CORE_KEY = "app-data.json";
 
@@ -58,7 +59,7 @@ export const CORE_KEY = "app-data.json";
    Selbstbedienungsladen: was hier nicht steht, gibt es dort nicht. */
 export const ROUTE_QUERIES = Object.freeze({
   "quantus-context": Object.freeze(["run.context", "lead.context", "notes.recent", "policy.current"]),
-  "quantus-read": Object.freeze(["lead.context", "notes.recent", "policy.current", "run.queue"]),
+  "quantus-read": Object.freeze(["lead.context", "notes.recent", "policy.current", "run.queue", "run.readback"]),
   "quantus-run-status": Object.freeze(["run.status", "run.queue", "run.sourceChecks"]),
 });
 
@@ -616,6 +617,14 @@ export async function handleReadRequest(req, deps = {}, { route } = {}) {
   const query = String(url.searchParams.get("query") || "");
   if (!erlaubteAbfragen.includes(query)) return denial(authError("forbidden", "query_not_allowed"), { requestId });
   const named = NAMED_QUERIES[query];
+  let readbackTarget = {};
+  if (query === 'run.readback') {
+    const targetKind = url.searchParams.get('targetKind'), targetId = url.searchParams.get('targetId');
+    if (!ORIGINAL_READBACK_KINDS.includes(targetKind) || !validOriginalId(targetId)
+      || url.searchParams.getAll('targetKind').length !== 1 || url.searchParams.getAll('targetId').length !== 1
+      || url.searchParams.has('cursor')) return denial(authError('invalid_request', 'readback_target_invalid'), { requestId });
+    readbackTarget = { targetKind, targetId };
+  }
 
   const scopeId = String(url.searchParams.get("scopeId") || "");
   if (!/^[A-Za-z0-9_:-]{1,120}$/.test(scopeId) || scopeId.includes("__")) {
@@ -633,6 +642,9 @@ export async function handleReadRequest(req, deps = {}, { route } = {}) {
   });
   if (!ausweis.ok) return denial(ausweis, { requestId });
   const principal = ausweis.principal;
+
+  if (query === 'run.readback' && principal.role !== 'lead_agent')
+    return denial(authError('forbidden', 'readback_role_invalid'), { requestId });
 
   const herkunft = evaluateOrigin({ origin: header("origin"), principalKind: principal.kind, config });
   if (!herkunft.ok) return denial(herkunft, { requestId });
@@ -706,6 +718,7 @@ export async function handleReadRequest(req, deps = {}, { route } = {}) {
   try {
     rohdaten = deps.domain.listPage(snapshot, {
       query, scopeId, pageSize: page.pageSize, afterId: page.afterId, principal,
+      ...readbackTarget,
     });
   } catch (err) {
     // Ein Fachadapter, der mit bekanntem Code ablehnt (z. B. forbidden: kein

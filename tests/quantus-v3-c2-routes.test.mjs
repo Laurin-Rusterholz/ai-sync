@@ -85,9 +85,9 @@ test("ohne Konfiguration antwortet jede Route 503 — als echte Response", async
 
 test("die Zuordnung Route → benannte Abfragen ist eng und vollständig", () => {
   assert.deepEqual(Object.keys(ROUTE_QUERIES).sort(), ["quantus-context", "quantus-read", "quantus-run-status"]);
-  for (const [route, abfragen] of Object.entries(ROUTE_QUERIES)) {
-    assert.ok(abfragen.length > 0 && abfragen.length <= 4, `${route} bedient zu viele Abfragen`);
-  }
+  assert.deepEqual(ROUTE_QUERIES['quantus-read'], ['lead.context', 'notes.recent', 'policy.current', 'run.queue', 'run.readback']);
+  assert.deepEqual(ROUTE_QUERIES['quantus-context'], ['run.context', 'lead.context', 'notes.recent', 'policy.current']);
+  assert.deepEqual(ROUTE_QUERIES['quantus-run-status'], ['run.status', 'run.queue', 'run.sourceChecks']);
   // Der Befehlsweg hat keine Leseabfragen.
   assert.equal(Object.prototype.hasOwnProperty.call(ROUTE_QUERIES, "quantus-ingest"), false);
 });
