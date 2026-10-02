@@ -585,12 +585,12 @@ test("Cowork ohne Rueckalauftermin ist rot (fehlender naechster Schritt), auch o
 });
 
 // ── renderV3ChatgptCockpit: A (Entscheidungen), B (Fragen/Fragemorgen), E, F ──
-test("Fragemorgen: eine fuer morgen vorgemerkte Frage erscheint HEUTE nicht im Briefing", () => {
+test("v4: eine fuer morgen vorgemerkte unbeantwortete Frage erscheint sofort", () => {
   const mod = loadModule()(appWith({ entities: {} }), {});
   const leads = [{ id: "l1", title: "Anfrage Meier", operationalState: "information_required", pendingQuestion: { text: "Preis ok?" }, questionForBriefingAt: "2026-09-22T04:00:00.000Z" }];
   const html = mod.renderV3ChatgptCockpit(leads, { nowMs: Date.parse("2026-09-21T10:00:00.000Z") });
-  assert.match(html, /Fragen von ChatGPT[\s\S]*?\(0\)/, "eine erst morgen faellige Frage darf heute nicht gezaehlt werden");
-  assert.doesNotMatch(html, /Preis ok\?/, "der Fragetext darf vor Faelligkeit nicht erscheinen");
+  assert.match(html, /Fragen von ChatGPT[\s\S]*?\(1\)/, "v4: offene Rueckfragen sofort sichtbar");
+  assert.match(html, /Preis ok\?/, "v4: der Fragetext muss sofort erscheinen");
 });
 
 test("Fragemorgen: nach Ablauf der Frist (heute >= questionForBriefingAt) erscheint dieselbe Frage sichtbar mit Antwortfeld", () => {
@@ -599,7 +599,8 @@ test("Fragemorgen: nach Ablauf der Frist (heute >= questionForBriefingAt) ersche
   const html = mod.renderV3ChatgptCockpit(leads, { nowMs: Date.parse("2026-09-21T10:00:00.000Z") });
   assert.match(html, /Fragen von ChatGPT[\s\S]*?\(1\)/);
   assert.match(html, /Preis ok\?/);
-  assert.match(html, /Optionen: Ja, Nein/);
+  assert.match(html, /data-action="cgl-select-answer"[^>]*data-answer="Ja"/);
+  assert.match(html, /data-action="cgl-select-answer"[^>]*data-answer="Nein"/);
   assert.match(html, /data-action="cgl-answer-question" data-id="l1"/, "die Antwort muss ueber die echte, einmalig verarbeitbare Aktion auf demselben Lead laufen");
 });
 
