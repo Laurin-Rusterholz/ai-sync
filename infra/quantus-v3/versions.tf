@@ -1,9 +1,9 @@
 # ══ Quantus Tagesbriefing v3 — Infrastruktur (Paket E2) ═══════════════════
 #
 # NICHT AUSGEROLLT. Diese Definitionen sind zur Pruefung da, nicht zum
-# Anwenden. Es wurde kein `terraform init`, `plan` oder `apply` ausgefuehrt,
-# kein Projekt angelegt, keine API aktiviert, kein Dienstkonto erzeugt und
-# kein Schluessel angefasst.
+# produktiven Anwenden. Offline validiert und mit simuliertem Provider
+# getestet. Kein Projekt angelegt, keine API aktiviert, kein produktives
+# Dienstkonto erzeugt und kein Schluessel angefasst.
 #
 # Bewusst NICHT enthalten:
 #   · `google_project_service` — dieses Paket aktiviert keine
@@ -17,12 +17,12 @@
 # ═════════════════════════════════════════════════════════════════════════
 
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.9.0"
 
   required_providers {
     google = {
       source  = "hashicorp/google"
-      version = ">= 6.0.0"
+      version = "~> 6.0"
     }
   }
 }

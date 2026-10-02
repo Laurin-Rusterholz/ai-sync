@@ -74,6 +74,22 @@ export function resolveRuntimeConfig(envRead) {
   const invalid = [];
   const need = (name) => { const v = read(name); if (v === undefined) missing.push(name); return v; };
 
+  // Deployed roles must use the same identity to which Terraform grants IAM.
+  // Legacy/local configurations can omit this guard; the deployment always sets it.
+  const expectedAccount = read("QUANTUS_V3_EXPECTED_SERVICE_ACCOUNT");
+  if (expectedAccount !== undefined) {
+    if (!SA_RE.test(expectedAccount)) invalid.push("QUANTUS_V3_EXPECTED_SERVICE_ACCOUNT");
+    const rawAccount = need("FIREBASE_SERVICE_ACCOUNT_JSON");
+    const parsed = parseJson(rawAccount);
+    if (rawAccount !== undefined && (!parsed.ok || !isRecord(parsed.value)
+      || parsed.value.type !== "service_account" || parsed.value.client_email !== expectedAccount
+      || typeof parsed.value.private_key !== "string" || !parsed.value.private_key.trim())) {
+      invalid.push("FIREBASE_SERVICE_ACCOUNT_JSON:runtime_identity_mismatch");
+    }
+    // The shared token provider gives a user refresh token precedence over JSON.
+    if (read("FIREBASE_OAUTH_REFRESH_TOKEN")) invalid.push("FIREBASE_OAUTH_REFRESH_TOKEN:runtime_identity_override");
+  }
+
   const role = need("QUANTUS_V3_RUNTIME_ROLE");
   if (role !== undefined && !RUNTIME_ROLES.includes(role)) invalid.push("QUANTUS_V3_RUNTIME_ROLE");
   const tenant = need("QUANTUS_V3_TENANT");

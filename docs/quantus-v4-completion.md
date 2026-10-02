@@ -858,3 +858,14 @@ authentifizierten HTTP-Monitor. Abgedeckt sind mehrere Tage, neue Eingänge,
 Parallelität, aufgehobene Widersprüche, fehlende Notizen/Marker, deaktivierte
 Schreibwirkungen und Policy-Grenzen. Produktive Monitor-Konfiguration, Warnkanal,
 Archivierung alter Korrekturbelege und der T18-/14-Tage-Nachweis bleiben offen.
+
+
+## Bereitstellungsvertrag und Rollenidentitaet (2026-10-03)
+
+Die Terraform-Definition verwendete veraltete Namen fuer Werkzeugzugang und Kostenpolicy; weitere von der v4-Laufzeit verlangte Einstellungen fehlten. Der gemeinsame Vertrag `infra/quantus-v3/runtime-env.json` versorgt jetzt die drei Rollen mit ihren konkreten oeffentlichen Variablen und getrennten Secret-Manager-Verweisen. Der Worker bekommt Modell-, Prompt-, Preis-, Policy-, C2- und Auftragstoken-Konfiguration, optional den vorhandenen Gmail-OAuth-Speicher; Monitor und Watchdog erhalten ausschliesslich ihre erforderlichen Geheimnisse. Der private Originalspeicher wird mit einheitlichen Bucket-Rechten, Public-Access-Prevention und einem auf Lesen/Anlegen beschraenkten Worker-Recht definiert.
+
+Selbstreferenzen auf die erst zu erstellenden Dienstadressen sind entfernt. Deterministische Adressen und routenspezifische Cloud-Run-Custom-Audiences stimmen mit den Scheduler- und Fortsetzungszielen ueberein. Der Runtime-Konfigurator weist fremde/mangelhafte Dienstkonto-JSON und einen vorrangigen Benutzer-OAuth-Refresh zurueck, wenn die von Terraform gesetzte erwartete Rollenidentitaet vorliegt. Das beweist weder Schluesselgueltigkeit noch tatsaechlich vorhandene Cloud-Berechtigungen.
+
+Pruefstand: Terraform 1.13.3, gesperrter Google-Provider 6.50.0; echte Terraform-Validierung und fuenf simulierte Infrastrukturtests (vollstaendige Rollen, fehlende Angaben, Gmail-Isolation, geteilte Geheimnisse). Zehn Node-Vertragstests initialisieren die wirklichen Runtime-/Auth-/Policy-/Leitungs-Ports mit derselben Zuordnung und pruefen Identitaetsfehler ohne Geheimnisausgabe. CI fuehrt diese Infrastrukturtests sowie die Runtime-/v4-Regressionssuite aus. Geheimnisse und Cloud-Ressourcen werden dabei nicht produktiv verwendet.
+
+Weiter offen: konkrete produktive Werte und Secret-Versionen, C2-Gleichstand, Firebase-/IAM-Zugriff, erfolgreicher authentifizierter Aufruf durch die echte Cloud-Run-Schicht, Alarmkanal, alle Schreibclients, vollstaendige Quellen-/Spezialisten-/Archivierungsstrecken und echter 14-Tage-Probebetrieb. Kein Abnahmepunkt wird allein durch diese Offline-Konfiguration als produktiv bestanden markiert; alle Zeitplaene bleiben pausiert.

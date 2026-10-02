@@ -33,7 +33,7 @@ output "scheduler_jobs_paused" {
   value = alltrue(concat(
     [for job in google_cloud_scheduler_job.slot : job.paused],
     [google_cloud_scheduler_job.monitor_tick.paused,
-    google_cloud_scheduler_job.monitor_preflight.paused,
+      google_cloud_scheduler_job.monitor_preflight.paused,
     google_cloud_scheduler_job.watchdog.paused],
   ))
 }

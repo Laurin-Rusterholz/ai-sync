@@ -149,8 +149,8 @@ variable "ingress" {
     gegen die aktuelle Google-Dokumentation pruefen, ob Scheduler und Tasks
     im gewaehlten Aufbau als internal gelten.
   EOT
-  type    = string
-  default = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  type        = string
+  default     = "INGRESS_TRAFFIC_INTERNAL_ONLY"
   validation {
     condition     = contains(["INGRESS_TRAFFIC_INTERNAL_ONLY", "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"], var.ingress)
     error_message = "Oeffentlicher Ingress ist fuer diese Dienste nicht zulaessig."

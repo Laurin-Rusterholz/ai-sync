@@ -3,7 +3,7 @@
 # Jeder Wert hier ist ein Platzhalter und wird sowohl von den
 # Terraform-Validierungen als auch von `node validate.mjs` abgewiesen.
 # Es steht KEIN Geheimnis in dieser Datei und es darf nie eines
-# hineingeschrieben werden: die beiden Secret-Variablen nehmen den NAMEN
+# hineingeschrieben werden: die Secret-Variablen nehmen den NAMEN
 # eines Secret-Manager-Eintrags, nicht seinen Inhalt.
 
 project_id     = "REPLACE-ME-project-id"
@@ -33,3 +33,43 @@ activation_gates = {
   monitorWatchdogProven = { passed = false, ref = "" }
   trial14Days           = { passed = false, ref = "" }
 }
+
+# Alle benoetigten Einstellungen; Werte erst nach fachlicher Pruefung setzen.
+runtime_settings = {
+  FIREBASE_PROJECT_ID = "REPLACE-ME"
+  FIREBASE_DATABASE_URL = "REPLACE-ME"
+  QUANTUS_V3_FIREBASE_PROJECT_ID = "REPLACE-ME"
+  QUANTUS_V3_ALLOWED_ORIGINS = "REPLACE-ME"
+  QUANTUS_V3_C2_BASE_URL = "REPLACE-ME"
+  QUANTUS_V3_REQUIRED_SOURCES = "REPLACE-ME"
+  QUANTUS_V3_TOOLS_ENABLED = "REPLACE-ME"
+  QUANTUS_V4_OPENAI_MODEL = "REPLACE-ME"
+  QUANTUS_V4_OPENAI_INPUT_MICROS_PER_MTOK = "REPLACE-ME"
+  QUANTUS_V4_OPENAI_OUTPUT_MICROS_PER_MTOK = "REPLACE-ME"
+  QUANTUS_V4_PROMPT_VERSION = "REPLACE-ME"
+  QUANTUS_V4_ARTIFACT_BUCKET = "REPLACE-ME"
+}
+
+runtime_secret_ids = {
+  firebase_worker = "REPLACE-ME-firebase_worker"
+  firebase_monitor = "REPLACE-ME-firebase_monitor"
+  firebase_watchdog = "REPLACE-ME-firebase_watchdog"
+  assistant_policy = "REPLACE-ME-assistant_policy"
+  worker_token_keys = "REPLACE-ME-worker_token_keys"
+  service_credentials = "REPLACE-ME-service_credentials"
+  openai_api_key = "REPLACE-ME-openai_api_key"
+}
+
+# Bei Gmail/mail in der Policy ist dieser gesamte Block erforderlich.
+# gmail = {
+#   settings = {
+#     QUANTUS_V4_GMAIL_ACCOUNT = "REPLACE-ME"
+#     QUANTUS_V4_GMAIL_SOURCE_ID = "REPLACE-ME"
+#     QUANTUS_V4_GOOGLE_NETLIFY_SITE_ID = "REPLACE-ME"
+#   }
+#   secret_ids = {
+#     gmail_netlify_token = "REPLACE-ME"
+#     gmail_client_id = "REPLACE-ME"
+#     gmail_client_secret = "REPLACE-ME"
+#   }
+# }
