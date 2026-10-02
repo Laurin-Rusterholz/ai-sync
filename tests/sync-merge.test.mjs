@@ -52,6 +52,29 @@ function loadMergeData() {
 }
 const mergeData = loadMergeData();
 
+// Daily notes must not resurrect an old long report after a shorter update.
+{
+  const data = entry => ({ entities: {}, dailyBriefing: { dailyLog: { '2026-10-02': entry } } });
+  const cases = [
+    [{notes:'Old long weekly report'}, {notes:'New',notesUpdatedAt:'2026-10-02T12:00:00Z'}, 'New'],
+    [{notes:'Old long weekly report',notesUpdatedAt:'2026-10-02T11:00:00Z'}, {notes:'',notesUpdatedAt:'2026-10-02T12:00:00Z'}, ''],
+    [{notes:'Old long weekly report',notesUpdatedAt:'invalid'}, {notes:'New',notesUpdatedAt:1790942400000}, 'New'],
+    [{notes:'Legacy'}, {notes:'Long legacy report'}, 'Long legacy report'],
+    [{notes:'aa',notesUpdatedAt:100}, {notes:'bb',notesUpdatedAt:100}, 'bb'],
+  ];
+  for (const [a,b,expected] of cases) {
+    for (const [l,r] of [[a,b],[b,a]]) {
+      const merged = mergeData(data(l),data(r)).dailyBriefing.dailyLog['2026-10-02'];
+      assert.equal(merged.notes,expected);
+      assert.equal(mergeData(data(merged),data(l)).dailyBriefing.dailyLog['2026-10-02'].notes,expected);
+    }
+  }
+  const result = mergeData(data({notes:'old',routineChecks:{a:true},custom:'keep'}),data({notes:'new',notesUpdatedAt:100,routineChecks:{b:true}})).dailyBriefing.dailyLog['2026-10-02'];
+  assert.deepEqual(result.routineChecks,{b:true,a:true});
+  assert.equal(result.custom,'keep');
+  assert.equal(result.notesUpdatedAt,100);
+}
+
 // ── 1. Kein Bereich faellt still unter den Tisch ───────────────────────────
 {
   const local = {
