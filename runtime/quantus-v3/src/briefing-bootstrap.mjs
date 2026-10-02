@@ -38,8 +38,9 @@ export function createBriefingSectionWork({ core, clock, policy, config, inner }
         if (signal?.aborted) fail('briefing_bootstrap_aborted');
         assertLeadership(data, verifiedScope, clock.now());
         const daily = data.dailyBriefing?.assistantRuns?.[parsed.localDate];
-        if (daily && (daily.phase === 'final' || daily.policyVersion !== version)) fail('briefing_bootstrap_daily_run_conflict');
         const runtimeRun = readRuntime(data).runsByKey[runKey];
+        if (daily && (daily.policyVersion !== version || (daily.phase === 'final'
+          && runtimeRun?.dailyFinalization?.runKey !== runKey))) fail('briefing_bootstrap_daily_run_conflict');
         const section = runtimeRun?.sections?.[sectionId];
         if (runtimeRun?.phase !== 'active' || runtimeRun.currentSectionId !== sectionId
           || !section || section.closed === true || section.holder !== verifiedScope.holder || section.fence !== verifiedScope.fence)
@@ -64,7 +65,7 @@ export function createBriefingSectionWork({ core, clock, policy, config, inner }
       function verifyDomain(data, { inventory = false } = {}) {
         const run = data.dailyBriefing?.assistantRuns?.[parsed.localDate];
         const note = data.entities?.chatgptNotes?.[run?.startNoteId];
-        if (!run || run.phase === 'final' || run.policyVersion !== version
+        if (!run || (run.phase === 'final' && readRuntime(data).runsByKey[runKey]?.dailyFinalization?.runKey !== runKey) || run.policyVersion !== version
           || run.slotReceipts?.[parsed.slot]?.receiptId !== receiptId
           || run.slotReceipts[parsed.slot].slotKey !== runKey
           || typeof note?.instruction !== 'string' || !note.instruction.trim()
@@ -78,6 +79,11 @@ export function createBriefingSectionWork({ core, clock, policy, config, inner }
       }
       const initial = await snapshot();
       innerArgs(initial); // Reject forged continuation state before writes.
+      if (initial.dailyBriefing?.assistantRuns?.[parsed.localDate]?.phase === 'final') {
+        verifyDomain(initial);
+        if (typeof inner.resumeFinalized !== 'function') fail('briefing_bootstrap_final_verifier_missing');
+        return inner.resumeFinalized(innerArgs(initial));
+      }
       const existing = check(initial).briefingBootstrap;
       if (existing !== undefined && existing !== marker) fail('briefing_bootstrap_marker_invalid', 503);
       if (existing === marker) {

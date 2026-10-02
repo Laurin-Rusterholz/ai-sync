@@ -342,6 +342,7 @@ export const COMMAND_SCHEMAS = Object.freeze({
   recordJobReturn:      Object.freeze({ required: ["jobId", "outcome"], optional: ["resultRef", "resultHash", "error", "summary"], actors: ["worker"] }),
   reviewJobResult:      Object.freeze({ required: ["jobId", "verdict", "reviewer"], optional: ["note"], actors: ["agent", "user"] }),
   closeRun:             Object.freeze({ required: ["date", "finalNoteId"], optional: [], actors: ["agent", "system"] }),
+  closeRunAfterCoreRead: Object.freeze({ required: ["date", "finalNoteId"], optional: [], actors: ["system"] }),
   invalidateClosure:    Object.freeze({ required: ["date", "correctionId", "reason", "contradiction"], optional: [], actors: ["agent", "system", "user"] }),
   // ── Erweiterung C3a: was die C2-Fachverben brauchen und B bisher nicht hatte ──
   createTask:           Object.freeze({ required: ["taskId", "title"], optional: ["dueDate", "notes", "linkedLeadId"], actors: ["user", "agent"] }),

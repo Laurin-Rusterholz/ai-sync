@@ -26,7 +26,7 @@
 import { COMMAND_SCHEMAS, validateCommandShape, validateActor, validatePolicy } from "./assistant-schema.mjs";
 import { requireCore } from "./assistant-migration.mjs";
 import * as B from "./assistant-buchhaltung.mjs";
-import { closeRun, invalidateClosure } from "./assistant-abschluss.mjs";
+import { closeRun, closeRunAfterCoreRead, invalidateClosure } from "./assistant-abschluss.mjs";
 
 export * from "./assistant-zeit.mjs";
 export * from "./assistant-schema.mjs";
@@ -65,6 +65,7 @@ const HANDLER = Object.freeze({
   recordRunCheckpoint: B.recordRunCheckpoint,
   ensureRunSlot: B.ensureRunSlot,
   closeRun,
+  closeRunAfterCoreRead,
   invalidateClosure,
 });
 for (const k of Object.keys(COMMAND_SCHEMAS)) if (!HANDLER[k]) throw new Error("Kommando ohne Handler: " + k);

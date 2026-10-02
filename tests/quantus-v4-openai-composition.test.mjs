@@ -21,8 +21,18 @@ const costPolicy = { schema: 'quantus-v3-cost-policy/1', version: 'test-only', c
   dayLimitMicros: 1000000, runLimitMicros: 1000000, callLimitMicros: 100000, unresolvedBlockMicros: 1000000,
   featureFlags: { providers: 'live' }, models: { 'openai:test-model': {
     inputMicrosPerMillionTokens: 1000, outputMicrosPerMillionTokens: 1000, maxCallMicros: 100000 } } };
-async function build({ mode = 'live', providerFailure = false, compaction = false, large = false, gmail = false, acquire = false, reply = false } = {}) {
-  const s = await setup(migrateCore({ entities: { tasks: { task1: { id: 'task1', status: 'todo', ...(large ? { notes: 'Large original '.repeat(large === 'long' ? 280000 : 65000) } : {}) } } } }, { now: T }).data);
+async function build({ mode = 'live', providerFailure = false, compaction = false, large = false, gmail = false, acquire = false, reply = false, close = false } = {}) {
+  const now = close ? Date.parse('2026-10-02T21:01:00Z') : T;
+  const runKey = close ? 'quantus:2026-10-02:close23:4.0' : RUN;
+  let initial = migrateCore({ entities: close ? { chatgptLeads: close === 'open'
+    ? { l1: { id: 'l1', status: 'neu', assignee: 'chatgpt' } } : {} }
+    : { tasks: { task1: { id: 'task1', status: 'todo', ...(large ? { notes: 'Large original '.repeat(large === 'long' ? 280000 : 65000) } : {}) } } } }, { now }).data;
+  if (close) for (const slot of ['briefing04', 'process09', 'continue14']) {
+    const r = applyCommand(initial, { type: 'ensureRunSlot', commandId: 'prior-' + slot, now,
+      payload: { date: '2026-10-02', slot, receiptId: 'prior-' + slot } }, { policy: assistantPolicy, actor: { kind: 'system', id: 'fixture' } });
+    assert.equal(r.ok, true); initial = r.data;
+  }
+  const s = await setup(initial, { initialNow: now, runKey });
   const requests = [], tools = [], sourceRequests = [];
   const runPolicy = acquire ? { ...assistantPolicy, noExternalSources: false,
     requiredSources: [...assistantPolicy.requiredSources, { id: 'gmail-inbox', kind: 'mail' }] } : assistantPolicy;
@@ -31,15 +41,15 @@ async function build({ mode = 'live', providerFailure = false, compaction = fals
       ['askQuestion', { questionId: 'q1', sourceType: 'task', sourceId: 'task1', text: 'Wie weiter?', options: ['Ja', 'Nein'] }, { kind: 'agent', id: 'agent' }],
       ['recordAnswer', { answerId: 'a1', questionId: 'q1', text: 'Bitte den bestehenden Auftrag ausführen.' }, { kind: 'user', id: 'owner' }],
     ]) s.store.forceWrite(data => {
-      const result = applyCommand(data, { type, payload, commandId: 'fixture-' + type, now: T }, { policy: runPolicy, actor });
+      const result = applyCommand(data, { type, payload, commandId: 'fixture-' + type, now: now }, { policy: runPolicy, actor });
       assert.equal(result.ok, true); return result.data;
     });
   }
   if (gmail) {
     const source = { core: s.core, clock: s.clock, artifacts: s.artifacts.store, tenant: 'quantus',
-      account: 'mail@example.test', sourceId: 'gmail-test', runKey: RUN, sectionId: 'section-1', verifiedScope: s.scope, policy: assistantPolicy };
+      account: 'mail@example.test', sourceId: 'gmail-test', runKey: runKey, sectionId: 'section-1', verifiedScope: s.scope, policy: assistantPolicy };
     await createGmailMessageRegistry(source).register({ messageId: 'mail1', text: JSON.stringify({ missing: false,
-      account: source.account, id: 'mail1', threadId: 'thread1', historyId: '100', internalDate: String(T),
+      account: source.account, id: 'mail1', threadId: 'thread1', historyId: '100', internalDate: String(now),
       partial: gmail === 'partial', gaps: gmail === 'partial' ? [{ reason: 'attachment_unread' }] : [],
       parts: [{ text: 'Full source available to the actual model transport.'.repeat(gmail === 'large' ? 12000 : 1) }],
       original: { id: 'mail1', threadId: 'thread1', historyId: '100' } }) });
@@ -55,7 +65,7 @@ async function build({ mode = 'live', providerFailure = false, compaction = fals
     QUANTUS_V3_REQUIRED_SOURCES: '["quantus-core"]', QUANTUS_V3_ALLOW_EXTERNAL_EFFECTS: 'true', QUANTUS_V3_ACTIVATION_GATES: F.allGatesPassed() }),
     tenant: 'quantus', policyVersion: '4.0', leaseScope: 'quantus:mainrun', c2BaseUrl: 'https://quantus.invalid',
     toolsEnabled: { quantus_context: true, quantus_read: true, quantus_command: true, quantus_run_status: true } };
-  const args = { runKey: RUN, sectionId: 'section-1', verifiedScope: s.scope, cursor: { position: 0 } };
+  const args = { runKey: runKey, sectionId: 'section-1', verifiedScope: s.scope, cursor: { position: 0 } };
   const make = overrides => createOpenAIWorkerPorts({ config, corePort: { available: true, impl: s.core }, clockPort: s.clock,
     envRead: name => env[name], artifactStore: s.artifacts.store,
     gmailTokenSource: { available: true, async get() { return { token: 'synthetic-gmail-token' }; } },
@@ -66,7 +76,7 @@ async function build({ mode = 'live', providerFailure = false, compaction = fals
       if (url.pathname.endsWith('/messages')) return Response.json({ messages: [{ id: 'mail1', threadId: 'thread1' }] });
       if (url.pathname.endsWith('/history')) return Response.json({ historyId: '200' });
       const text = 'Automatically acquired mail reaches the model.';
-      return Response.json({ id: 'mail1', threadId: 'thread1', historyId: '150', internalDate: String(T),
+      return Response.json({ id: 'mail1', threadId: 'thread1', historyId: '150', internalDate: String(now),
         payload: { mimeType: 'text/plain', headers: [], body: { size: Buffer.byteLength(text), data: Buffer.from(text).toString('base64url') } } });
     },
     jobTokenIssuer: { available: true, async mint({ jobId, tenant }) {
@@ -76,7 +86,7 @@ async function build({ mode = 'live', providerFailure = false, compaction = fals
       tools.push(request);
       const params = request.searchParams, data = s.store.snapshot();
       const domain = createQuantusV3DomainAdapter({ policyVersion: '4.0', tenantId: 'quantus', mode: 'enforce',
-        now: () => T, ports: { policy: runPolicy, ownerId: 'test-owner' } });
+        now: () => now, ports: { policy: runPolicy, ownerId: 'test-owner' } });
       const revision = data.automation.dataRevision;
       let afterId = null;
       if (params.cursor) {
@@ -88,7 +98,7 @@ async function build({ mode = 'live', providerFailure = false, compaction = fals
         afterId, principal: { role: 'lead_agent', jobId: 'run_2026-10-02' } });
       const projection = projectPage(params.query, page.items);
       assert.equal(projection.ok, true); assert.equal(projection.usable, true);
-      return { status: 200, body: { ok: true, requestId: `read-${tools.length}`, serverNow: new Date(T).toISOString(),
+      return { status: 200, body: { ok: true, requestId: `read-${tools.length}`, serverNow: new Date(now).toISOString(),
         dataRevision: revision, query: params.query, scopeId: params.scopeId, items: projection.items, count: projection.items.length,
         hasMore: page.hasMore, complete: !page.hasMore, pageStatus: page.hasMore ? 'more' : 'done',
         cursor: page.hasMore ? JSON.stringify({ revision, afterId: page.nextAfterId }) : null } };
@@ -122,6 +132,27 @@ async function build({ mode = 'live', providerFailure = false, compaction = fals
     }, ...overrides });
   return { ...s, args, make, requests, tools, env, config, sourceRequests };
 }
+
+test('actual OpenAI worker closes an eligible day through backend checks, replays without a model call, and refuses an open lead', async () => {
+  for (const close of [true, 'open']) {
+    const s = await build({ close }); let result;
+    for (let n = 0; n < 25; n++) {
+      result = await (await s.make()).sectionWork.impl.next(s.args);
+      if (result.done || result.blocked) break;
+    }
+    const daily = s.store.snapshot().dailyBriefing.assistantRuns['2026-10-02'];
+    if (close === 'open') {
+      assert.equal(result.blocked, true, JSON.stringify(result));
+      assert.equal(result.reason, 'daily_closure_blocked'); assert.notEqual(daily.phase, 'final');
+    } else {
+      assert.equal(result.finalized, true, JSON.stringify(result)); assert.equal(daily.phase, 'final');
+      assert.ok(s.store.snapshot().entities.chatgptNotes[daily.finalNoteId]);
+      const calls = s.requests.length, puts = s.store.stats.puts;
+      assert.equal((await (await s.make()).sectionWork.impl.next(s.args)).finalized, true);
+      assert.equal(s.requests.length, calls); assert.equal(s.store.stats.puts, puts);
+    }
+  }
+});
 
 test('actual worker consumes user replies into persistent open work before model delivery, with dry-run protection', async () => {
   const s = await build({ reply: true }); let result;
