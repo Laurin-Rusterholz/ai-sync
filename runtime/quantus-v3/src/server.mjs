@@ -22,6 +22,7 @@ import { createC2HttpTransport } from "./c2-transport.mjs";
 import { createToolClient } from "./tool-ports.mjs";
 import { createGoogleJwksPort, createGoogleAccessTokenSource, createCloudTasksHttpTransport } from "./google-transport.mjs";
 import { createJobTokenIssuer } from "./job-token-issuer.mjs";
+import { createClosureReviewPort } from './closure-review.mjs';
 import { externalEffectsAllowed } from "./config.mjs";
 import { createOpenAIWorkerPorts } from "./openai-composition.mjs";
 
@@ -112,6 +113,7 @@ if (!resolved.ok) {
     clock: clockPort,
     jwks: jwks.available ? availablePort("jwks", jwks.impl) : unavailablePort("jwks", jwks.reason),
     core: corePort,
+    ...(config.role === 'monitor' ? { closureReview: createClosureReviewPort({ core: corePort, clock: clockPort.impl, config }) } : {}),
     ...(config.role === "watchdog" ? {} : { tasks: tasksPort }),
     ...(config.role === "worker" ? {
       sectionWork: fPorts.sectionWork,

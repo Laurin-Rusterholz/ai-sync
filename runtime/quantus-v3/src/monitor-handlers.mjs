@@ -34,6 +34,8 @@ export const MONITOR_TICK_RESPONSE = Object.freeze({
     resolved: { type: "integer", minimum: 0, maximum: 1000 },
     dispatched: { type: "integer", minimum: 0, maximum: 1000 },
     duplicateTasks: { type: "integer", minimum: 0, maximum: 1000 },
+    closureCorrections: { type: "integer", minimum: 0, maximum: 8 },
+    closurePending: { type: "integer", minimum: 0, maximum: 9007199254740991 },
     enqueueFailures: { type: "integer", minimum: 0, maximum: 1000 },
   },
 });
@@ -119,6 +121,7 @@ async function dispatchIntents(ctx, entries) {
 
 export async function handleMonitorTick(ctx) {
   requireSchema(ctx.body ?? {}, EMPTY_REQUEST, "monitor_tick_invalid");
+  const closureReview = await ctx.ports.require('closureReview').review();
   const view = await readView(ctx);
   const plan = PLAN.buildMonitorPlan(view, {
     now: ctx.now,
@@ -160,6 +163,8 @@ export async function handleMonitorTick(ctx) {
     status: 200,
     body: {
       tickId: plan.tickId,
+      closureCorrections: closureReview.corrected,
+      closurePending: closureReview.pending,
       mode: ctx.config.mode,
       duplicate: wiederholung,
       truncated: plan.truncated === true,
