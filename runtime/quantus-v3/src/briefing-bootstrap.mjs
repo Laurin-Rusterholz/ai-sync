@@ -90,7 +90,7 @@ export function createBriefingSectionWork({ core, clock, policy, config, inner }
         const out = await core.mutate({ commandKey, requestId: commandKey, now: clock.now(), mutate(data) {
           check(data);
           const result = applyCommand(data, { type, payload, commandId: commandKey, now: clock.now() }, { policy, actor: ACTOR });
-          if (!result.ok) fail(`briefing_bootstrap_${result.code}`);
+          if (!result.ok) fail(`briefing_bootstrap_${result.error || result.code || 'command_rejected'}`);
           // Never duplicate the full run/core in the bounded idempotency ledger.
           return { data: result.data, result: { commandKey } };
         } });

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createBriefingSectionWork } from '../runtime/quantus-v3/src/briefing-bootstrap.mjs';
 import { migrateCore } from '../netlify/lib/assistant-migration.mjs';
+import { applyCommand } from '../netlify/lib/assistant-core.mjs';
 import { POLICY_TEMPLATE } from '../netlify/lib/assistant-schema.mjs';
 import * as E1 from '../netlify/lib/quantus-v3-runtime-state.mjs';
 import { setup, T, RUN } from './fixtures/quantus-v4-leadership-fixture.mjs';
@@ -138,6 +139,16 @@ test('an existing final or different-policy daily run is rejected before any wri
     assert.equal(s.store.stats.puts, puts);
     assert.equal(s.calls, 1);
   }
+});
+
+test('conflicting slot receipt reports the actual domain rejection and cannot invoke sources', async () => {
+  const s = await fixture();
+  s.store.forceWrite(d => applyCommand(d, { type: 'ensureRunSlot', commandId: 'other-start', now: T,
+    payload: { date: DATE, slot: 'process09', receiptId: 'other-receipt' } }, { policy, actor: { kind: 'system', id: 'other' } }).data);
+  const puts = s.store.stats.puts;
+  await assert.rejects(s.work.next(s.args), /briefing_bootstrap_SLOT_ALREADY_RECEIPTED/);
+  assert.equal(s.store.stats.puts, puts);
+  assert.equal(s.calls, 0);
 });
 
 test('actual HTTP worker plus production source composition bootstraps an empty daily run before Gmail access', async t => {
