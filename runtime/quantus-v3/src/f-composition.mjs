@@ -12,6 +12,7 @@ import { createGmailSourceReader } from "./gmail-source.mjs";
 import { createAnthropicTransport } from "./anthropic-transport.mjs";
 import { createEnvCostPolicyPort } from "./cost-policy-port.mjs";
 import { createSectionWorkProvider, loadAssistantPolicy } from "./section-work.mjs";
+import { createBriefingSectionWork } from "./briefing-bootstrap.mjs";
 
 /**
  * @param envRead   `(name) => string|undefined`, wie `resolveRuntimeConfig`.
@@ -19,6 +20,12 @@ import { createSectionWorkProvider, loadAssistantPolicy } from "./section-work.m
  */
 export async function createFSourcePorts({ config, corePort, clockPort, envRead = (n) => process.env[n], loadGmailToken } = {}) {
   const costPolicy = createEnvCostPolicyPort(envRead);
+  // server.mjs passes the registered port envelope, while isolated callers
+  // may pass its implementation. Do not mistake the envelope for the core API.
+  if (corePort && Object.hasOwn(corePort, "available")) {
+    if (!corePort.available) return { sectionWork: unavailablePort("sectionWork", "core_port_unavailable"), costPolicy };
+    corePort = corePort.impl;
+  }
 
   const gmailLader = typeof loadGmailToken === "function" ? loadGmailToken : async () => {
     const mod = await import("../../../netlify/lib/gcal-shared.mjs");
@@ -59,6 +66,8 @@ export async function createFSourcePorts({ config, corePort, clockPort, envRead 
       clockPort, gmailSource, anthropic, leaseScope: config.leaseScope, policy: policyResult.policy,
       runtimeConfig: config,
     });
+    sectionWork = createBriefingSectionWork({ core: corePort, clock: clockPort,
+      policy: policyResult.policy, config, inner: sectionWork.impl });
   } catch (e) {
     return { sectionWork: unavailablePort("sectionWork", "section_work_construction_failed:" + e.message), costPolicy };
   }
