@@ -481,3 +481,32 @@ Benutzeränderung, abgelaufene Lease sowie fehlende/abweichende Originalnachweis
 Die künstlichen Testkosten sind keine produktive Aktivierungsfreigabe. Es werden
 keine Payloads gelöscht; 60-Tage-Aufbewahrung, reale Quellenaktualisierung,
 Antwortkonsum/Tagesabschluss, Clientumstellung und Probebetrieb bleiben offen.
+
+### Vollständiger, kontogebundener Gmail-Leseadapter
+
+Der neue `gmail-v4-reader` ersetzt als Grundlage des nächsten Importpfads die
+1200-Zeichen-Kürzung und den ausschliesslich zeitbasierten Mailabruf. Er liest
+vollständige MIME-Bäume mit allen Textalternativen, gemischter Schreibweise von
+Headern und auch Textkörper, deren Bytes erst über die Attachment-API erreichbar
+sind. Originalantworten und nachgeladene Körper bleiben unverändert verfügbar.
+Anhänge, nicht unterstützte Kodierungen und fehlende Körper werden als konkrete
+Lücken zurückgegeben. HTML wird weder dargestellt noch als Anweisung ausgeführt.
+
+Die paginierte vollständige Auflistung umfasst archivierte Nachrichten und
+schliesst explizit Chats, Spam und Papierkorb aus. Der ungefilterte Änderungsverlauf
+liefert Hinzufügen, Löschen und Labeländerungen; grosse History-IDs bleiben Strings.
+Ein abgelaufener Verlauf liefert ausdrücklich `resetRequired`, keinen erfolgreichen
+Leerbestand. Dies folgt dem [offiziellen Gmail-Abgleich](https://developers.google.com/workspace/gmail/api/guides/sync).
+Jeder HTTP-Aufruf ist an das konfigurierte Konto und den festen Google-Ursprung
+gebunden; Redirects, beliebige URLs, Schreiboperationen und Geheimnisse in
+Fehlermeldungen sind ausgeschlossen. Zeit- und Grössenlimits führen zum offenen
+Fehler, niemals zur stillen Kürzung. Die Nachricht besitzt zusätzlich eine
+Gesamtfrist über alle nachgeladenen Körper hinweg.
+
+Die Verhaltenstests verwenden synthetische Gmail-Antworten, einschliesslich
+mehr als 500000 Zeichen Unicode, Out-of-line-Körpern, Charset-Lücken,
+History-404, Kontoverwechslung, unterbrochener Tokenbeschaffung und endlosen
+Antwortströmen. Der Adapter allein setzt keinen Quellcursor und meldet keinen
+produktiven Quellenabschluss. Die dauerhafte Message-ID-Registry, CAS-Import mit
+Original-Readback, Gap-Nachabgleich, Anhangsauswertung und Einbindung in die
+OpenAI-Produktionskomposition folgen noch; T28 bleibt offen.
