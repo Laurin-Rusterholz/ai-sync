@@ -17,13 +17,14 @@ const costPolicy = { schema: 'quantus-v3-cost-policy/1', version: 'test-only', c
   dayLimitMicros: 1000000, runLimitMicros: 1000000, callLimitMicros: 100000, unresolvedBlockMicros: 1000000,
   featureFlags: { providers: 'live' }, models: { 'openai:test-model': {
     inputMicrosPerMillionTokens: 1000, outputMicrosPerMillionTokens: 1000, maxCallMicros: 100000 } } };
-async function build({ mode = 'live', providerFailure = false } = {}) {
+async function build({ mode = 'live', providerFailure = false, compaction = false } = {}) {
   const s = await setup(migrateCore({ entities: { tasks: { task1: { id: 'task1', status: 'todo' } } } }, { now: T }).data);
   const requests = [], tools = [];
   const env = { QUANTUS_V4_OPENAI_API_KEY: 'test-secret-not-real', QUANTUS_V4_OPENAI_MODEL: 'test-model',
     QUANTUS_V4_OPENAI_INPUT_MICROS_PER_MTOK: '1000', QUANTUS_V4_OPENAI_OUTPUT_MICROS_PER_MTOK: '1000',
     QUANTUS_V4_PROMPT_VERSION: '4.0.0', QUANTUS_V3_COST_POLICY_JSON: JSON.stringify(costPolicy),
     [DOMAIN_PORT_VARS.policyJson]: JSON.stringify(assistantPolicy) };
+  if (compaction) env.QUANTUS_V4_OPENAI_COMPACT_THRESHOLD = '16000';
   const config = { ...F.configFor('worker', { QUANTUS_V3_RUNTIME_MODE: mode,
     QUANTUS_V3_REQUIRED_SOURCES: '["quantus-core"]', QUANTUS_V3_ALLOW_EXTERNAL_EFFECTS: 'true', QUANTUS_V3_ACTIVATION_GATES: F.allGatesPassed() }),
     tenant: 'quantus', policyVersion: '4.0', leaseScope: 'quantus:mainrun', c2BaseUrl: 'https://quantus.invalid',
@@ -57,16 +58,44 @@ async function build({ mode = 'live', providerFailure = false } = {}) {
       requests.push(JSON.parse(request.body));
       if (providerFailure) throw new Error('test network failed');
       return Response.json({ id: `response_${requests.length}`, status: 'completed', usage: { input_tokens: 10, output_tokens: 10 },
-        output: requests.length <= 3 ? [{ type: 'function_call', status: 'completed',
+        output: [...(compaction && requests.length === 2 ? [{ type: 'compaction', id: 'cmp_composition', encrypted_content: 'test-opaque-state' }] : []),
+          ...(requests.length <= 3 ? [{ type: 'function_call', status: 'completed',
           name: requests.length === 3 ? 'quantus_run_status' : 'quantus_context', call_id: `read${requests.length}`,
           arguments: JSON.stringify(requests.length === 3 ? { cursor: '' } : {
             query: requests.length === 1 ? 'policy.current' : 'run.workset',
             scopeId: requests.length === 1 ? 'policy_current' : 'run_2026-10-02', cursor: '',
           }) }]
-          : [{ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'Review complete; backend proof still required.' }] }] });
+          : [{ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'Review complete; backend proof still required.' }] }])] });
     }, ...overrides });
   return { ...s, args, make, requests, tools, env, config };
 }
+
+test('production compaction retains independent coverage evidence and only uses explicit valid configuration', async () => {
+  const s = await build({ compaction: true });
+  let outcome;
+  for (let i = 0; i < 8; i++) {
+    const p = await s.make();
+    assert.equal(p.sectionWork.available, true);
+    outcome = await p.sectionWork.impl.next(s.args);
+    if (outcome.done) break;
+  }
+  assert.equal(outcome.done, true);
+  assert.equal(s.requests.length, 4);
+  for (const request of s.requests)
+    assert.deepEqual(request.context_management, [{ type: 'compaction', compact_threshold: 16000 }]);
+  assert.equal(s.requests[2].input[0].type, 'compaction');
+  assert.equal(s.requests[2].input[0].encrypted_content, 'test-opaque-state');
+  assert.equal(s.requests[2].input[1].call_id, 'read2');
+  const run = s.store.snapshot().automation.runtime.runsByKey[RUN];
+  assert.equal(run.contextCoverage.proof.itemCount, 2);
+  assert.equal(run.leadershipJournal.entries.length, 4);
+  assert.equal(run.phase, 'active', 'compaction and coverage never grant daily finalization');
+  for (const threshold of ['', 'invalid', '999', '100001', '16000.5', null]) {
+    s.env.QUANTUS_V4_OPENAI_COMPACT_THRESHOLD = threshold;
+    assert.equal((await s.make()).sectionWork.reason, 'openai_compaction_not_configured');
+  }
+  assert.equal(s.requests.length, 4);
+});
 
 test('production composition bootstraps real domain, journals provider/tool steps and resumes without granting finalization', async () => {
   const s = await build();

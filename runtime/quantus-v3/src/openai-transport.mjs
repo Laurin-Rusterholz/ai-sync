@@ -7,6 +7,7 @@
  */
 import { validateSchema } from './schema.mjs';
 import { createHash } from 'node:crypto';
+import { validCompactionItem } from './leadership-conversation.mjs';
 
 export const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 export const LEADERSHIP_TOOLS = Object.freeze(['quantus_context', 'quantus_read', 'quantus_command', 'quantus_run_status']);
@@ -67,10 +68,10 @@ async function readJson(response, signal) {
   }
 }
 
-function modelResult(body, tools) {
+function modelResult(body, tools, compactionEnabled) {
   if (body.status !== 'completed') return { usable: false, reason: 'response_not_completed' };
   if (!Array.isArray(body.output)) return { usable: false, reason: 'output_invalid' };
-  const calls = [], texts = [], seen = new Set();
+  const calls = [], texts = [], seen = new Set(), compactions = new Set();
   for (const item of body.output) {
     if (!isRecord(item)) return { usable: false, reason: 'output_invalid' };
     if (item.type === 'function_call') {
@@ -88,6 +89,13 @@ function modelResult(body, tools) {
         if (content?.type !== 'output_text' || typeof content.text !== 'string') return { usable: false, reason: 'message_invalid' };
         texts.push(content.text);
       }
+    } else if (item.type === 'compaction') {
+      if (!compactionEnabled || !validCompactionItem(item) || compactions.has(item.id))
+        return { usable: false, reason: 'compaction_invalid' };
+      // Dropping a preceding unanswered call would orphan its later output.
+      // Refuse this unexpected provider ordering before any tool can execute.
+      if (calls.length) return { usable: false, reason: 'compaction_after_tool_call' };
+      compactions.add(item.id);
     } else if (item.type !== 'reasoning') return { usable: false, reason: 'output_type_not_allowed' };
   }
   if (calls.length > 1) return { usable: false, reason: 'parallel_tool_calls_not_allowed' };
@@ -95,21 +103,25 @@ function modelResult(body, tools) {
   return { usable: true, toolCalls: calls, text: texts.join('\n'), output: body.output };
 }
 
-export function createOpenAITransport({ apiKey, model, modelPricing, fetchImpl = fetch, maxOutputTokens = 4096, timeoutMs = 45000 } = {}) {
+export function createOpenAITransport({ apiKey, model, modelPricing, fetchImpl = fetch, maxOutputTokens = 4096, timeoutMs = 45000,
+  compactionThreshold = null } = {}) {
   if (typeof apiKey !== 'string' || !apiKey.trim() || typeof model !== 'string' || !model.trim()) throw new TypeError('openai_configuration_missing');
   integer(maxOutputTokens, 1, 100000, 'max_output_tokens_invalid');
   integer(timeoutMs, 1, 85000, 'timeout_invalid');
+  if (compactionThreshold !== null) integer(compactionThreshold, 1000, 100000, 'compaction_threshold_invalid');
   const inputRate = integer(modelPricing?.inputMicrosPerMillionTokens, 0, Number.MAX_SAFE_INTEGER, 'input_price_invalid');
   const outputRate = integer(modelPricing?.outputMicrosPerMillionTokens, 0, Number.MAX_SAFE_INTEGER, 'output_price_invalid');
   const preparedRequests = new WeakMap();
   return Object.freeze({
-    provider: 'openai', model, maxOutputTokens,
+    provider: 'openai', model, maxOutputTokens, compactionThreshold,
     modelPricing: Object.freeze({ inputMicrosPerMillionTokens: inputRate, outputMicrosPerMillionTokens: outputRate }),
     prepare({ instructions, input, tools }) {
       if (typeof instructions !== 'string' || !instructions.trim() || !Array.isArray(input) || !input.length
         || !Array.isArray(tools) || !tools.length || tools.length > 4) throw new TypeError('request_invalid');
       // A context result may contain any text but cannot introduce a higher role.
       if (input.some(i => !isRecord(i) || ['system', 'developer'].includes(i.role))) throw new TypeError('input_role_invalid');
+      if (input.some(i => i.type === 'compaction' && (compactionThreshold === null || !validCompactionItem(i))))
+        throw new TypeError('input_compaction_invalid');
       const names = new Set();
       const definitions = tools.map(t => {
         if (!LEADERSHIP_TOOLS.includes(t.name) || names.has(t.name) || typeof t.description !== 'string') throw new TypeError('tool_not_allowed');
@@ -118,6 +130,7 @@ export function createOpenAITransport({ apiKey, model, modelPricing, fetchImpl =
       });
       const request = { model, instructions, input, tools: definitions, max_output_tokens: maxOutputTokens,
         store: false, include: ['reasoning.encrypted_content'], parallel_tool_calls: false };
+      if (compactionThreshold !== null) request.context_management = [{ type: 'compaction', compact_threshold: compactionThreshold }];
       const body = JSON.stringify(request);
       const bytes = Buffer.byteLength(body);
       if (bytes > MAX_REQUEST_BYTES) throw new TypeError('request_too_large');
@@ -156,7 +169,7 @@ export function createOpenAITransport({ apiKey, model, modelPricing, fetchImpl =
           // Such an output is never handed to the command dispatcher.
           return { outcome: 'settled', actualMicros, usageReceiptId: body.id,
             usage: { inputTokens: body.usage.input_tokens, outputTokens: body.usage.output_tokens },
-            providerRequestId: providerRequestId || body.id, result: modelResult(body, request.definitions) };
+            providerRequestId: providerRequestId || body.id, result: modelResult(body, request.definitions, compactionThreshold !== null) };
         })()]);
         return result;
       } catch {

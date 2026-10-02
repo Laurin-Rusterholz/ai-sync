@@ -390,3 +390,30 @@ und wachsende Modellhistorien benötigen weiterhin dauerhafte Kontextpakete;
 der jetzige Leseweg hält bei 384 KiB oder 100 Seiten ausdrücklich unvollständig
 an. Quellaktualisierung, Backend-Antwortkonsum/Finalisierung, Wiederabgleich
 blockierter Fälle, vollständige Client-Umstellung und Probebetrieb bleiben offen.
+
+### Verdichtung langer Modellverläufe mit erhaltenen Originalbelegen
+
+Die produktive OpenAI-Komposition unterstützt jetzt explizit konfigurierte
+serverseitige Responses-Kompaktierung. Die Schwelle ist Bestandteil des
+unveränderlichen Laufvertrags. Providerwechsel, zusätzliche unprotokollierte
+Modellaufrufe und automatisches Abschneiden von Quelltexten entstehen dadurch
+nicht. Kostenreservierung, gesicherte Providerantwort, Verbrauchsabgleich und
+Wiederaufnahme verwenden denselben bestehenden Weg.
+
+Ein gültiges verschlüsseltes Compaction-Element darf frühere Eingaben nur im
+nächsten Modellkontext ersetzen. Das Journal enthält weiterhin die vollständigen
+ursprünglichen Anfragen und Werkzeugantworten; insbesondere bleibt die
+unabhängige Kontextdeckung nach Verdichtung prüfbar. Falsche Marker, doppelte IDs,
+unerwartete Reihenfolge nach einem offenen Werkzeugaufruf und nicht konfigurierte
+Kompaktierung werden abgewiesen. Ein verlorenes Schreib-Acknowledgement lässt
+sich aus dem gespeicherten Originalresultat ohne erneuten Provideraufruf erholen.
+
+Ein Integrationstest führt zwei grosse Werkzeugantworten über frische Worker-
+Instanzen fort: Der unverdichtete Folgeverlauf überschreitet 512 KiB, der geprüfte
+Fortsetzungsstand bleibt innerhalb der Grenze. Die Produktionskomposition weist
+nach der Verdichtung weiterhin echte Policy-/Workset-/Statusdeckung nach.
+Ohne gültige Verdichtung hält ein zu grosser Verlauf ausdrücklich vor einem
+weiteren bezahlten Aufruf an. Die lokale Durchsetzung folgt der
+[offiziellen Responses-Kompaktierung](https://developers.openai.com/api/docs/guides/compaction).
+Modellunterstützung, Schwelle und echte Providerantworten sind produktiv noch
+nachzuweisen; grosse einzelne Arbeitsbestände benötigen weiterhin Kontextpakete.

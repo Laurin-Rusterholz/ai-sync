@@ -116,6 +116,26 @@ Konfiguration werden ausdrücklich benötigt:
   Zugriffe verhindert sind und der einheitliche Bucket-Rechte nutzt
 - bestehende C1-Job-Token-Konfiguration sowie aktivierte Quantus-Werkzeuge
 
+Für ein Modell mit geprüfter Unterstützung der Responses-Serverkompaktierung
+kann zusätzlich `QUANTUS_V4_OPENAI_COMPACT_THRESHOLD` als ganze Tokenzahl
+zwischen 1000 und 100000 gesetzt werden. Ohne diesen expliziten Wert bleibt die
+Funktion aus; ungültige Werte sperren die Komposition. Die Schwelle muss zum
+freigegebenen Modell und dessen Kontextfenster passen. Sie ist Teil der
+unveränderlichen Laufkonfiguration und darf in einem offenen Journal nicht
+geändert werden. Produktive Unterstützung und geeignete Schwelle sind vor
+Aktivierung nachzuweisen.
+
+Der Worker übergibt `context_management` im bestehenden, kostenreservierten
+Responses-Aufruf mit `store:false`. Nur ein geprüftes Compaction-Element der
+gespeicherten Providerantwort ersetzt frühere Eingaben in der nächsten Anfrage.
+Originale und Lesebelege bleiben im privaten Journal vollständig erhalten; die
+Abschlusskontrolle liest weiterhin diese Originalbelege und den aktuellen Kern.
+Ein Compaction-Element hinter einem noch offenen Werkzeugaufruf wird abgewiesen,
+damit keine verwaiste Werkzeugantwort entsteht. Reicht die Verdichtung nicht
+oder liefert der Provider keine, ergibt die 512-KiB-Anfragegrenze eine explizite
+Sperre ohne weitere Kostenreservierung. Diese Funktion ersetzt weder die noch
+offene Paketierung grosser Arbeitsbestände noch den produktiven Probebetrieb.
+
 Quellcode und Konfiguration erteilen keine Aktivierungsfreigabe. Der bekannte
 Live-Gate, die frische Kostenrichtlinie, Lease/Fence und die gemeinsame atomare
 Monatsgrenze gelten unverändert. Ein Abschnitt nutzt den externen Journalstand

@@ -32,6 +32,10 @@ export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
   const apiKey = envRead('QUANTUS_V4_OPENAI_API_KEY');
   const model = envRead('QUANTUS_V4_OPENAI_MODEL');
   const promptVersion = envRead('QUANTUS_V4_PROMPT_VERSION');
+  const compact = envRead('QUANTUS_V4_OPENAI_COMPACT_THRESHOLD');
+  if (compact !== undefined && (typeof compact !== 'string' || !/^\d+$/.test(compact)
+    || !Number.isSafeInteger(Number(compact)) || Number(compact) < 1000 || Number(compact) > 100000))
+    return unavailable('openai_compaction_not_configured');
   const rates = ['QUANTUS_V4_OPENAI_INPUT_MICROS_PER_MTOK', 'QUANTUS_V4_OPENAI_OUTPUT_MICROS_PER_MTOK'].map(envRead);
   if (typeof apiKey !== 'string' || !apiKey.trim() || typeof model !== 'string' || !model.trim()
     || rates.some(v => typeof v !== 'string' || !/^\d+$/.test(v) || !Number.isSafeInteger(Number(v))))
@@ -55,6 +59,7 @@ export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
     }
     c2Transport ??= createC2HttpTransport({ baseUrl: config.c2BaseUrl });
     const openai = createOpenAITransport({ apiKey, model, fetchImpl: providerFetch,
+      compactionThreshold: compact === undefined ? null : Number(compact),
       modelPricing: { inputMicrosPerMillionTokens: Number(rates[0]), outputMicrosPerMillionTokens: Number(rates[1]) } });
     const inner = { async next({ runKey, sectionId, verifiedScope, signal }) {
       const startedAt = clockPort.now();

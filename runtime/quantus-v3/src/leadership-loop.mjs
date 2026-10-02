@@ -6,6 +6,7 @@
 import { createHash } from 'node:crypto';
 import { HttpError } from './errors.mjs';
 import { JOURNAL_LIMITS } from './leadership-journal.mjs';
+import { continueLeadershipInput } from './leadership-conversation.mjs';
 const hash = v => createHash('sha256').update(JSON.stringify(v)).digest('hex');
 
 function commandUnconfirmed(call, receipt) {
@@ -36,8 +37,10 @@ export function createLeadershipLoop({ runKey, journal, openai, gateway, costAda
       if (journal.migrateInline) await journal.migrateInline();
       const entries = await journal.read();
       const tools = gateway.definitions();
+      const compactionEnabled = openai.compactionThreshold != null;
       const trusted = { instructions: initialRequest?.instructions, tools,
-        transport: { provider: openai.provider, model: openai.model, modelPricing: openai.modelPricing, maxOutputTokens: openai.maxOutputTokens } };
+        transport: { provider: openai.provider, model: openai.model, modelPricing: openai.modelPricing, maxOutputTokens: openai.maxOutputTokens,
+          ...(compactionEnabled ? { compactionThreshold: openai.compactionThreshold } : {}) } };
       // Policy and tool definitions are runtime input, never model output.
       for (let i = 0; i < entries.length; i++) {
         const e = entries[i];
@@ -59,10 +62,11 @@ export function createLeadershipLoop({ runKey, journal, openai, gateway, costAda
           if (coverage.blocked) return { kind: 'blocked', reason: coverage.reason, callId: current.callId };
           // Runtime-generated continuation, never an instruction copied from
           // source text. The tentative completion remains in durable history.
-          const input = [...current.request.input, ...result.output, { role: 'user', content: JSON.stringify({
+          const input = continueLeadershipInput({ input: current.request.input, output: result.output, compactionEnabled,
+            appended: [{ role: 'user', content: JSON.stringify({
             backendContinuation: { reason: coverage.reason, requiredReads: coverage.requiredReads,
               instruction: 'Die Backend-Prüfung bestätigt den Abschluss noch nicht. Lies diese Abfragen vollständig ab leerem Cursor und bearbeite neue oder geänderte Originale.' },
-          }) }];
+          }) }] });
           current = { callId: callIdAt(entries.length), request: { ...trusted, input }, response: null };
         } else if (!current.tool) {
           checkAbort();
@@ -76,8 +80,8 @@ export function createLeadershipLoop({ runKey, journal, openai, gateway, costAda
           if (commandUnconfirmed(result.toolCalls[0], current.tool)) return { kind: 'blocked', reason: 'command_outcome_unconfirmed', callId: current.callId };
           if (contextOverCapacity(result.toolCalls[0], current.tool)) return { kind: 'blocked', reason: 'context_capacity_exceeded', callId: current.callId };
           // The next request includes original reasoning/call items unchanged.
-          const input = [...current.request.input, ...result.output,
-            { type: 'function_call_output', call_id: result.toolCalls[0].callId, output: JSON.stringify(current.tool) }];
+          const input = continueLeadershipInput({ input: current.request.input, output: result.output, compactionEnabled,
+            appended: [{ type: 'function_call_output', call_id: result.toolCalls[0].callId, output: JSON.stringify(current.tool) }] });
           current = { callId: callIdAt(entries.length), request: { ...trusted, input }, response: null };
         }
       } else if (!current) {
@@ -85,7 +89,13 @@ export function createLeadershipLoop({ runKey, journal, openai, gateway, costAda
       }
       if (entries.length >= JOURNAL_LIMITS.turns && !entries.some(e => e.callId === current.callId)) return { kind: 'blocked', reason: 'model_turn_limit' };
       checkAbort();
-      const prepared = openai.prepare(current.request);
+      let prepared;
+      try { prepared = openai.prepare(current.request); }
+      catch (error) {
+        if (error instanceof TypeError && error.message === 'request_too_large')
+          return { kind: 'blocked', reason: 'model_context_capacity_exceeded', callId: current.callId };
+        throw error;
+      }
       if (current.requestHash && current.requestHash !== prepared.contentHash) throw new HttpError(409, 'leadership_request_changed');
       await journal.begin({ callId: current.callId, requestHash: prepared.contentHash, request: current.request });
       await costAdapter.reserve({ callId: current.callId, runKey, provider: openai.provider, model: openai.model,
