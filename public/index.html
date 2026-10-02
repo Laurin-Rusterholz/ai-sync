@@ -14275,7 +14275,8 @@ function mergeData(local, remote) {
     };
     merged.dailyBriefing.intakeQueue = applyTombstonesToList(
       mergeIntakeById(merged.dailyBriefing.intakeQueue || [], remote.dailyBriefing.intakeQueue || []), tombstones);
-    // Merge dailyLog per date (take the one with more data)
+    // Notes can be shortened or cleared intentionally. Prefer the last edit;
+    // length is only a compatibility fallback for two unstamped legacy entries.
     const localLog = merged.dailyBriefing.dailyLog || {};
     const remoteLog = remote.dailyBriefing.dailyLog || {};
     const allLogDates = [...new Set([...Object.keys(localLog), ...Object.keys(remoteLog)])];
@@ -14283,13 +14284,21 @@ function mergeData(local, remote) {
     allLogDates.forEach(d => {
       const l = localLog[d] || {};
       const r = remoteLog[d] || {};
-      const lChecks = Object.keys(l.routineChecks || {}).length;
-      const rChecks = Object.keys(r.routineChecks || {}).length;
       const lNotes = (l.notes || "").length;
       const rNotes = (r.notes || "").length;
-      // Take whichever has more content; merge routineChecks
+      const noteTime = entry => {
+        const raw = entry.notesUpdatedAt;
+        const n = typeof raw === 'number' ? raw : Date.parse(raw || '');
+        return Number.isFinite(n) && n > 0 ? n : 0;
+      };
+      const lt = noteTime(l), rt = noteTime(r);
+      const winner = lt !== rt ? (lt > rt ? l : r)
+        : lNotes !== rNotes ? (lNotes > rNotes ? l : r)
+        : String(l.notes || '') >= String(r.notes || '') ? l : r;
       merged.dailyBriefing.dailyLog[d] = {
-        notes: lNotes >= rNotes ? (l.notes || "") : (r.notes || ""),
+        ...r, ...l,
+        notes: winner.notes || "",
+        notesUpdatedAt: winner.notesUpdatedAt || null,
         routineChecks: Object.assign({}, r.routineChecks || {}, l.routineChecks || {})
       };
     });
@@ -25277,6 +25286,7 @@ document.addEventListener("input", function(e) {
     if (!dbx.dailyLog) dbx.dailyLog = {};
     if (!dbx.dailyLog[curDate]) dbx.dailyLog[curDate] = { routineChecks: {}, notes: "" };
     dbx.dailyLog[curDate].notes = e.target.value;
+    dbx.dailyLog[curDate].notesUpdatedAt = new Date().toISOString();
     if (window._dbNotesTimer) clearTimeout(window._dbNotesTimer);
     window._dbNotesTimer = setTimeout(function() { if (window.scheduleSave) window.scheduleSave(); }, 2000);
   }
@@ -89074,6 +89084,7 @@ document.addEventListener("click", function(e) {
         if (!db.dailyLog) db.dailyLog = {};
         if (!db.dailyLog[curDate]) db.dailyLog[curDate] = { routineChecks: {}, notes: "" };
         db.dailyLog[curDate].notes = notesEl.value;
+        db.dailyLog[curDate].notesUpdatedAt = new Date().toISOString();
         if (window.scheduleSave) window.scheduleSave();
         if (typeof toast === "function") toast("ok", "Notizen", "Gespeichert!");
       }
@@ -89944,6 +89955,7 @@ document.addEventListener("click", function(e) {
         if (!db.dailyLog) db.dailyLog = {};
         if (!db.dailyLog[curDate]) db.dailyLog[curDate] = { routineChecks: {}, notes: "" };
         db.dailyLog[curDate].notes = notesEl.value;
+        db.dailyLog[curDate].notesUpdatedAt = new Date().toISOString();
         if (window.scheduleSave) window.scheduleSave();
         if (typeof toast === "function") toast("ok", "Notizen", "Gespeichert!");
       }
