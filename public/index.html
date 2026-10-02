@@ -24113,13 +24113,9 @@ function v3LeadStatus(l, { nowMs = Date.now() } = {}) {
     return ueberfaellig(l.followUpAt) ? "red" : "green";
   }
   if (state === "decision_required" || state === "information_required") {
-    // Review-Fix: "faellig" heisst nur "jetzt sichtbar im Briefing", keine
-    // echte Frist. Eine faellige, aber noch unbeantwortete Frage wird deshalb
-    // NIE allein dadurch rot — nur eine echte, separat gesetzte Frist duerfte
-    // das (ein solches Feld existiert aktuell nicht). Vor Faelligkeit: gruen
-    // (ChatGPT arbeitet noch, nichts von Laurin noetig); ab Faelligkeit: gelb.
-    if (!l.questionForBriefingAt) return "yellow";
-    return ueberfaellig(l.questionForBriefingAt) ? "yellow" : "green";
+    // An unanswered question is open now, including legacy questions dated
+    // for tomorrow. A display date is neither progress nor a hard deadline.
+    return "yellow";
   }
   // "doing"
   if (!l.nextAction) return "red";
@@ -24127,22 +24123,20 @@ function v3LeadStatus(l, { nowMs = Date.now() } = {}) {
   return "yellow";
 }
 const V3_STATUS_LABEL = { green: "🟢 im Plan", yellow: "🟡 eigene Arbeit offen", red: "🔴 Aktion nötig", unknown: "⚪ unbekannt" };
-function v3LeadStatusText(l, opts) { return V3_STATUS_LABEL[v3LeadStatus(l, opts)] || V3_STATUS_LABEL.unknown; }
+function v3LeadStatusText(l, opts) {
+  const status = v3LeadStatus(l, opts);
+  if (status === "yellow" && ["decision_required", "information_required"].includes(v3LeadOperationalState(l))) return "🟡 Antwort ausstehend";
+  return V3_STATUS_LABEL[status] || V3_STATUS_LABEL.unknown;
+}
 
-/* Verschiebung des Follow-ups: NUR bei echtem neuen lastAction wird der
- * Deferral-Zaehler zurueckgesetzt (S. Vorgabe: "OHNE neue lastAction ->
- * Deferrals++"). Ab 3 wird die Frage automatisch fuer morgen vorgemerkt. */
+/* Legacy follow-up editor: free text is not a verified progress event.
+ * Never clear deferrals here or transfer overdue assistant work to the user.
+ * Reset requires the server's evidence-checked progress command. */
 function v3RegisterFollowUp(l, { newLastAction, followUpAt, nowIsoStr, morgenIsoStr } = {}) {
-  const alt = String(l.lastAction || "").trim();
   const neu = typeof newLastAction === "string" ? newLastAction.trim() : "";
-  const echterFortschritt = !!neu && neu !== alt;
-  if (echterFortschritt) { l.lastAction = neu; l.followUpDeferrals = 0; }
-  else { l.followUpDeferrals = (Number(l.followUpDeferrals) || 0) + 1; }
+  if (neu) l.lastAction = neu;
+  l.followUpDeferrals = (Number(l.followUpDeferrals) || 0) + 1;
   if (followUpAt) l.followUpAt = followUpAt;
-  if (l.followUpDeferrals >= 3) {
-    l.operationalState = "information_required";
-    if (!l.questionForBriefingAt) l.questionForBriefingAt = morgenIsoStr || l.followUpAt || null;
-  }
   l.updatedAt = nowIsoStr || nowIso();
   return l;
 }
@@ -52245,7 +52239,7 @@ function chatgptModuleHandleAction(action, el, e) {
         morgenIsoStr: v3ZurichLocalToUtcIso(addDaysYmd(todayYmd(), 1), "04:00"),
       });
       scheduleSave(); render();
-      toast(l.followUpDeferrals >= 3 ? "warn" : "ok", "Zurückgestellt", l.followUpDeferrals >= 3 ? "3. Verschiebung — als Frage für morgen vorgemerkt." : "Follow-up aktualisiert.");
+      toast(l.followUpDeferrals >= 3 ? "warn" : "ok", "Zurückgestellt", l.followUpDeferrals >= 3 ? "Mindestens 3 Verschiebungen — Fortschrittsnachweis fehlt; bleibt offen." : "Follow-up aktualisiert.");
       return;
     }
     // Konzept v2 A/B: eine Frage an Laurin stellen (Entscheidung oder
@@ -52266,9 +52260,8 @@ function chatgptModuleHandleAction(action, el, e) {
         answer: null,
       };
       l.operationalState = action === "cgl-ask-decision" ? "decision_required" : "information_required";
-      // Neue Rueckfragen erscheinen laut Konzept erst morgen im Briefing —
-      // Ausnahme: eine echte Frist vorher wird respektiert (dann heute schon).
-      l.questionForBriefingAt = v3ZurichLocalToUtcIso(addDaysYmd(todayYmd(), 1), "04:00");
+      // v4: show every question immediately; do not invent a next-day deadline.
+      l.questionForBriefingAt = l.pendingQuestion.askedAt;
       l.updatedAt = nowIso();
       scheduleSave(); render();
       return;
