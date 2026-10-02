@@ -40,12 +40,12 @@ import { HttpError } from "./errors.mjs";
 
 export const PORT_NAMES = Object.freeze([
   "clock", "jwks", "core", "tasks", "sectionWork", "costPolicy",
-  "closureEvidence", "toolTransport", "toolCredential", "alert",
+  "closureEvidence", "closureReview", "toolTransport", "toolCredential", "alert",
 ]);
 
 export const REQUIRED_PORTS = Object.freeze({
   worker: Object.freeze(["clock", "jwks", "core", "tasks", "sectionWork", "costPolicy", "closureEvidence"]),
-  monitor: Object.freeze(["clock", "jwks", "core", "tasks"]),
+  monitor: Object.freeze(["clock", "jwks", "core", "tasks", "closureReview"]),
   watchdog: Object.freeze(["clock", "jwks", "core", "alert"]),
 });
 
@@ -54,7 +54,7 @@ export const REQUIRED_PORTS = Object.freeze({
 export const FORBIDDEN_PORTS = Object.freeze({
   worker: Object.freeze([]),
   monitor: Object.freeze([]),
-  watchdog: Object.freeze(["tasks", "sectionWork", "monitorInvoke", "closureEvidence"]),
+  watchdog: Object.freeze(["tasks", "sectionWork", "monitorInvoke", "closureEvidence", "closureReview"]),
 });
 
 export function unavailablePort(name, reason) {

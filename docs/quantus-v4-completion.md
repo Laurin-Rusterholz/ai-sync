@@ -825,3 +825,36 @@ Nutzeränderungen, Abendmissbrauch und unaufgelöste Kosten. Die Kontextnachweis
 dieser HTTP-Gegenproben sind künstlich; die Modell-Komposition wird zusätzlich
 separat integriert geprüft. Produktive Gesamtkette, Ereignis-Fortsetzungen,
 spätere Invalidierung und Probebetrieb bleiben offene Nachweise.
+
+### Regelmässige Prüfung später widerlegter Abschlüsse
+
+Der produktive Monitor-Einstieg bindet jetzt den erforderlichen Port
+`closureReview` ein. Jeder authentifizierte Tick prüft vor seinem Laufplan die
+gespeicherten finalen Tage gegen die vollständige Domain-Verpflichtungsmenge.
+Die Policy stammt aus derselben ausdrücklich konfigurierten Quelle wie im
+Worker. Fehlende Konfiguration, fehlende historische Abschlussbelege oder eine
+nicht verfügbare historische Policy-Version bleiben Fehler. Der unabhängige
+Watchdog darf diesen schreibenden Port nicht erhalten.
+
+Ein echter Widerspruch wird mit dem bestehenden Domain-Befehl
+`invalidateClosure` in einer CAS erneut geprüft und korrigiert. Die historische
+Finalnote und Abschlussbelege bleiben erhalten. Eine verknüpfte Korrekturnotiz,
+`exception_open`, ein überprüfbarer Marker und die Rücknahme des Laufzeit-Grüns
+entstehen atomar mit einer Revision. Die aktive Leitungs-Lease wird nicht
+übernommen oder verändert. Parallele Originaländerungen werden über CAS erneut
+bewertet; ein zwischenzeitlich verschwundener Widerspruch wird nicht korrigiert.
+Neue Eingänge nach dem Abschluss bleiben nächste Arbeit und widerlegen den alten
+Abschluss nicht automatisch.
+
+Jede Korrektur wird unabhängig zurückgelesen. Wiederholungen prüfen historische
+Notiz, Korrektur, Abschlussbelege und Marker erneut; verlorene Bestätigung und
+parallele Zustellung erzeugen keine doppelte Notiz oder doppelte Erfolgszählung.
+Ein Tick bearbeitet höchstens acht Korrekturen und startet nach 20 Sekunden keine
+weitere. Verbleibende Tage werden als `closurePending` ausgewiesen und bleiben
+für den nächsten Tick erhalten. Dies ist kein harter I/O-Zeitnachweis.
+
+Tests prüfen echte Domain-Abschlüsse, echten Idempotenz-/CAS-Umschlag und den
+authentifizierten HTTP-Monitor. Abgedeckt sind mehrere Tage, neue Eingänge,
+Parallelität, aufgehobene Widersprüche, fehlende Notizen/Marker, deaktivierte
+Schreibwirkungen und Policy-Grenzen. Produktive Monitor-Konfiguration, Warnkanal,
+Archivierung alter Korrekturbelege und der T18-/14-Tage-Nachweis bleiben offen.

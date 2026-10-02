@@ -397,3 +397,26 @@ Eine reine Lease-/Protokollrevision macht den gelesenen Bestand daher nicht
 veraltet. Erfolg benötigt einen unabhängigen Rücklesebeleg. Die bestehende
 Scheduler-Deduplizierung verhindert erneute Modellarbeit nach bestätigtem
 Wellenende. Das ist kein Abschlussnachweis für den gesamten Tag.
+
+### Monitor-Korrektur abgeschlossener Tage
+
+`server.mjs` richtet für die Monitor-Rolle `closureReview` ein. Dieser Port ist
+erforderlich und liest die gleiche `DOMAIN_PORT_VARS.policyJson`-Konfiguration
+wie der Worker. Ohne Kern/Policy oder bei fremdem Mandanten beziehungsweise
+abweichender Policy-Version bleibt er unavailable. Der Watchdog darf ihn nicht
+besitzen. Ein Tick ruft die Prüfung vor dem bisherigen Scheduler-Plan auf.
+
+`closure-review` prüft finale Tage mit `pruefeWiderspruch` und führt nur bestätigte
+Widersprüche durch `invalidateClosure`. Korrektur, Marker und zurückgenommenes
+Laufzeit-Grün sind eine CAS mit einer Revision; die ursprüngliche Finalnote bleibt
+bytegleich. Der Monitor benötigt keine Leitungs-Lease und verändert sie nicht.
+Die Serverrolle prüft ausschliesslich bestehende Abschlussverpflichtungen und
+erhält dadurch keine zusätzlichen Modell-/Versandrechte.
+
+Pro Tick höchstens acht separat verifizierte Korrekturen; nach 20 Sekunden wird
+keine weitere begonnen. `closureCorrections` zählt nur neue Schreibvorgänge,
+`closurePending` nennt noch ausstehende Tage. Wiederholung kontrolliert auch die
+bereits gespeicherten Korrekturbelege. Historische Tage anderer Policy-Versionen
+werden bis zur verfügbaren historischen Policy ausdrücklich verweigert.
+Dry-run/shadow oder geschlossene Aktivierungstore ändern keine Abschlussdaten.
+Produktive Konfiguration, Laufzeiten und Archivierung der Belege bleiben offen.

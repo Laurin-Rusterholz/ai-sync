@@ -145,7 +145,7 @@ test("fehlende Pflichtports werden benannt, nicht ersetzt", async () => {
 });
 
 test("der Watchdog darf keinen Task-Port und keinen Monitorzugriff haben", () => {
-  assert.deepEqual([...FORBIDDEN_PORTS.watchdog], ["tasks", "sectionWork", "monitorInvoke", "closureEvidence"]);
+  assert.deepEqual([...FORBIDDEN_PORTS.watchdog], ["tasks", "sectionWork", "monitorInvoke", "closureEvidence", "closureReview"]);
   for (const verboten of FORBIDDEN_PORTS.watchdog) {
     assert.throws(() => createPortRegistry("watchdog", { [verboten]: availablePort(verboten, {}) }),
       /Unabhaengigkeit verletzt|unbekannter Port/, verboten);

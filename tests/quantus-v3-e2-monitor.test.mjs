@@ -26,7 +26,10 @@ async function monitorService(options = {}) {
   const tasks = F.createTasksPort();
   const service = await F.startService({
     role: "monitor",
-    ports: { clock: clock.port, jwks: F.jwksPort(key), core: core.port, tasks: tasks.port },
+    ports: { clock: clock.port, jwks: F.jwksPort(key), core: core.port, tasks: tasks.port,
+      // This E1 scheduling fixture has no domain. Real closure review is
+      // covered separately through the same authenticated HTTP route.
+      closureReview: F.availablePort('closureReview', { async review() { return { corrected: 0, pending: 0 }; } }) },
     configOverrides: options.configOverrides ?? {},
   });
   const token = (audience) => F.schedulerToken(key, { audience, email: F.SA.schedulerMonitor, nowMs: clock.value });
