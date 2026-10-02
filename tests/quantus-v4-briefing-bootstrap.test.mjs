@@ -152,7 +152,7 @@ test('actual HTTP worker plus production source composition bootstraps an empty 
     QUANTUS_V3_ANTHROPIC_API_KEY: 'test-only-no-provider-dispatch', QUANTUS_V3_ANTHROPIC_MODEL: 'configured-test-model',
     QUANTUS_V3_ANTHROPIC_INPUT_MICROS_PER_MTOK: '1', QUANTUS_V3_ANTHROPIC_OUTPUT_MICROS_PER_MTOK: '1' };
   let sources = 0;
-  const ports = await createFSourcePorts({ config: actualConfig, corePort: core.port.impl, clockPort: clock.port.impl,
+  const ports = await createFSourcePorts({ config: actualConfig, corePort: core.port, clockPort: clock.port.impl,
     envRead: n => env[n], loadGmailToken: async () => async () => {
       const d = core.store.snapshot(), run = d.dailyBriefing.assistantRuns[DATE];
       assert.ok(run?.slotReceipts.process09, 'domain receipt exists before token lookup');
