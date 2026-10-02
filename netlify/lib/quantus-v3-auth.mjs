@@ -257,7 +257,7 @@ export const ROLE_POLICY = Object.freeze({
     issuedBy: ISSUERS.jobToken,
     binding: "assigned",
     verbs: Object.freeze({
-      "context.read":       ["run_context", "lead", "task", "document", "question", "note", "run", "policy"],
+      "context.read":       ["run_context", "lead", "task", "document", "question", "note", "run", "run_status", "policy"],
       "lead.comment":       ["lead"],
       "lead.transition":    ["lead"],
       "lead.schedule":      ["lead"],

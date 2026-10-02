@@ -87,34 +87,60 @@ export function createC2HttpTransport({
         throw new HttpError(500, "c2_method_unsupported", { method: String(method) });
       }
 
+      if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 85000) throw new HttpError(500, "c2_timeout_invalid");
       const abbruch = new AbortController();
-      const frist = setTimeout(() => abbruch.abort(), Math.max(1, timeoutMs));
-      let antwort;
+      let reader, rejectDeadline;
+      const deadline = new Promise((_, reject) => { rejectDeadline = reject; });
+      const frist = setTimeout(() => {
+        abbruch.abort();
+        if (reader) void reader.cancel().catch(() => {});
+        rejectDeadline(new HttpError(502, "c2_request_timeout", { route: String(route) }));
+      }, timeoutMs);
       try {
-        antwort = await fetchImpl(url.toString(), { method, headers, body, signal: abbruch.signal });
-      } catch {
-        // Kein Grund nach aussen: ein Netzfehler ist kein Orakel.
-        throw new HttpError(502, "c2_request_failed", { route: String(route) });
-      } finally {
-        clearTimeout(frist);
-      }
+        return await Promise.race([deadline, (async () => {
+          let antwort;
+          try {
+            antwort = await fetchImpl(url.toString(), { method, headers, body, signal: abbruch.signal, redirect: "error" });
+          } catch {
+            throw new HttpError(502, "c2_request_failed", { route: String(route) });
+          }
+          if (!antwort || typeof antwort.status !== "number") throw new HttpError(502, "c2_response_invalid", { route: String(route) });
+          let text;
+          if (antwort.body?.getReader) {
+            reader = antwort.body.getReader();
+            const chunks = []; let bytes = 0;
+            try {
+              for (;;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                bytes += value.byteLength;
+                if (bytes > maxResponseBytes) {
+                  void reader.cancel().catch(() => {});
+                  throw new HttpError(502, "c2_response_too_large", { route: String(route) });
+                }
+                chunks.push(Buffer.from(value));
+              }
+              text = Buffer.concat(chunks).toString("utf8");
+            } catch (error) {
+              if (error?.error === "c2_response_too_large") throw error;
+              throw new HttpError(502, "c2_response_unreadable", { route: String(route) });
+            } finally { reader.releaseLock(); reader = null; }
+          } else {
+            // Compatibility for existing in-process C2 test adapters. Real
+            // fetch Responses use the bounded stream above. Both share deadline.
+            try { text = await antwort.text(); } catch { throw new HttpError(502, "c2_response_unreadable", { route: String(route) }); }
+          }
+          if (typeof text !== "string") throw new HttpError(502, "c2_response_unreadable", { route: String(route) });
+          if (Buffer.byteLength(text, "utf8") > maxResponseBytes) throw new HttpError(502, "c2_response_too_large", { route: String(route) });
+          let json = null;
+          if (text.length) {
+            try { json = JSON.parse(text); } catch { throw new HttpError(502, "c2_response_not_json", { route: String(route), status: antwort.status }); }
+          }
+          if (json !== null && (typeof json !== "object" || Array.isArray(json))) throw new HttpError(502, "c2_response_not_json", { route: String(route), status: antwort.status });
+          return { status: antwort.status, body: json };
+        })()]);
+      } finally { clearTimeout(frist); }
 
-      if (!antwort || typeof antwort.status !== "number") throw new HttpError(502, "c2_response_invalid", { route: String(route) });
-      let text;
-      try { text = await antwort.text(); } catch { throw new HttpError(502, "c2_response_unreadable", { route: String(route) }); }
-      if (typeof text !== "string") throw new HttpError(502, "c2_response_unreadable", { route: String(route) });
-      if (Buffer.byteLength(text, "utf8") > maxResponseBytes) throw new HttpError(502, "c2_response_too_large", { route: String(route) });
-
-      let json = null;
-      if (text.length) {
-        try { json = JSON.parse(text); } catch { throw new HttpError(502, "c2_response_not_json", { route: String(route), status: antwort.status }); }
-      }
-      if (json !== null && (typeof json !== "object" || Array.isArray(json))) {
-        throw new HttpError(502, "c2_response_not_json", { route: String(route), status: antwort.status });
-      }
-      // Status UND Rumpf gehen zurueck. Ob 200 genuegt, entscheidet der
-      // Aufrufer — hier wird kein Fehlschlag zu einem leeren Erfolg.
-      return { status: antwort.status, body: json };
     },
   };
 }
