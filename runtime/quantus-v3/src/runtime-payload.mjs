@@ -3,7 +3,8 @@ import { readRuntime } from '../../../netlify/lib/quantus-v3-runtime-state.mjs';
 import { HttpError } from './errors.mjs';
 
 export const JOURNAL_LIMITS = Object.freeze({ requestBytes: 512 * 1024, responseBytes: 3 * 1024 * 1024,
-  toolBytes: 512 * 1024, coreBytes: 18 * 1024 * 1024, readBytes: 16 * 1024 * 1024, turns: 30 });
+  toolBytes: 512 * 1024, coreBytes: 18 * 1024 * 1024, readBytes: 16 * 1024 * 1024,
+  rolloverBytes: 8 * 1024 * 1024, turns: 30, segments: 1000 });
 export const WORK_PAYLOAD_BYTES = 512 * 1024;
 export const WORK_RESULT_BYTES = 8 * 1024;
 const record = v => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -53,7 +54,7 @@ export function assertActiveRuntimeCapacity(data) {
     const entries = run.leadershipJournal?.entries;
     if (entries === undefined) continue;
     if (!Array.isArray(entries)) fail('journal_invalid', 503);
-    if (run.leadershipJournal.schemaVersion === 2) {
+    if ([2, 3].includes(run.leadershipJournal.schemaVersion)) {
       for (const entry of entries) {
         if (!record(entry)) fail('journal_invalid', 503);
         // Only small, immutable reference records can enter this format.

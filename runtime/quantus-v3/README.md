@@ -174,7 +174,34 @@ Eine unterbrochene Kette erhält den nächsten konkreten Cursor; ein finaler Tei
 allein zählt nicht als vollständige Lesung. Anschliessend vergleicht der Backend-
 Prüfer den Inhalt mit einem unabhängig neu gelesenen Gesamtbestand.
 
-Der Schnappschuss bleibt auf 16 MiB bzw. 2000 API-Seiten begrenzt. Das bestehende
-30-Aufrufe-Limit und 16-MiB-Journallese-Limit gelten weiterhin; sehr lange
-Bearbeitungen benötigen noch einen weiteren dauerhaften Batch-/Abschnittswechsel.
-Diese Grenzen erzeugen offene Arbeit und keinen erfolgreichen Abschluss.
+Der Schnappschuss bleibt auf 16 MiB bzw. 2000 API-Seiten begrenzt. Grenzen erzeugen
+offene Arbeit und keinen erfolgreichen Abschluss. Lange Journale verwenden den
+folgenden dauerhaften Abschnittswechsel.
+
+### Fortsetzung langer Journale
+
+Ab 30 aktiven Modellaufrufen oder 8 MiB aktiven Nachweisen verschiebt der Worker
+abgerechnete Vorgänger in einen privaten, unveränderlichen Nachweisabschnitt.
+Die jüngste Anfrage bleibt vollständig aktiv, auch mit noch ausstehender
+Werkzeugantwort. Schema 3 bindet die fortlaufenden Abschnitte an Originalreferenzen,
+Kostenbelege, unveränderte Laufregeln und kompakte, vom Backend abgeleitete
+Kontextnachweise. Ein unbekannter Befehlsausgang oder unbestätigte Kosten können
+nicht in einen abgeschlossenen Abschnitt überführt werden.
+
+Gewöhnliche Schritte laden nur den aktiven Verlauf und die gesicherten
+Nachweismetadaten. Vor einer Abschlussprüfung werden sämtliche Originalanfragen,
+Modellantworten und Werkzeugbelege abschnittsweise nochmals zurückgelesen und
+die Nachweise daraus neu berechnet. Die Kostenbuchhaltung muss weiterhin passen.
+Fehlende Originale oder widersprüchliche Nachweise verhindern den Abschluss.
+Aufrufnummern, Kostenkennungen und Befehlsidentitäten laufen ohne Neustart weiter;
+ein wiederholter alter Schreibaufruf erzeugt keinen zweiten aktiven Eintrag.
+
+Der Wechsel selbst erfolgt nach Speicher-Readback mit exaktem Journalvergleich
+innerhalb CAS und anschliessendem unabhängigem Readback. Abbruch oder verlorene
+Quittung berechtigen weder zu erneutem Modellaufruf noch erneutem Kommando. Es
+werden keine Originale gelöscht und keine Aufbewahrungsfristen verkürzt. Die
+Grenzen von 16 MiB aktivem Verlauf, separat 16 MiB Nachweismetadaten und 1000
+Nachweisabschnitten bleiben ausdrücklich durchgesetzt; Zeit-, Lease- und
+Kostenlimits gelten über alle Abschnitte hinweg. Modellkontext-Verdichtung
+und Journalabschnitte erfüllen getrennte Aufgaben und werden beide benötigt,
+wenn auch der Modellkontext die Anfragegrenze erreichen würde.
