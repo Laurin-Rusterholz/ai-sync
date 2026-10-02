@@ -1,7 +1,8 @@
 /** Durable active leadership exchanges. All writes use the existing core CAS
  * port, with a fresh lease check inside every CAS attempt. Payloads live in
- * verified private storage; core contains immutable references. Completed
- * exchanges must be archived by the retention worker before removal.
+ * verified private storage; core contains immutable references. Settled older
+ * exchanges move into verified history segments; their original payloads and
+ * cost/replay identities remain intact. Retention never follows from rollover.
  *
  * This module does not dispatch providers or tools. Recording a response is
  * not evidence that its cost settled, its tool ran, or the daily run completed.
@@ -11,6 +12,8 @@ import { assertLeadership, readRuntime, settleCost, resolveUnknownCost } from '.
 import { parseSlotRunKey } from '../../../netlify/lib/quantus-v3-runtime-plan.mjs';
 import { HttpError } from './errors.mjs';
 import { validArtifactReference } from './work-artifact-store.mjs';
+import { leadershipCoverageFacts } from './leadership-coverage.mjs';
+import { commandUnconfirmed } from './leadership-command-state.mjs';
 
 import { JOURNAL_LIMITS, encodeRuntimePayload, assertActiveRuntimeCapacity } from './runtime-payload.mjs';
 export { JOURNAL_LIMITS, WORK_PAYLOAD_BYTES, WORK_RESULT_BYTES, encodeRuntimePayload, assertActiveRuntimeCapacity } from './runtime-payload.mjs';
@@ -30,10 +33,27 @@ function area(data, runKey, { create = false } = {}) {
     run.leadershipJournal = { schemaVersion: 2, entries: [] };
   } else if (initialized !== true) fail('journal_invalid', 503);
   const journal = run.leadershipJournal;
-  if (!record(journal) || ![1, 2].includes(journal.schemaVersion) || !Array.isArray(journal.entries)
+  if (!record(journal) || ![1, 2, 3].includes(journal.schemaVersion) || !Array.isArray(journal.entries)
     || journal.entries.length > JOURNAL_LIMITS.turns) fail('journal_invalid', 503);
+  if (journal.schemaVersion === 3) {
+    if (!Array.isArray(journal.segments) || !journal.segments.length || journal.segments.length > JOURNAL_LIMITS.segments
+      || !journal.entries.length) fail('journal_segments_invalid', 503);
+    let count = 0;
+    for (const segment of journal.segments) {
+      if (!record(segment) || Object.keys(segment).sort().join(',') !== 'archive,count,start'
+        || segment.start !== count || !Number.isSafeInteger(segment.count) || segment.count < 1 || segment.count >= JOURNAL_LIMITS.turns
+        || !validArtifactReference(segment.archive)) fail('journal_segments_invalid', 503);
+      count += segment.count;
+    }
+    if (journal.archivedCount !== count) fail('journal_segments_invalid', 503);
+  } else if (journal.segments !== undefined || journal.archivedCount !== undefined) fail('journal_segments_invalid', 503);
+  validateEntries(journal.entries, journal.schemaVersion);
+  return journal;
+}
+
+function validateEntries(entries, schemaVersion) {
   const seen = new Set();
-  for (const entry of journal.entries) {
+  for (const entry of entries) {
     if (!record(entry) || typeof entry.callId !== 'string' || !/^[A-Za-z0-9_.:-]{1,120}$/.test(entry.callId)
       || seen.has(entry.callId) || !digest(entry.requestHash)
       || !Number.isSafeInteger(entry.createdAtMs) || entry.createdAtMs <= 0) fail('journal_invalid', 503);
@@ -42,7 +62,7 @@ function area(data, runKey, { create = false } = {}) {
       const value = entry[field];
       if (value === null && field !== 'request') continue;
       if (!record(value) || !digest(value.hash)) fail('journal_invalid', 503);
-      if (journal.schemaVersion === 1) {
+      if (schemaVersion === 1) {
         if (Object.keys(value).sort().join(',') !== 'hash,text' || typeof value.text !== 'string'
           || Buffer.byteLength(value.text) > JOURNAL_LIMITS[`${field}Bytes`] || hash(value.text) !== value.hash) fail('journal_invalid', 503);
         try { JSON.parse(value.text); } catch { fail('journal_invalid', 503); }
@@ -51,7 +71,6 @@ function area(data, runKey, { create = false } = {}) {
     }
     if (entry.tool !== null && entry.response === null) fail('journal_invalid', 503);
   }
-  return journal;
 }
 
 export function createLeadershipJournal({ core, clock, runKey, verifiedScope, artifacts, signal } = {}) {
@@ -83,16 +102,64 @@ export function createLeadershipJournal({ core, clock, runKey, verifiedScope, ar
     const [request, response, tool] = await Promise.all(['request', 'response', 'tool'].map(f => readPayload(entry[f], f)));
     return { callId: entry.callId, requestHash: entry.requestHash, createdAtMs: entry.createdAtMs, request, response, tool };
   }
-  function checkReadBudget(journal) {
-    const bytes = (journal?.entries || []).reduce((sum, e) => sum + ['request', 'response', 'tool'].reduce((s, f) =>
+  function activeBytes(journal) {
+    return (journal?.entries || []).reduce((sum, e) => sum + ['request', 'response', 'tool'].reduce((s, f) =>
       s + (e[f] === null ? 0 : e[f].artifact?.bytes ?? Buffer.byteLength(e[f].text)), 0), 0);
-    if (bytes > JOURNAL_LIMITS.readBytes) fail('journal_read_budget', 413);
+  }
+  function checkReadBudget(journal) {
+    if (activeBytes(journal) > JOURNAL_LIMITS.readBytes) fail('journal_read_budget', 413);
   }
   async function externalize(encoded) {
     const artifact = await artifacts.put({ ...encoded, signal });
     if (!validArtifactReference(artifact) || artifact.hash !== encoded.hash || artifact.bytes !== Buffer.byteLength(encoded.text)
       || await artifacts.read(artifact, { signal }) !== encoded.text) fail('journal_artifact_readback_failed', 502);
     return { hash: encoded.hash, artifact };
+  }
+  function summary(entry) {
+    return { archived: true, callId: entry.callId, requestHash: entry.requestHash, createdAtMs: entry.createdAtMs,
+      policyHash: hash(JSON.stringify({ instructions: entry.request.instructions, tools: entry.request.tools, transport: entry.request.transport })),
+      coverageFacts: leadershipCoverageFacts(entry, runKey) };
+  }
+  function usageForClosed(entry) {
+    const response = entry.response, calls = response?.result?.toolCalls;
+    if (response?.outcome !== 'settled' || response.result?.usable !== true || !Array.isArray(calls) || calls.length > 1
+      || !Number.isSafeInteger(response.actualMicros) || response.actualMicros < 0 || typeof response.usageReceiptId !== 'string'
+      || !response.usageReceiptId || (calls.length === 1 && (!entry.tool || commandUnconfirmed(calls[0], entry.tool))))
+      fail('journal_history_unconfirmed');
+    return { callId: entry.callId, requestHash: entry.requestHash, actualMicros: response.actualMicros,
+      usageReceiptId: response.usageReceiptId, providerRequestId: response.providerRequestId ?? null };
+  }
+  function verifyCost(data, usage) {
+    const cost = readRuntime(data).cost?.callsById?.[usage.callId];
+    if (cost?.runKey !== runKey || cost.state !== 'settled' || cost.dispatch?.claimed !== true
+      || cost.contentHash !== usage.requestHash || cost.settledMicros !== usage.actualMicros
+      || cost.usageReceiptId !== usage.usageReceiptId || (usage.providerRequestId && cost.providerRequestId !== usage.providerRequestId)
+      || (cost.overrunMicros ?? 0) !== 0) fail('journal_history_cost_unconfirmed');
+  }
+  async function readSegment(segment) {
+    await snapshot();
+    const text = await artifacts.read(segment.archive, { signal });
+    if (typeof text !== 'string' || Buffer.byteLength(text) !== segment.archive.bytes || hash(text) !== segment.archive.hash)
+      fail('journal_history_readback_failed', 502);
+    let archive; try { archive = JSON.parse(text); } catch { fail('journal_history_invalid', 503); }
+    if (archive?.schema !== 'quantus-leadership-history/1' || archive.runKey !== runKey || archive.start !== segment.start
+      || !Array.isArray(archive.entries) || archive.entries.length !== segment.count
+      || !Array.isArray(archive.summaries) || archive.summaries.length !== segment.count) fail('journal_history_invalid', 503);
+    validateEntries(archive.entries, 2);
+    archive.summaries.forEach((s, index) => {
+      const e = archive.entries[index];
+      if (s?.archived !== true || s.callId !== e.callId || s.requestHash !== e.requestHash || s.createdAtMs !== e.createdAtMs
+        || !digest(s.policyHash) || !record(s.coverageFacts) || typeof s.coverageFacts.writeApplied !== 'boolean'
+        || (s.coverageFacts.read !== null && !record(s.coverageFacts.read))) fail('journal_history_invalid', 503);
+    });
+    await snapshot(); return archive;
+  }
+  async function archivedEntry(journal, callId) {
+    for (const segment of journal?.segments || []) {
+      const archive = await readSegment(segment), entry = archive.entries.find(e => e.callId === callId);
+      if (entry) return entry;
+    }
+    return null;
   }
   async function write(field, { callId, requestHash, payload }) {
     if (typeof callId !== 'string' || !/^[A-Za-z0-9_.:-]{1,120}$/.test(callId) || !digest(requestHash)) fail('journal_identity_invalid', 400);
@@ -105,6 +172,16 @@ export function createLeadershipJournal({ core, clock, runKey, verifiedScope, ar
     const before = area(await snapshot(), runKey);
     if (before?.schemaVersion === 1) fail('journal_migration_required');
     const previous = before?.entries.find(e => e.callId === callId);
+    const nextId = 'lead-' + hash(JSON.stringify([runKey, (before?.archivedCount || 0) + (before?.entries.length || 0)]));
+    if (!previous && before?.schemaVersion === 3 && callId !== nextId) {
+      const old = await archivedEntry(before, callId);
+      if (old) {
+        if (old.requestHash !== requestHash || old[field]?.hash !== encoded.hash) fail('journal_record_conflict');
+        const result = await view(old);
+        if (JSON.stringify(area(await snapshot(), runKey)) !== JSON.stringify(before)) fail('journal_read_changed');
+        return result;
+      }
+    }
     if (!previous && field !== 'request') fail('journal_request_missing');
     if (previous?.requestHash && previous.requestHash !== requestHash) fail('journal_request_conflict');
     if (field === 'tool' && previous?.response === null) fail('journal_response_missing');
@@ -122,7 +199,8 @@ export function createLeadershipJournal({ core, clock, runKey, verifiedScope, ar
       authority(data);
       const journal = area(data, runKey, { create: field === 'request' });
       if (!journal) fail('journal_request_missing');
-      if (journal.schemaVersion !== 2) fail('journal_migration_required');
+      if (![2, 3].includes(journal.schemaVersion)) fail('journal_migration_required');
+      if (JSON.stringify(journal.segments || []) !== JSON.stringify(before?.segments || [])) fail('journal_segments_changed');
       let entry = journal.entries.find(e => e.callId === callId);
       if (!entry) {
         if (field !== 'request') fail('journal_request_missing');
@@ -156,14 +234,67 @@ export function createLeadershipJournal({ core, clock, runKey, verifiedScope, ar
     async read() {
       const journal = area(await snapshot(), runKey);
       checkReadBudget(journal);
-      const result = [];
+      const result = []; let metadataBytes = 0;
+      for (const segment of journal?.segments || []) {
+        const archive = await readSegment(segment);
+        metadataBytes += Buffer.byteLength(JSON.stringify(archive.summaries));
+        if (metadataBytes > JOURNAL_LIMITS.readBytes) fail('journal_history_metadata_budget', 413);
+        result.push(...archive.summaries);
+      }
       for (const entry of journal?.entries || []) result.push(await view(entry));
       if (JSON.stringify(area(await snapshot(), runKey)) !== JSON.stringify(journal)) fail('journal_read_changed');
       return result;
     },
+    async rolloverIfNeeded() {
+      const initial = area(await snapshot(), runKey);
+      if (!initial || initial.schemaVersion === 1 || initial.entries.length < 2
+        || (initial.entries.length < JOURNAL_LIMITS.turns && activeBytes(initial) < JOURNAL_LIMITS.rolloverBytes)) return { rolled: false };
+      if ((initial.segments?.length || 0) >= JOURNAL_LIMITS.segments) fail('journal_history_segment_limit');
+      // Retain the latest exchange in full, including a pending response/tool.
+      // Only settled predecessors can enter an immutable history segment.
+      const entries = initial.entries.slice(0, -1), summaries = [], usages = [];
+      for (const entry of entries) {
+        const original = await view(entry), usage = usageForClosed(original);
+        verifyCost(await snapshot(), usage); usages.push(usage); summaries.push(summary(original));
+      }
+      const start = initial.archivedCount || 0;
+      const archive = { schema: 'quantus-leadership-history/1', runKey, start, entries, summaries };
+      const stored = await externalize(encodeRuntimePayload(archive, JOURNAL_LIMITS.responseBytes));
+      const replacement = { schemaVersion: 3, archivedCount: start + entries.length,
+        segments: [...(initial.segments || []), { start, count: entries.length, archive: stored.artifact }], entries: initial.entries.slice(-1) };
+      const initialHash = hash(JSON.stringify(initial));
+      const commandKey = 'v4-journal-rollover-' + hash(JSON.stringify([runKey, initialHash, stored.hash]));
+      await core.mutate({ commandKey, requestId: commandKey, now: clock.now(), mutate(data) {
+        authority(data);
+        if (hash(JSON.stringify(area(data, runKey))) !== initialHash) fail('journal_rollover_conflict');
+        usages.forEach(u => verifyCost(data, u));
+        readRuntime(data).runsByKey[runKey].leadershipJournal = structuredClone(replacement);
+        area(data, runKey); assertActiveRuntimeCapacity(data);
+        return { data, result: { historyHash: stored.hash } };
+      } });
+      if (JSON.stringify(area(await snapshot(), runKey)) !== JSON.stringify(replacement)) fail('journal_rollover_readback_failed', 502);
+      await readSegment(replacement.segments.at(-1));
+      return { rolled: true, archivedCount: replacement.archivedCount };
+    },
+    async verifyArchives() {
+      const initial = area(await snapshot(), runKey);
+      for (const segment of initial?.segments || []) {
+        const archive = await readSegment(segment), usages = [];
+        // Stream originals one exchange at a time: total history may exceed
+        // the active-window budget, but no complete history is held in RAM.
+        for (let index = 0; index < archive.entries.length; index++) {
+          const original = await view(archive.entries[index]);
+          if (JSON.stringify(summary(original)) !== JSON.stringify(archive.summaries[index])) fail('journal_history_proof_mismatch');
+          usages.push(usageForClosed(original));
+        }
+        const data = await snapshot(); usages.forEach(u => verifyCost(data, u));
+      }
+      if (JSON.stringify(area(await snapshot(), runKey)) !== JSON.stringify(initial)) fail('journal_read_changed');
+      return { verified: true, archivedCount: initial?.archivedCount || 0 };
+    },
     async migrateInline() {
       const initial = area(await snapshot(), runKey);
-      if (!initial || initial.schemaVersion === 2) return { migrated: false };
+      if (!initial || initial.schemaVersion !== 1) return { migrated: false };
       checkReadBudget(initial);
       const replacement = structuredClone(initial);
       for (const entry of replacement.entries) for (const field of ['request', 'response', 'tool']) {

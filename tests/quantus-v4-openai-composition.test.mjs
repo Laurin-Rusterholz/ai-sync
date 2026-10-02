@@ -19,7 +19,7 @@ const costPolicy = { schema: 'quantus-v3-cost-policy/1', version: 'test-only', c
   featureFlags: { providers: 'live' }, models: { 'openai:test-model': {
     inputMicrosPerMillionTokens: 1000, outputMicrosPerMillionTokens: 1000, maxCallMicros: 100000 } } };
 async function build({ mode = 'live', providerFailure = false, compaction = false, large = false } = {}) {
-  const s = await setup(migrateCore({ entities: { tasks: { task1: { id: 'task1', status: 'todo', ...(large ? { notes: 'Large original '.repeat(65000) } : {}) } } } }, { now: T }).data);
+  const s = await setup(migrateCore({ entities: { tasks: { task1: { id: 'task1', status: 'todo', ...(large ? { notes: 'Large original '.repeat(large === 'long' ? 280000 : 65000) } : {}) } } } }, { now: T }).data);
   const requests = [], tools = [];
   const env = { QUANTUS_V4_OPENAI_API_KEY: 'test-secret-not-real', QUANTUS_V4_OPENAI_MODEL: 'test-model',
     QUANTUS_V4_OPENAI_INPUT_MICROS_PER_MTOK: '1000', QUANTUS_V4_OPENAI_OUTPUT_MICROS_PER_MTOK: '1000',
@@ -106,6 +106,27 @@ test('production worker completes full large-original packet coverage across fre
   const original = JSON.parse(fragments.map(f => f.jsonFragment).join(''));
   assert.equal(original.text, 'Large original '.repeat(65000));
   assert.ok(s.tools.some(r => r.searchParams.cursor && !r.searchParams.cursor.startsWith('q4packet.')));
+  assert.equal(run.phase, 'active');
+});
+
+test('production coverage crosses a history segment without dropping any context packet or original proof', async () => {
+  const s = await build({ large: 'long', compaction: true });
+  let result;
+  for (let n = 0; n < 100; n++) {
+    result = await (await s.make()).sectionWork.impl.next(s.args);
+    if (result.done || result.blocked) break;
+  }
+  assert.equal(result.done, true, JSON.stringify(result));
+  assert.ok(s.requests.length > 30);
+  const run = s.store.snapshot().automation.runtime.runsByKey[RUN];
+  assert.equal(run.leadershipJournal.schemaVersion, 3);
+  assert.ok(run.leadershipJournal.archivedCount > 0);
+  assert.equal(run.contextCoverage.proof.itemCount, 2);
+  const entries = await s.journal.read();
+  const packets = entries.flatMap(e => e.archived ? (e.coverageFacts.read?.packet ? [e.coverageFacts.read.packet] : [])
+    : e.tool?.contextPacket ? [e.tool.contextPacket] : []);
+  assert.equal(packets.length, packets[0].count);
+  assert.deepEqual(packets.map(p => p.index), Array.from({ length: packets.length }, (_, i) => i));
   assert.equal(run.phase, 'active');
 });
 

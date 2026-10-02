@@ -444,7 +444,40 @@ den Gesamtbestand neu und vergleicht dessen vollständigen Inhaltsfingerabdruck.
 Belegt sind der echte autorisierte C2-Weg mit einem Original über einem Megabyte,
 verlustfreie Unicode-Rekonstruktion, geschützte interne Felder, fortgesetzte
 Produktionskomposition über neue Workerinstanzen und unabhängige Kontextdeckung.
-Schnappschüsse sind noch auf 16 MiB/2000 API-Seiten begrenzt. Für Bearbeitungen über
-30 Modellaufrufe oder das 16-MiB-Journallese-Limit fehlt weiterhin der dauerhafte
-Abschnittswechsel. Quellaktualisierung, Antwortkonsum/Tagesabschluss, Client-
+Schnappschüsse sind noch auf 16 MiB/2000 API-Seiten begrenzt. Der nachfolgende
+Baustein ergänzt den dauerhaften Abschnittswechsel für lange Journale.
+Quellaktualisierung, Antwortkonsum/Tagesabschluss, Client-
 Umstellung und produktiver Probebetrieb bleiben ebenfalls offen.
+
+### Lange Journale über dauerhafte Nachweisabschnitte fortsetzen
+
+Der Worker wechselt jetzt vor dem bisherigen globalen 30-Aufrufe-/16-MiB-Stopp
+in ein neues aktives Journalfenster. Ab 30 aktiven Einträgen oder 8 MiB Nutzinhalt
+werden ausschliesslich bestätigte Vorgänger mit ihren unveränderten Original-
+referenzen und Kostenbindungen privat gespeichert und unabhängig zurückgelesen.
+Die jüngste Anfrage bleibt vollständig aktiv. CAS ersetzt den aktiven Abschnitt
+erst nach exaktem Vergleich und erneuter Lease-/Kostenprüfung; der neue Zustand
+wird anschliessend unabhängig bestätigt.
+
+Die fortlaufende Aufrufsequenz und sämtliche Idempotenzkennungen bleiben erhalten.
+Bei verlorener Wechselquittung wird die offene Werkzeugphase mit derselben
+Identität fortgesetzt. Frühere Kommandos werden nicht neu ausgeführt. Ein Replay
+eines archivierten Journalaufrufs liest den bestehenden Originaleintrag zurück;
+geänderte Nutzinhalte werden weiterhin abgewiesen.
+
+Für normale Schritte genügen die unveränderlichen Kontextnachweise der früheren
+Abschnitte. Vor jedem vorgeschlagenen Abschluss liest der Worker deren vollständige
+Originalanfragen, Modellantworten und Werkzeugbelege abschnittsweise zurück,
+berechnet die Nachweise neu und gleicht Kostenbelege ab. Danach folgt weiterhin
+die frische, unabhängige Gesamtbestandsprüfung. Fehlende Originale, falsche
+Zusammenfassungen, unvollständige Paketketten und widersprüchliche Kosten können
+keinen erfolgreichen Abschluss erzeugen.
+
+Belegt sind 66 Modellaufrufe mit echter Kostenbuchhaltung und synthetischen
+Providerantworten über mehr als 16 MiB erhaltene Originalbelege,
+eine vollständige Produktionskomposition mit mehr als 30 Aufrufen und über
+Abschnittsgrenzen gelesenen Kontextpaketen, verlorene Quittung, konkurrierende
+Benutzeränderung, abgelaufene Lease sowie fehlende/abweichende Originalnachweise.
+Die künstlichen Testkosten sind keine produktive Aktivierungsfreigabe. Es werden
+keine Payloads gelöscht; 60-Tage-Aufbewahrung, reale Quellenaktualisierung,
+Antwortkonsum/Tagesabschluss, Clientumstellung und Probebetrieb bleiben offen.

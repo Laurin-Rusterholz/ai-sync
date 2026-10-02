@@ -7,17 +7,8 @@ import { createHash } from 'node:crypto';
 import { HttpError } from './errors.mjs';
 import { JOURNAL_LIMITS } from './leadership-journal.mjs';
 import { continueLeadershipInput } from './leadership-conversation.mjs';
+import { commandUnconfirmed } from './leadership-command-state.mjs';
 const hash = v => createHash('sha256').update(JSON.stringify(v)).digest('hex');
-
-function commandUnconfirmed(call, receipt) {
-  if (call.name !== 'quantus_command' || receipt.confirmed === true) return false;
-  const { status, body } = receipt.response || {};
-  if (status === 200 && body?.dryRun === true && body?.applied === false) return false;
-  // Explicit pre-execution rejection can be reconsidered by the model. A
-  // malformed success, server error or timeout might already have committed;
-  // do not give it a new model call ID and risk a duplicate effect.
-  return !(body?.ok === false && [400, 401, 403, 404, 409, 413, 422, 429].includes(status));
-}
 
 function contextOverCapacity(call, receipt) {
   return ['quantus_context', 'quantus_read', 'quantus_run_status'].includes(call.name)
@@ -35,6 +26,7 @@ export function createLeadershipLoop({ runKey, journal, openai, gateway, costAda
       // Older inline journals move only after immutable storage readback and
       // an exact CAS match. Failure leaves their original payloads untouched.
       if (journal.migrateInline) await journal.migrateInline();
+      if (journal.rolloverIfNeeded) await journal.rolloverIfNeeded();
       const entries = await journal.read();
       const tools = gateway.definitions();
       const compactionEnabled = openai.compactionThreshold != null;
@@ -45,7 +37,9 @@ export function createLeadershipLoop({ runKey, journal, openai, gateway, costAda
       for (let i = 0; i < entries.length; i++) {
         const e = entries[i];
         if (e.callId !== callIdAt(i)) throw new HttpError(409, 'leadership_sequence_invalid');
-        if (hash({ instructions: e.request.instructions, tools: e.request.tools, transport: e.request.transport }) !== hash(trusted)) throw new HttpError(409, 'leadership_policy_changed');
+        const policyHash = e.archived === true ? e.policyHash
+          : hash({ instructions: e.request.instructions, tools: e.request.tools, transport: e.request.transport });
+        if (policyHash !== hash(trusted)) throw new HttpError(409, 'leadership_policy_changed');
       }
       let current = entries.at(-1);
       if (current?.response) {
@@ -56,6 +50,7 @@ export function createLeadershipLoop({ runKey, journal, openai, gateway, costAda
         if (result?.usable !== true) return { kind: 'blocked', reason: result?.reason || 'model_output_unusable', callId: current.callId };
         if (!Array.isArray(result.toolCalls) || result.toolCalls.length > 1) throw new HttpError(502, 'leadership_output_invalid');
         if (!result.toolCalls.length) {
+          if (journal.verifyArchives) await journal.verifyArchives();
           const coverage = completionCheck ? await completionCheck({ entries, signal }) : { complete: true };
           if (coverage.complete === true) return { kind: 'model_complete', text: result.text, callId: current.callId, finalized: false,
             ...(coverage.proof ? { coverageProof: coverage.proof } : {}) };
@@ -87,7 +82,8 @@ export function createLeadershipLoop({ runKey, journal, openai, gateway, costAda
       } else if (!current) {
         current = { callId: callIdAt(0), request: { ...trusted, input: initialRequest?.input }, response: null };
       }
-      if (entries.length >= JOURNAL_LIMITS.turns && !entries.some(e => e.callId === current.callId)) return { kind: 'blocked', reason: 'model_turn_limit' };
+      if (entries.filter(e => e.archived !== true).length >= JOURNAL_LIMITS.turns && !entries.some(e => e.callId === current.callId))
+        return { kind: 'blocked', reason: 'model_turn_limit' };
       checkAbort();
       let prepared;
       try { prepared = openai.prepare(current.request); }

@@ -28,6 +28,24 @@ function snapshot(receipt, expected) {
   return null;
 }
 
+/** Only trusted journal code persists these facts, after checking the full
+ * original receipt. They are never copied from model text or tool arguments.
+ */
+export function leadershipCoverageFacts(entry, runKey) {
+  const call = entry.response?.result?.toolCalls?.[0];
+  const facts = { writeApplied: call?.name === 'quantus_command' && entry.tool?.response?.body?.applied === true, read: null };
+  for (const expected of requiredLeadershipReads(runKey)) {
+    const matches = expected.query === 'run.status' ? call?.name === 'quantus_run_status'
+      : call?.name === 'quantus_context' && call.arguments?.query === expected.query && call.arguments.scopeId === expected.scopeId;
+    const observed = matches ? snapshot(entry.tool, expected) : null;
+    if (!observed) continue;
+    facts.read = { ...expected, snapshot: observed, inputCursor: call.arguments?.cursor ?? null,
+      nextCursor: entry.tool.response.body.cursor,
+      packet: expected.query === 'run.workset' && validContextPacket(entry.tool, expected) ? entry.tool.contextPacket : null };
+  }
+  return facts;
+}
+
 /** Model prose never establishes coverage. Require recorded complete reads,
  * then independently refresh their sources without intervening journal writes.
  * Runtime-only revision changes do not change content fingerprints; new work
@@ -40,33 +58,32 @@ export function createLeadershipCompletionCheck({ runKey, gateway }) {
     const records = new Map(), chains = new Map();
     let lastWrite = -1;
     for (let index = 0; index < entries.length; index++) {
-      const entry = entries[index], call = entry.response?.result?.toolCalls?.[0];
-      if (call?.name === 'quantus_command' && entry.tool?.response?.body?.applied === true) lastWrite = index;
+      const entry = entries[index], facts = entry.archived === true ? entry.coverageFacts : leadershipCoverageFacts(entry, runKey);
+      if (facts.writeApplied) lastWrite = index;
       for (const expected of required) {
-        const matches = expected.query === 'run.status' ? call?.name === 'quantus_run_status'
-          : call?.name === 'quantus_context' && call.arguments?.query === expected.query && call.arguments.scopeId === expected.scopeId;
-        if (!matches) continue;
-        if (expected.query === 'run.workset' && validContextPacket(entry.tool, expected)) {
-          const p = entry.tool.contextPacket, previous = chains.get(expected.query);
-          if (p.index === 0 && call.arguments?.cursor === '') {
-            chains.set(expected.query, { first: index, receipt: entry.tool });
+        const read = facts.read;
+        if (read?.query !== expected.query || read.scopeId !== expected.scopeId) continue;
+        if (read.packet) {
+          const p = read.packet, previous = chains.get(expected.query);
+          if (p.index === 0 && read.inputCursor === '') {
+            chains.set(expected.query, { first: index, read });
             records.delete(expected.query);
-          } else if (previous && p.index === previous.receipt.contextPacket.index + 1
-            && call.arguments?.cursor === previous.receipt.response.body.cursor
-            && JSON.stringify({ ...p, index: 0 }) === JSON.stringify({ ...previous.receipt.contextPacket, index: 0 })) {
-            chains.set(expected.query, { first: previous.first, receipt: entry.tool });
+          } else if (previous && p.index === previous.read.packet.index + 1
+            && read.inputCursor === previous.read.nextCursor
+            && JSON.stringify({ ...p, index: 0 }) === JSON.stringify({ ...previous.read.packet, index: 0 })) {
+            chains.set(expected.query, { first: previous.first, read });
           } else { chains.delete(expected.query); records.delete(expected.query); continue; }
-          if (p.index + 1 === p.count) records.set(expected.query, { index: chains.get(expected.query).first, receipt: entry.tool });
-        } else if (call.arguments?.cursor === '' && valid(entry.tool, expected)) {
-          records.set(expected.query, { index, receipt: entry.tool }); chains.delete(expected.query);
+          if (p.index + 1 === p.count) records.set(expected.query, { index: chains.get(expected.query).first, read });
+        } else if (read.inputCursor === '') {
+          records.set(expected.query, { index, read }); chains.delete(expected.query);
         }
       }
     }
     const missing = required.filter(r => !records.has(r.query) || (r.query !== 'policy.current' && records.get(r.query).index < lastWrite));
     if (missing.length) return { complete: false, reason: 'required_context_unread', requiredReads: missing.map(r => {
       const chain = chains.get(r.query);
-      return chain && chain.first > lastWrite && chain.receipt.response.body.hasMore
-        ? { ...r, cursor: chain.receipt.response.body.cursor } : r;
+      return chain && chain.first > lastWrite && chain.read.nextCursor
+        ? { ...r, cursor: chain.read.nextCursor } : r;
     }) };
     const fresh = [];
     for (const expected of required) {
@@ -89,7 +106,7 @@ export function createLeadershipCompletionCheck({ runKey, gateway }) {
       return { complete: false, blocked: true, reason: 'context_policy_or_run_mismatch' };
     if (workset.sourceMissing)
       return { complete: false, blocked: true, reason: 'context_original_missing' };
-    const changed = [required[0], required[1]].filter((r, i) => snapshot(fresh[i], r).hash !== snapshot(records.get(r.query).receipt, r).hash);
+    const changed = [required[0], required[1]].filter((r, i) => snapshot(fresh[i], r).hash !== records.get(r.query).read.snapshot.hash);
     if (changed.length) return { complete: false, reason: 'context_contents_changed', requiredReads: [...changed, required[2]] };
     return { complete: true, proof: { runId, dataRevision: status.dataRevision, checkedAt: status.serverNow,
       policyHash: fingerprint(policy.items), worksetHash: workset.hash, itemCount: workset.count } };
