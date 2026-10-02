@@ -20,11 +20,12 @@ function policy() {
     dayLimitMicros: 1000000, runLimitMicros: 1000000, callLimitMicros: 100000, unresolvedBlockMicros: 1000000,
     featureFlags: { providers: 'live' }, models: { 'openai:fixture': { ...rates, maxCallMicros: 100000 } } };
 }
-async function build({ output = [[functionCall], [message]], failProvider = false, policyAtStep = () => policy(), toolReceipt } = {}) {
+async function build({ output = [[functionCall], [message]], failProvider = false, policyAtStep = () => policy(), toolReceipt,
+  compactionThreshold = null } = {}) {
   const s = await setup();
   const requests = [], executions = [], applied = new Set();
   let throwToolOnce = false;
-  const openai = createOpenAITransport({ apiKey: 'fixture', model: 'fixture', modelPricing: rates,
+  const openai = createOpenAITransport({ apiKey: 'fixture', model: 'fixture', modelPricing: rates, compactionThreshold,
     fetchImpl: async (_, options) => {
       requests.push(JSON.parse(options.body));
       if (failProvider) throw new Error('connection lost');
@@ -46,11 +47,83 @@ async function build({ output = [[functionCall], [message]], failProvider = fals
     throw new Error(name);
   } } };
   const cost = createCostAdapter(ctx, { __allowFixturePolicy: true });
-  const make = ({ journal = s.make(), costAdapter = cost } = {}) => createLeadershipLoop({ runKey: RUN, journal, openai, gateway, costAdapter });
+  const make = ({ journal = s.make(), costAdapter = cost, transport = openai, completionCheck } = {}) =>
+    createLeadershipLoop({ runKey: RUN, journal, openai: transport, gateway, costAdapter, completionCheck });
   const makeV4 = (overrides = {}) => createV4LeadershipLoop({ tenant: 'quantus', promptVersion: '4.0.0',
     runKey: RUN, journal: s.make(), openai, gateway, costAdapter: cost, ...overrides });
-  return { ...s, requests, executions, applied, cost, make, makeV4, loop: make(), failToolOnce: () => { throwToolOnce = true; } };
+  return { ...s, requests, executions, applied, cost, openai, make, makeV4, loop: make(), failToolOnce: () => { throwToolOnce = true; } };
 }
+
+const compacted = { type: 'compaction', id: 'cmp_1', encrypted_content: 'opaque-state-preserved-verbatim' };
+test('large history compacts across fresh instances while original tool proof remains independently readable', async () => {
+  const nextCall = { ...functionCall, call_id: 'tool_2' };
+  const receipt = { confirmed: true, response: { status: 200, body: { ok: true, original: 'x'.repeat(270000) } } };
+  const s = await build({ compactionThreshold: 16000, toolReceipt: receipt,
+    output: [[functionCall], [compacted, nextCall], [message]] });
+  for (let i = 0; i < 5; i++) await s.make().step({ initialRequest });
+  assert.equal(s.requests.length, 3);
+  const last = s.requests[2];
+  assert.deepEqual(last.input.slice(0, 2), [compacted, nextCall]);
+  assert.equal(last.input.length, 3);
+  assert.equal(last.input[2].call_id, 'tool_2');
+  assert.equal(JSON.parse(last.input[2].output).response.body.original.length, 270000);
+  assert.ok(Buffer.byteLength(JSON.stringify([...s.requests[1].input, compacted, nextCall, last.input[2]])) > 512 * 1024,
+    'the unpruned request would exceed the provider request limit');
+  const entries = await s.journal.read();
+  assert.equal(entries.length, 3);
+  assert.equal(entries[0].tool.response.body.original.length, 270000);
+  assert.equal(entries[1].tool.response.body.original.length, 270000);
+  assert.deepEqual(entries[1].response.result.output, [compacted, nextCall]);
+  assert.equal((await s.make().step({ initialRequest })).kind, 'model_complete');
+  assert.equal(s.executions.length, 2);
+  assert.ok(Object.values(s.store.snapshot().automation.runtime.cost.callsById).every(c => c.state === 'settled'));
+});
+
+test('no compaction marker means no truncation and capacity failure makes no additional paid call', async () => {
+  const receipt = { confirmed: true, response: { status: 200, body: { original: 'x'.repeat(270000) } } };
+  const s = await build({ compactionThreshold: 16000, toolReceipt: receipt,
+    output: [[functionCall], [{ ...functionCall, call_id: 'tool_2' }]] });
+  for (let i = 0; i < 4; i++) await s.make().step({ initialRequest });
+  for (let i = 0; i < 2; i++)
+    assert.equal((await s.make().step({ initialRequest })).reason, 'model_context_capacity_exceeded');
+  assert.equal(s.requests.length, 2);
+  assert.equal((await s.journal.read()).length, 2);
+  assert.equal(Object.keys(s.store.snapshot().automation.runtime.cost.callsById).length, 2);
+});
+
+test('compaction settings are policy-bound and cannot silently change on resume', async () => {
+  const s = await build({ compactionThreshold: 16000 });
+  await s.make().step({ initialRequest });
+  const changed = { ...s.openai, compactionThreshold: 32000 };
+  await assert.rejects(s.make({ transport: changed }).step({ initialRequest }), /leadership_policy_changed/);
+  assert.equal(s.requests.length, 1);
+  assert.equal(s.executions.length, 0);
+});
+
+test('compaction before tentative completion preserves backend continuation and complete journal for checker', async () => {
+  const s = await build({ compactionThreshold: 16000, output: [[compacted, message], [message]] });
+  const completionCheck = async ({ entries }) => {
+    assert.equal(entries[0].request.input[0].content, initialRequest.input[0].content);
+    return { complete: false, reason: 'required_context_unread', requiredReads: ['run.workset'] };
+  };
+  await s.make({ completionCheck }).step({ initialRequest });
+  await s.make({ completionCheck }).step({ initialRequest });
+  assert.deepEqual(s.requests[1].input.slice(0, 2), [compacted, message]);
+  assert.match(s.requests[1].input[2].content, /required_context_unread/);
+  assert.equal(s.requests[1].instructions, initialRequest.instructions);
+});
+
+test('lost acknowledgement of compacted response recovers opaque state and usage without provider replay', async () => {
+  const s = await build({ compactionThreshold: 16000, output: [[compacted, functionCall], [message]] });
+  const broken = { ...s.journal, async recordResponse(args) { await s.journal.recordResponse(args); throw new Error('ack lost'); } };
+  await assert.rejects(s.make({ journal: broken }).step({ initialRequest }), /provider_outcome_unknown/);
+  assert.equal((await s.make().step({ initialRequest })).kind, 'tool_recorded');
+  assert.equal(s.requests.length, 1);
+  await s.make().step({ initialRequest });
+  assert.equal(s.requests.length, 2);
+  assert.deepEqual(s.requests[1].input[0], compacted);
+  assert.equal(s.executions.length, 1);
+});
 
 test('v4 factory dispatches full reviewed instructions and actual role contracts; later input cannot replace them', async () => {
   const s = await build();

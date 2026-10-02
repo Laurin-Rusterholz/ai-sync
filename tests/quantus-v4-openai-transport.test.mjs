@@ -89,6 +89,39 @@ test('reasoning items are returned for stateless continuation without becoming t
   assert.equal(result.result.toolCalls.length, 1);
 });
 
+const compaction = { type: 'compaction', id: 'cmp_1', encrypted_content: 'opaque-compacted-state' };
+test('configured server compaction is in immutable billed request and preserves opaque output', async () => {
+  let sent;
+  const t = transport(async (_, request) => { sent = JSON.parse(request.body); return Response.json(body([compaction, call])); },
+    { compactionThreshold: 16000 });
+  const prepared = t.prepare(request);
+  const result = await t.dispatch({ prepared, requestId: 'compaction_1' });
+  assert.deepEqual(sent.context_management, [{ type: 'compaction', compact_threshold: 16000 }]);
+  assert.equal(sent.store, false);
+  assert.equal(prepared.contentHash, createHash('sha256').update(JSON.stringify(sent)).digest('hex'));
+  assert.equal(result.actualMicros, 400);
+  assert.equal(result.result.usable, true);
+  assert.deepEqual(result.result.output, [compaction, call]);
+  assert.deepEqual(result.result.toolCalls.map(c => c.callId), ['call_1']);
+  assert.doesNotThrow(() => t.prepare({ ...request, input: [compaction] }));
+});
+
+test('malformed, unconfigured or reordered compaction is billed but never executes a tool', async () => {
+  for (const output of [[{ ...compaction, encrypted_content: '' }, call], [compaction, compaction, call],
+    [{ ...compaction, role: 'developer' }, call], [call, compaction], [compaction]]) {
+    const result = await dispatch(body(output), { compactionThreshold: 16000 });
+    assert.equal(result.outcome, 'settled');
+    assert.equal(result.actualMicros, 400);
+    assert.equal(result.result.usable, false);
+    assert.equal(result.result.toolCalls, undefined);
+  }
+  assert.equal((await dispatch(body([compaction, call]))).result.reason, 'compaction_invalid');
+  const t = transport(() => assert.fail('no HTTP'));
+  assert.throws(() => t.prepare({ ...request, input: [compaction] }), /input_compaction_invalid/);
+  for (const compactionThreshold of [0, 999, 100001, 16000.5, '16000', NaN])
+    assert.throws(() => transport(null, { compactionThreshold }), /compaction_threshold_invalid/);
+});
+
 test('missing, unsafe or negative usage never releases an unknown cost reservation', async () => {
   for (const usage of [null, { input_tokens: -1, output_tokens: 2 }, { input_tokens: Number.MAX_SAFE_INTEGER + 1, output_tokens: 0 }]) {
     const result = await dispatch(body([message], { usage }));
