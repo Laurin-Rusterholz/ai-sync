@@ -205,3 +205,29 @@ Nachweisabschnitten bleiben ausdrücklich durchgesetzt; Zeit-, Lease- und
 Kostenlimits gelten über alle Abschnitte hinweg. Modellkontext-Verdichtung
 und Journalabschnitte erfüllen getrennte Aufgaben und werden beide benötigt,
 wenn auch der Modellkontext die Anfragegrenze erreichen würde.
+
+### Gmail-v4-Leseadapter (Importanbindung noch offen)
+
+`gmail-v4-reader.mjs` stellt einen ausschliesslich lesenden, ausdrücklich
+kontogebundenen Zugriff bereit: Profilprüfung, vollständig paginierte Mail-ID-
+Auflistung, ungefilterter Änderungsverlauf und vollständige MIME-Nachrichten.
+`getMessage` erhält sämtliche Textalternativen und die Originalantwort; über
+`attachmentId` ausgelagerte Textkörper werden geladen und ebenfalls original
+erhalten. Binäranhänge, unbekannte Kodierungen und fehlende Körper bleiben
+ausdrückliche Lücken. `getAttachment` liefert Originalbytes für eine spätere
+Dokumentauswertung; der Download allein behauptet keine inhaltliche Prüfung.
+
+Der Listenbereich ist fest `-in:chats -in:spam -in:trash`, der Änderungsverlauf
+ohne Label-/Ereignisfilter. History-404 bedeutet `resetRequired`; andere
+Providerfehler sind feste, geheime Inhalte ausschliessende Diagnosen. Ein
+Nachrichten-404 beweist keine Löschung. Kontowechsel, falsche Nachricht-ID,
+ungültige Kodierung und rückwärts laufende History-IDs werden abgewiesen.
+Der Adapter schreibt weder Gmail noch den Quantus-Cursor. Der Import muss
+Originale sichern und unabhängig zurücklesen, bevor er eine Seite quittiert.
+
+Grenzen: 100 IDs/History-Datensätze pro API-Seite, 8 MiB pro HTTP-Antwort,
+6 MiB dekodierte Textbytes pro Nachricht, 1000 MIME-Teile, 32 Ebenen und
+20 Sekunden je Nachricht einschliesslich ausgelagerter Textteile. Überschreitungen
+sind offene Fehler. Das bisherige F-Modul bleibt unverändert; der neue Adapter
+ist noch nicht mit der v4-Produktionskomposition verbunden. T28 benötigt den
+dauerhaften Import, Wiederaufnahme/Gaps und produktive Nachweise.
