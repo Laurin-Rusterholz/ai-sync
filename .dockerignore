@@ -1,0 +1,14 @@
+**
+!package.json
+!package-lock.json
+!netlify/
+!netlify/lib/
+!netlify/lib/**
+!prompts/
+!prompts/**
+!runtime/
+!runtime/quantus-v3/
+!runtime/quantus-v3/package.json
+!runtime/quantus-v3/Dockerfile
+!runtime/quantus-v3/src/
+!runtime/quantus-v3/src/**

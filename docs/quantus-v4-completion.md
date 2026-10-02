@@ -301,3 +301,22 @@ und [Bucket-IAM-Konfiguration](https://docs.cloud.google.com/storage/docs/json_a
 Keine neuen bezahlten Aufrufe ohne vorhandene genehmigte Kostenkonfiguration.
 Keine zusätzliche parallele Leitung. Vorhandene Hauptläufe werden erst beim
 geprüften Cutover ersetzt. Schutzregeln niemals zum Bestehen eines Tests lockern.
+
+### Vollständige v4-Anweisungen und auslieferbare Laufzeit
+
+Die fünf Textblöcke aus Kapitel 15/16 sind als Version 4.0.0 mit einzeln
+geprüften Hashes hinterlegt. Die v4-Leitung bindet den tatsächlichen Slot,
+Mandanten, Tagesauftrag und die Befehlsverträge der Leitungsrolle; spätere
+Aufrufparameter können die Anweisungen nicht ersetzen. Startanlage,
+Antwortkonsum und Finalisierung erhalten dadurch keine erweiterten Modellrechte.
+23 Prompt-/Schleifenprüfungen inklusive echter Kostenbuchung, dauerhafter
+Wiederaufnahme und Zurückweisung fremder Mandanten/alter Versionen bestehen.
+
+Das bisherige Dockerfile kopierte nur zwei Backend-Dateien und keine
+Abhängigkeiten oder Prompts. Es kopiert jetzt die Backend-Module und Prompts
+sowie per Lockdatei installierte Produktionsabhängigkeiten. Die CI baut das
+wirkliche Abbild und prüft darin ohne externes Netzwerk alle Laufzeitimporte,
+dynamische OAuth-/Kernimporte, beide Prompt-Versionen und einen HTTP-Start
+mit fehlender Konfiguration (503). Die neue v4-Factory muss noch mit dem
+produktiven Abschnittsablauf verbunden werden; vollständige Kontextdeckung,
+Original-Rücklesen, Backend-Prüfung und 14-Tage-Nachweis bleiben offen.

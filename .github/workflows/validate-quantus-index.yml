@@ -21,8 +21,13 @@ on:
       - "netlify/lib/firebase-admin.mjs"
       - "netlify/lib/assistant-*.mjs"
       - "netlify/lib/quantus-v3-*.mjs"
+      - "netlify/lib/quantus-v4-*.mjs"
       - "public/quantus-v3-*.mjs"
       - "prompts/quantus-v3/**"
+      - "prompts/quantus-v4/**"
+      - "tests/quantus-v4-*.test.mjs"
+      - ".dockerignore"
+      - "scripts/check-quantus-runtime-image.mjs"
       - "runtime/quantus-v3/**"
       - "infra/quantus-v3/**"
       - "tests/tagesbriefing-v3-*.test.mjs"
@@ -74,3 +79,17 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Run Quantus regression tests
         run: npm test
+
+  runtime-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Build runtime image from locked dependencies
+        run: docker build -f runtime/quantus-v3/Dockerfile -t quantus-runtime-check .
+      - name: Verify imports, reviewed prompts and unconfigured startup without network
+        run: >-
+          docker run --rm --network none
+          --mount type=bind,source="${{ github.workspace }}/scripts/check-quantus-runtime-image.mjs",target=/check.mjs,readonly
+          quantus-runtime-check node /check.mjs
