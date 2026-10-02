@@ -379,3 +379,21 @@ werden nicht durch ein veraltetes Finalzeichen übergangen.
 Vor `close23` bleibt `finalized: false`. Die Tageswellen-Disposition, produktive
 End-to-End-Abnahme und automatische spätere Abschlussinvalidierung bleiben
 offen. Die Tests verwenden künstliche externe Antworten.
+
+### Abschluss einer Tageswelle
+
+Die explizite `completion: "wave_processed"` aus der V4-Komposition führt im
+HTTP-Worker durch `finishWorkWave`. Dieser prüft den gespeicherten vollständigen
+Kontext, Domain-Fingerprint, Lauf-/Policy-Zuordnung, Abschnitt und höchstens
+60 Sekunden alte Prüfung innerhalb der CAS. Der neue E1-Ausgang
+`wave_processed` benötigt einen Beleg, Live-Modus, keine offenen Kosten und
+keine offene Fortsetzung; bei `close23` ist er verboten. Er setzt niemals Grün
+und verändert keine Tagesphase oder offenen fachlichen Einträge.
+
+`contextCoverage.domainHash` bindet alle Domain-Daten. Der gemeinsame
+`domain-fingerprint` schliesst nur Laufzeitbereich, aktive Lease,
+Idempotenzprotokoll und globale Revision aus; diese haben eigene Prüfungen.
+Eine reine Lease-/Protokollrevision macht den gelesenen Bestand daher nicht
+veraltet. Erfolg benötigt einen unabhängigen Rücklesebeleg. Die bestehende
+Scheduler-Deduplizierung verhindert erneute Modellarbeit nach bestätigtem
+Wellenende. Das ist kein Abschlussnachweis für den gesamten Tag.

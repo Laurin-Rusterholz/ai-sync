@@ -799,3 +799,29 @@ erstellen weiterhin keine Finalnote; ihre Laufzeit-Disposition benötigt noch
 eine explizite Lösung ohne unnötige Abschlusswiederholung. Produktiver T17-/T36-
 Nachweis, spätere Invalidierung im tatsächlichen Worker und Probebetrieb sind
 damit weiterhin nicht abgeschlossen.
+
+### Tageswelle beenden, ohne den Tag abzuschliessen
+
+Vor `close23` liefert die OpenAI-Komposition jetzt die ausdrückliche Disposition
+`wave_processed`. Der echte HTTP-Worker prüft dafür innerhalb seiner Abschluss-
+CAS den vollständigen gespeicherten Kontextnachweis erneut: Lauf, Policy-Version,
+Checkpoint-Revision, Originalbestand, höchstens 60 Sekunden alte Prüfzeit und
+aktueller Abschnitt samt Lease. Technische Laufzeitänderungen dürfen die globale
+Revision erhöhen; jeder geänderte fachliche Inhalt verweigert den Nachweis.
+
+Erst danach darf der Lauf mit dem eigenen Ergebnis `wave_processed` enden.
+Dieser Zustand ist immer ohne Grün; Tagesphase, offene Leads, Nachfragen und
+Follow-ups werden nicht geschlossen oder gelöscht. Offene Kosten und bestehende
+Fortsetzungen verhindern auch diesen technischen Abschluss. Der gespeicherte
+Lauf wird unabhängig zurückgelesen. Wiederholte Scheduler-Zustellung führt keine
+zweite Arbeit aus. Ein `close23`-Lauf darf diesen Pfad nicht verwenden und bleibt
+an den vollständigen Tagesabschluss gebunden. Andere Worker ohne die explizite
+Disposition behalten den bisherigen unabhängigen Abschlussnachweis.
+
+Tests sprechen den tatsächlichen HTTP-Dienst mit gültiger synthetischer Identität
+an und nutzen den echten Idempotenz-/CAS-Umschlag. Sie prüfen offene Arbeit,
+Wiederholung, technische Revisionen, fehlende/veraltete Nachweise, parallele
+Nutzeränderungen, Abendmissbrauch und unaufgelöste Kosten. Die Kontextnachweise
+dieser HTTP-Gegenproben sind künstlich; die Modell-Komposition wird zusätzlich
+separat integriert geprüft. Produktive Gesamtkette, Ereignis-Fortsetzungen,
+spätere Invalidierung und Probebetrieb bleiben offene Nachweise.

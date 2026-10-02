@@ -7,17 +7,10 @@ import { parseSlotRunKey } from '../../../netlify/lib/quantus-v3-runtime-plan.mj
 import { runIdForRunKey } from './run-ids.mjs';
 import { assertActiveRuntimeCapacity } from './runtime-payload.mjs';
 import { HttpError } from './errors.mjs';
+import { domainFingerprint as domainHash } from './domain-fingerprint.mjs';
 const hash = value => createHash('sha256').update(JSON.stringify(value ?? null)).digest('hex');
 const ACTOR = Object.freeze({ kind: 'system', id: 'quantus-v4-daily-finalization' });
 const fail = reason => { throw new HttpError(409, `daily_finalization_${reason}`); };
-function domainHash(data) {
-  const copy = structuredClone(data);
-  // Lease/checkpoint/idempotency writes advance the global revision without
-  // changing any domain original. Only these known areas are excluded.
-  delete copy.automation.runtime; delete copy.automation.activeLease;
-  delete copy.automation.idempotencyByKey; delete copy.automation.dataRevision;
-  return hash(copy);
-}
 
 export function createDailyFinalization({ core, clock, policy, tenant, runKey, sectionId, verifiedScope, signal, enabled }) {
   const parsed = parseSlotRunKey(runKey);
@@ -57,7 +50,7 @@ export function createDailyFinalization({ core, clock, policy, tenant, runKey, s
       }
       // Daytime waves cannot create a final day. Their runtime disposition
       // continues to be decided by the independent worker evidence path.
-      if (parsed.slot !== 'close23') return { done: true, finalized: false };
+      if (parsed.slot !== 'close23') return { done: true, finalized: false, completion: 'wave_processed' };
       if (enabled !== true) return { done: false, blocked: true, reason: 'external_effects_not_allowed' };
       const coverage = runtime.contextCoverage, proof = coverage?.proof;
       const checked = Date.parse(proof?.checkedAt);

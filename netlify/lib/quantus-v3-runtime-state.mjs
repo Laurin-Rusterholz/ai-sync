@@ -66,7 +66,7 @@ export const RUN_MAX_TOOL_STEPS = 30;             // Werkzeugschritte je Hauptla
 export const HTTP_SECTION_MAX_MS = 90_000;        // HTTP-Abschnitt
 export const SECTION_KINDS = Object.freeze(["work", "http", "late"]);
 export const RUN_PHASES = Object.freeze(["active", "checkpointed", "exception_open", "finished"]);
-export const RUN_OUTCOMES = Object.freeze(["dry_run", "completed", "no_work", "aborted"]);
+export const RUN_OUTCOMES = Object.freeze(["dry_run", "completed", "wave_processed", "no_work", "aborted"]);
 export const ORIGINS = Object.freeze(["runner", "monitor", "user", "system"]);
 
 export const MAX_STEP_DURATION_MS = RUN_MAX_ACTIVE_MS;
@@ -994,10 +994,11 @@ export function finishRun(data, input = {}) {
   if (runBefore.phase === "finished") {
     return noop(data, { duplicate: true, runKey: parsed.runKey, outcome: runBefore.outcome, green: runBefore.green === true });
   }
-  if (outcome === "completed") {
+  if (outcome === "completed" || outcome === "wave_processed") {
     const blockers = [];
     if (runnerMode !== "live") blockers.push("runner_dry_run");
     if (!evidenceRef) blockers.push("missing_evidence");
+    if (outcome === "wave_processed" && parsed.slot === "close23") blockers.push("daily_closure_required");
     if (runBefore.pendingContinuationId) blockers.push("pending_continuation");
     const openCost = openCostCallsForRun(runtimeBefore, parsed.runKey);
     if (openCost.length) blockers.push("open_cost_calls");

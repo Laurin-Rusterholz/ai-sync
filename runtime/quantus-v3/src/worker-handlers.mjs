@@ -35,6 +35,7 @@ import { HttpError, badRequest, conflict } from "./errors.mjs";
 import { requireSchema } from "./schema.mjs";
 import { resolveSlotOccurrence, SLOT_NAMES } from "./slot-window.mjs";
 import { continuationTaskId } from "./task-names.mjs";
+import { finishWorkWave } from './wave-completion.mjs';
 
 export const SLOT_START_REQUEST = Object.freeze({
   type: "object",
@@ -301,6 +302,7 @@ async function runSection(ctx, { runKey, sectionId, lease, resumedFrom, cursor: 
   let steps = 0;
   let stopReason = null;
   let providerOutcome = "complete";
+  let completion = null;
 
   for (;;) {
     if (lease.lost) { stopReason = `lease_lost:${lease.lost}`; break; }
@@ -328,7 +330,12 @@ async function runSection(ctx, { runKey, sectionId, lease, resumedFrom, cursor: 
       providerOutcome = 'blocked';
       break;
     }
-    if (next.done) { stopReason = "work_done"; break; }
+    if (next.done) {
+      if (next.completion !== undefined && next.completion !== 'wave_processed')
+        throw new HttpError(502, 'section_work_response_invalid');
+      completion = next.completion ?? null;
+      stopReason = "work_done"; break;
+    }
     if (typeof next.stepId !== "string" || !next.stepId) {
       throw new HttpError(502, "section_work_response_invalid", { sectionId, reason: "step_id" });
     }
@@ -351,7 +358,7 @@ async function runSection(ctx, { runKey, sectionId, lease, resumedFrom, cursor: 
     if (recorded.result.mustCheckpoint) { stopReason = "budget"; break; }
     if (clock.now() >= hartAtMs) { stopReason = "section_deadline"; break; }
   }
-  return { steps, stopReason, cursor, providerOutcome };
+  return { steps, stopReason, cursor, providerOutcome, completion };
 }
 
 /* ── Abschlussnachweis ────────────────────────────────────────────────── */
@@ -533,7 +540,7 @@ async function openException(ctx, { runKey, sectionId, fence, exceptionId, reaso
   return { continuationId, ...zustellung };
 }
 
-async function finishSection(ctx, { runKey, sectionId, fence, steps, cursor }) {
+async function finishSection(ctx, { runKey, sectionId, fence, steps, cursor, completion }) {
   const scope = verifiedScopeOf(ctx, fence);
   const clock = ctx.ports.require("clock");
   const live = ctx.config.mode === "live";
@@ -546,6 +553,30 @@ async function finishSection(ctx, { runKey, sectionId, fence, steps, cursor }) {
     }));
     if (!out.result.ok) throw conflict("finish_rejected", { code: out.result.code, detail: out.result.detail ?? null });
     return { status: 200, body: { outcome: "finished", runKey, sectionId, mode: ctx.config.mode, steps, green: false } };
+  }
+
+  if (completion === 'wave_processed') {
+    try {
+      const out = await mutate(ctx, `wave-finish:${runKey}:${sectionId}`, data => finishWorkWave(data, {
+        runKey, sectionId, verifiedScope: scope, now: clock.now(), tenant: ctx.config.tenant, policyVersion: ctx.config.policyVersion,
+      }));
+      if (!out.result?.ok || out.result.outcome !== 'wave_processed' || out.result.green !== false)
+        throw new HttpError(502, 'work_wave_receipt_invalid');
+      const fresh = (await ctx.ports.require('core').read())?.data;
+      const finished = E1.readRuntime(fresh).runsByKey[runKey];
+      if (finished?.phase !== 'finished' || finished.green !== false || finished.currentSectionId !== null
+        || finished.outcome?.kind !== 'wave_processed' || finished.outcome.fence !== fence
+        || finished.outcome.evidenceRef !== 'wave-proof:' + finished.contextCoverage?.hash)
+        throw new HttpError(502, 'work_wave_readback_failed');
+      return { status: 200, body: { outcome: 'finished', completion: 'wave_processed', runKey, sectionId,
+        mode: ctx.config.mode, steps, green: false } };
+    } catch (error) {
+      if (!error?.error?.startsWith('wave_completion_')) throw error;
+      const opened = await openException(ctx, { runKey, sectionId, fence, exceptionId: `wave:${sectionId}`,
+        reason: error.error, cursor });
+      return { status: 200, body: { outcome: 'exception_open', runKey, sectionId, mode: ctx.config.mode, steps,
+        green: false, reason: error.error, continuationId: opened.continuationId, enqueued: opened.enqueued } };
+    }
   }
 
   // Live: ohne streng geprueften Nachweis gibt es kein Gruen. Die
@@ -819,7 +850,7 @@ async function advance(ctx, { runKey, sectionId, lease, resumedFrom, cursor = nu
   const run = await runSection(ctx, { runKey, sectionId, lease, resumedFrom, cursor });
 
   if (run.stopReason === "work_done") {
-    return finishSection(ctx, { runKey, sectionId, fence: lease.fence, steps: run.steps, cursor: run.cursor });
+    return finishSection(ctx, { runKey, sectionId, fence: lease.fence, steps: run.steps, cursor: run.cursor, completion: run.completion });
   }
   if (run.providerOutcome === "unknown" || run.providerOutcome === "blocked") {
     // Unklarer externer Ausgang: Checkpoint schreiben, aber sichtbar als

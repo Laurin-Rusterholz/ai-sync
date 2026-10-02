@@ -28,6 +28,7 @@ import { createNetlifyGoogleTokenSource } from './google-oauth-token-source.mjs'
 import { externalEffectsAllowed } from './config.mjs';
 import { createAnswerPreparation } from './answer-preparation.mjs';
 import { createDailyFinalization } from './daily-finalization.mjs';
+import { domainFingerprint } from './domain-fingerprint.mjs';
 
 export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
   envRead = name => process.env[name], artifactStore, jobTokenIssuer,
@@ -157,7 +158,8 @@ export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
         const saved = await corePort.mutate({ commandKey: key, requestId: key, now: clockPort.now(), mutate(data) {
           check(data);
           if (data.automation.dataRevision !== proof.dataRevision) throw new HttpError(409, 'context_changed_before_checkpoint');
-          readRuntime(data).runsByKey[runKey].contextCoverage = { hash, proof, checkpointRevision: data.automation.dataRevision + 1 };
+          readRuntime(data).runsByKey[runKey].contextCoverage = { hash, proof,
+            checkpointRevision: data.automation.dataRevision + 1, domainHash: domainFingerprint(data) };
           assertActiveRuntimeCapacity(data);
           return { data, result: { hash } };
         } });
@@ -167,6 +169,7 @@ export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
         if (saved.result?.hash !== hash || stored?.hash !== hash || JSON.stringify(stored.proof) !== JSON.stringify(proof)
           || stored.checkpointRevision !== proof.dataRevision + 1 || data.automation.dataRevision !== stored.checkpointRevision)
           throw new HttpError(502, 'context_coverage_readback_failed');
+        if (stored.domainHash !== domainFingerprint(data)) throw new HttpError(502, 'context_coverage_readback_failed');
         return finalization.next();
       }
       if (!['model_recorded', 'tool_recorded'].includes(result.kind)) throw new HttpError(502, 'leadership_phase_invalid');

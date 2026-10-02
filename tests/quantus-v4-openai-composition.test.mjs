@@ -161,6 +161,7 @@ test('actual worker consumes user replies into persistent open work before model
     if (result.done || result.blocked) break;
   }
   assert.equal(result.done, true, JSON.stringify(result));
+  assert.equal(result.completion, 'wave_processed');
   const data = s.store.snapshot(), answer = data.automation.answersById.a1;
   assert.ok(answer.consumedAt); assert.equal(answer.consumption.kind, 'intake');
   assert.equal(data.automation.intakeById[answer.consumption.intakeId].status, 'open');
