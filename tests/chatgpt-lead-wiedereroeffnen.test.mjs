@@ -43,8 +43,8 @@ const boxen = schnitt("function chatgptLeadCloseHistory(l) {", "// Bewertung & Z
 // Betriebsmodell-Funktionen (v3LeadOperationalState/v3LeadStatus/-Text) — sie
 // stehen weiter oben in derselben Datei und werden hier separat ausgeschnitten.
 const v3Modell = schnitt("const V3_OPERATIONAL_STATES = Object.freeze([",
-  "function v3LeadStatusText(l, opts) { return V3_STATUS_LABEL[v3LeadStatus(l, opts)] || V3_STATUS_LABEL.unknown; }",
-  "das Betriebsmodell (v3LeadStatus)") + 'function v3LeadStatusText(l, opts) { return V3_STATUS_LABEL[v3LeadStatus(l, opts)] || V3_STATUS_LABEL.unknown; }\n';
+  "function v3RegisterFollowUp(",
+  "das Betriebsmodell (v3LeadStatus)");
 // chatgptLeadStatusBoxHtml ruft zusaetzlich chatgptLeadOperationalBoxHtml(l)
 // auf (Betriebsmodell-Aktionen) — die Definition liegt unmittelbar davor und
 // muss mit ausgeschnitten werden, sonst ReferenceError beim Bauen des Test-Scopes.

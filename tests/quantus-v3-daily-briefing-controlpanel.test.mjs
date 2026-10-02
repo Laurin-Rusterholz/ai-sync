@@ -543,7 +543,7 @@ test("fehlFollowupRot: ueberfaelliger Follow-up-Termin ist rot", () => {
   assert.equal(mod.v3LeadStatus(lead, { nowMs: Date.parse("2026-09-21T10:00:00.000Z") }), "red");
 });
 
-test("Deferrals>=3: dreimalige Verschiebung ohne echten Fortschritt setzt information_required und eine Frage fuer morgen vor", () => {
+test("v4: drei Verschiebungen bleiben rot ohne eine neue Benutzerfrage zu erfinden", () => {
   const mod = loadModule()(appWith({ entities: {} }), {});
   const lead = { lastAction: "Erstkontakt" };
   mod.v3RegisterFollowUp(lead, { newLastAction: "Erstkontakt", followUpAt: "2026-09-22T09:00:00.000Z", morgenIsoStr: "2026-09-22T04:00:00.000Z" });
@@ -551,15 +551,18 @@ test("Deferrals>=3: dreimalige Verschiebung ohne echten Fortschritt setzt inform
   assert.equal(lead.followUpDeferrals, 2, "zwei Verschiebungen ohne Fortschritt sind noch keine Eskalation");
   mod.v3RegisterFollowUp(lead, { newLastAction: "Erstkontakt", followUpAt: "2026-09-24T09:00:00.000Z", morgenIsoStr: "2026-09-24T04:00:00.000Z" });
   assert.equal(lead.followUpDeferrals, 3);
-  assert.equal(lead.operationalState, "information_required", "ab der dritten Verschiebung ohne Fortschritt wird daraus eine Frage an Laurin");
-  assert.equal(lead.questionForBriefingAt, "2026-09-24T04:00:00.000Z");
+  assert.equal(lead.operationalState, undefined);
+  assert.equal(mod.v3LeadStatus(lead), "red");
+  assert.equal(lead.questionForBriefingAt, undefined);
 });
 
-test("Deferrals: ein ECHTER neuer lastAction setzt den Zaehler zurueck, statt zu eskalieren", () => {
+test("v4: ein geaenderter lastAction-Text ist kein bestaetigter Fortschritt", () => {
   const mod = loadModule()(appWith({ entities: {} }), {});
   const lead = { lastAction: "Erstkontakt", followUpDeferrals: 2 };
   mod.v3RegisterFollowUp(lead, { newLastAction: "Kunde hat geantwortet, Angebot verschickt", followUpAt: "2026-09-25T09:00:00.000Z" });
-  assert.equal(lead.followUpDeferrals, 0);
+  assert.equal(lead.followUpDeferrals, 3);
+  assert.equal(mod.v3LeadStatus(lead), "red");
+  assert.equal(lead.lastAction, "Kunde hat geantwortet, Angebot verschickt");
   assert.notEqual(lead.operationalState, "information_required");
 });
 
@@ -814,12 +817,11 @@ test("Review-Fix a1de2c2 Punkt 1: eine faellige, aber unbeantwortete Entscheidun
   const laengstFaellig = { operationalState: "information_required", questionForBriefingAt: "2026-01-01T03:00:00.000Z" }; // laengst ueberfaellig
   assert.equal(mod.v3LeadStatus(laengstFaellig, { nowMs: Date.parse("2026-09-21T10:00:00.000Z") }), "yellow", "faellig heisst nur sichtbar, nicht automatisch rot ohne echte Frist");
   const nochNichtFaellig = { operationalState: "decision_required", questionForBriefingAt: "2026-09-22T02:00:00.000Z" };
-  assert.equal(mod.v3LeadStatus(nochNichtFaellig, { nowMs: Date.parse("2026-09-21T10:00:00.000Z") }), "green", "vor Faelligkeit ist gruen: ChatGPT arbeitet noch, nichts von Laurin noetig");
+  assert.equal(mod.v3LeadStatus(nochNichtFaellig, { nowMs: Date.parse("2026-09-21T10:00:00.000Z") }), "yellow", "eine unbeantwortete Frage bleibt sofort offen");
 });
 
-test("cgl-ask-decision/-information nutzen die echte Zeitzonen-Umrechnung statt eines festen UTC-Strings", () => {
-  assert.match(index, /l\.questionForBriefingAt = v3ZurichLocalToUtcIso\(addDaysYmd\(todayYmd\(\), 1\), "04:00"\)/, "questionForBriefingAt muss echte Europe/Zurich-Zeit sein, kein fester UTC-String");
-  assert.match(index, /morgenIsoStr: v3ZurichLocalToUtcIso\(addDaysYmd\(todayYmd\(\), 1\), "04:00"\)/, "auch die Deferral-Eskalation (cgl-postpone-followup) muss dieselbe echte Umrechnung nutzen");
+test("v4: neue Rueckfragen werden sofort datiert", () => {
+  assert.match(index, /l\.questionForBriefingAt = l\.pendingQuestion\.askedAt/);
 });
 
 // ── Review-Fix a1de2c2 Punkt 3: die Aktionen brauchen echte, sichtbare UI ──
