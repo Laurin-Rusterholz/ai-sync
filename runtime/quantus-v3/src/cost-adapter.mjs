@@ -170,6 +170,18 @@ function leseAufruf(data, callId) {
   return call && typeof call === "object" ? call : null;
 }
 
+// A transport computing confirmed usage must use the same configured rates
+// as the freshly approved cost policy, including immediately before dispatch.
+function pruefeTransportPreis(policy, provider, model, modelPricing) {
+  if (modelPricing === undefined) return; // Existing non-model adapters.
+  const approved = policy.models?.[`${provider}:${model}`];
+  for (const field of ['inputMicrosPerMillionTokens', 'outputMicrosPerMillionTokens']) {
+    if (!Number.isSafeInteger(modelPricing?.[field]) || modelPricing[field] < 0 || modelPricing[field] !== approved?.[field]) {
+      throw conflict('provider_pricing_mismatch', { provider, model });
+    }
+  }
+}
+
 export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseReserveMs = DISPATCH_LEASE_RESERVE_MS, monthlyCap = null } = {}) {
   const fixture = __allowFixturePolicy === true;
 
@@ -179,10 +191,11 @@ export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseRese
      * globale Monatsgrenze geprueft (`monthly-cost-cap.mjs`) — atomar, weil
      * die Pruefung innerhalb desselben, bei einem Konflikt wiederholten
      * Mutators laeuft wie `E1.reserveCost` selbst. */
-    async reserve({ callId, runKey, provider, model, contentHash, inputTokens, outputTokens }) {
+    async reserve({ callId, runKey, provider, model, contentHash, inputTokens, outputTokens, modelPricing }) {
       const clock = clockOf(ctx);
       await pruefeFrisch(ctx, "reserve");
       const policy = await ladePolicy(ctx, "reserve");
+      pruefeTransportPreis(policy, provider, model, modelPricing);
       // NACH dem Laden: das Laden selbst kann gedauert haben.
       const now = clock.now();
       const out = await mutiere(ctx, `cost-reserve:${callId}`, (data) => (monthlyCap
@@ -203,7 +216,7 @@ export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseRese
     },
 
     /* Anspruch, Sendung, Ausgang — in dieser Reihenfolge und nur so. */
-    async claimAndDispatch({ callId, claimId, send }) {
+    async claimAndDispatch({ callId, claimId, send, modelPricing }) {
       if (typeof send !== "function") throw new HttpError(500, "dispatch_function_required");
       const clock = clockOf(ctx);
       await pruefeFrisch(ctx, "claim");
@@ -213,6 +226,8 @@ export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseRese
       // Preisstand oder ein langsames Lesen darf nicht dazu fuehren, dass
       // mit einer alten Zeit gerechnet wird.
       const vorher = await leseKern(ctx);
+      const preisAufruf = leseAufruf(vorher, callId);
+      pruefeTransportPreis(policy, preisAufruf?.provider, preisAufruf?.model, modelPricing);
       const now = clock.now();
       const fuehrung = leaseRest(vorher, ctx.verifiedScope, now);
       if (!fuehrung.ok) {
