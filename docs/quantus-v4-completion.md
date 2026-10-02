@@ -229,6 +229,29 @@ Tests sind kein automatisches Bestehen. Das Register ist kein Erfolgszähler.
 | T39 | Monitor erkennt fehlenden eigenen Heartbeat und gestörte Benachrichtigungszustellung. | Offen: gegen aktuellen integrierten Stand auszuführen. |
 | T40 | Backup/Restore im Testprojekt reaktiviert keine bereits versandte externe Aktion. | Offen: gegen aktuellen integrierten Stand auszuführen. |
 
+## Verbindung zwischen Worker und Tageslauf
+
+Der produktiv konfigurierte Quellen-Worker legt vor dem ersten Quellenzugriff
+den Tageslauf mit Slotbeleg und genau einer Startnotiz pro Tag an. Jeder neue
+Arbeitsabschnitt synchronisiert die offenen Originalreferenzen erneut. Die
+Schritte verwenden die bestehenden Domain-Kommandos und den vorhandenen
+CAS-/Idempotenzumschlag; eine separate Lesekontrolle bestätigt den Bestand,
+bevor die eigentliche Quellenarbeit beginnen darf.
+
+Mandant, Policy-Version, aktueller Abschnitt, Besitzer und Lease werden auch
+bei wiedergegebenen Belegen geprüft. Fehlende Startnotizen, abgelaufene Rechte
+und nicht gespeicherte Schreibvorgänge sperren die Quellenarbeit. Nach einem
+Checkpoint darf die neue Lease nur den exakt gespeicherten, vom aktuellen
+Abschnitt konsumierten Zwischenstand übernehmen. Der historische Checkpoint
+bleibt unverändert.
+
+Geprüft mit dem echten lokalen HTTP-Worker und der produktiven
+Quellen-Komposition, zusätzlich mit dem echten Idempotenzumschlag einschließlich
+CAS-Konflikt, Lease-Wechsel, falscher Schreibbestätigung und manipulierter
+Fortsetzung. Dies schließt weder die OpenAI-Gesamtkomposition noch den
+produktiven Probebetrieb ab. Begrenzte Quellen-Artefakte, vollständige
+Kontext-Batches und der Leitungszyklus müssen noch gemeinsam verdrahtet werden.
+
 ## Betriebsfreigabe
 
 Keine neuen bezahlten Aufrufe ohne vorhandene genehmigte Kostenkonfiguration.

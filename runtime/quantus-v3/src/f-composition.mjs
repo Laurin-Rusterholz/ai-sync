@@ -12,6 +12,7 @@ import { createGmailSourceReader } from "./gmail-source.mjs";
 import { createAnthropicTransport } from "./anthropic-transport.mjs";
 import { createEnvCostPolicyPort } from "./cost-policy-port.mjs";
 import { createSectionWorkProvider, loadAssistantPolicy } from "./section-work.mjs";
+import { createBriefingSectionWork } from "./briefing-bootstrap.mjs";
 
 /**
  * @param envRead   `(name) => string|undefined`, wie `resolveRuntimeConfig`.
@@ -59,6 +60,8 @@ export async function createFSourcePorts({ config, corePort, clockPort, envRead 
       clockPort, gmailSource, anthropic, leaseScope: config.leaseScope, policy: policyResult.policy,
       runtimeConfig: config,
     });
+    sectionWork = createBriefingSectionWork({ core: corePort, clock: clockPort,
+      policy: policyResult.policy, config, inner: sectionWork.impl });
   } catch (e) {
     return { sectionWork: unavailablePort("sectionWork", "section_work_construction_failed:" + e.message), costPolicy };
   }

@@ -6,8 +6,8 @@ import { createLeadershipJournal } from '../../runtime/quantus-v3/src/leadership
 export const T = Date.parse('2026-10-02T07:01:00Z');
 export const RUN = 'quantus:2026-10-02:process09:4.0';
 
-export async function setup() {
-  const store = F.createCasStore(F.baseCore());
+export async function setup(initialData = F.baseCore()) {
+  const store = F.createCasStore(initialData);
   const acquired = F.casMutate(store, d => E1.acquireLease(d, { holder: 'worker-a', scope: 'quantus:mainrun', now: T }));
   const scope = { holder: 'worker-a', scope: 'quantus:mainrun', fence: acquired.result.fence };
   F.casMutate(store, d => E1.startRunSection(d, { runKey: RUN, sectionId: 'section-1', kind: 'http', now: T, verifiedScope: scope }));
@@ -26,4 +26,3 @@ export async function setup() {
   return { store, core: port.impl, clock, scope, make, journal: make(),
     setNow: v => { now = v; }, onMutation: fn => { beforeMutation = fn; }, onRead: fn => { beforeRead = fn; }, get reads() { return reads; } };
 }
-
