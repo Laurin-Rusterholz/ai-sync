@@ -31,10 +31,10 @@ Tree `5ab240104b8bf6854e63406df820165249ab387b`.
   Repo besitzt außerdem einen eigenen Netlify-Blob-Schreiber mit optionaler,
   nicht atomarer Vorabprüfung. Welches Ziel produktiv konfiguriert ist, ist
   damit noch nicht belegt. Kein Abschalten vor Ersatz und Queue-Abnahme.
-- Weitere konkrete Leitungslücke: `ROLE_POLICY.lead_agent` gestattet aktuell
-  keinen `run_status`-Lesezugriff. Die bindungsgeprüfte Statusfreigabe und ihre
-  negativen Gegenproben gehören zum nächsten Gateway-Paket; kein Ausweichen
-  auf ein unbeschränktes Scheduler-Credential für Modellwünsche.
+- Statuszugriff korrigiert: `ROLE_POLICY.lead_agent` erlaubt jetzt
+  `run_status` nur mit der bestehenden Auftragsbindung. Positive und negative
+  Tests durch den echten C2-Leseweg prüfen eigene und fremde Laufzuordnung.
+  Kein Scheduler-Credential wird für Modellwünsche verwendet.
 
 ## Arbeitspakete und Reihenfolge
 
@@ -67,6 +67,25 @@ Reasoning-Items. Noch nicht mit dem produktiven Leitungszyklus verdrahtet.
 Referenz: https://developers.openai.com/api/docs/guides/function-calling
 Prüfung: `npm run test:v4-leadership` (Netz durch kontrollierte Responses ersetzt;
 keine kostenpflichtigen Provideraufrufe und kein Nachweis produktiver Freigabe).
+
+### Werkzeugzugang (zweites Paket)
+
+`leadership-gateway.mjs` definiert die vier Modellwerkzeuge und führt sie über
+C2 mit kurzlebigem Job-Token aus. Lauf-ID, Lease und Idempotenzschlüssel bleiben
+Laufzeitdaten. Command-Nutzlasten werden durch `parseCommandEnvelope` validiert;
+Benutzerantworten, Policyänderungen und Finalisierung sind keine Modellverben.
+Schreibbestätigungen benötigen die ausdrückliche Serverquittung samt Revision;
+Pagination bleibt sichtbar. Ein Test führt den Gateway-Statusabruf durch echte
+C2-Authentifizierung, Jobbindung und Feldprojektion aus.
+
+Der C2-Transport begrenzt nun auch den Antwortkörper zeitlich und nach Bytes.
+Er wiederholt unklare Befehle nicht automatisch und folgt keinen Redirects mit
+Credentials. 363 gezielte Auth-/C2-/Laufzeit-/v4-Prüfungen bestanden.
+
+Noch offen: Gateway mit dem dauerhaften Arbeitszyklus verbinden, Modellantwort
+vor Aktion sichern, vollständigen Kontext/Readback/Checkpoint-Wiederaufnahme
+integrieren, Statusprojektion um die vollständigen Bewertungsnachweise ergänzen.
+Der lokale vollständige Testlauf des ersten Pakets endete ebenfalls erfolgreich.
 
 ## Abnahmeregister
 
