@@ -103,6 +103,11 @@ export function createGmailMessageRegistry({ core, clock, artifacts, tenant, acc
   }
   return Object.freeze({
     sourceKey,
+    async inventory() {
+      const source = area(await snapshot());
+      return { sourceKey, source: structuredClone(source), fingerprint: hash(source),
+        records: source ? Object.keys(source.records).sort().map(key => structuredClone(source.records[key])) : [] };
+    },
     // Enumerate complete originals without materializing a mailbox in core or
     // trusting a caller-provided list of IDs. A cursor is continuation data,
     // not a coverage proof: the consumer must persist/verify the whole chain.

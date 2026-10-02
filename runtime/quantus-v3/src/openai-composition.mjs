@@ -22,10 +22,14 @@ import { loadQuantusV4Prompts, MAIN_PROMPT_SLOTS } from '../../../netlify/lib/qu
 import { createHash } from 'node:crypto';
 import { assertActiveRuntimeCapacity } from './runtime-payload.mjs';
 import { createGmailContextHydrator } from './gmail-context-hydrator.mjs';
+import { createGmailWorkerPreparation } from './gmail-worker-preparation.mjs';
+import { createGmailV4Reader } from './gmail-v4-reader.mjs';
+import { createNetlifyGoogleTokenSource } from './google-oauth-token-source.mjs';
+import { externalEffectsAllowed } from './config.mjs';
 
 export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
   envRead = name => process.env[name], artifactStore, jobTokenIssuer,
-  c2Transport, providerFetch = globalThis.fetch } = {}) {
+  c2Transport, providerFetch = globalThis.fetch, gmailTokenSource, gmailFetch = globalThis.fetch } = {}) {
   const costPolicy = createEnvCostPolicyPort(envRead);
   const unavailable = reason => ({ sectionWork: unavailablePort('sectionWork', reason), costPolicy });
   if (corePort && Object.hasOwn(corePort, 'available')) corePort = corePort.available ? corePort.impl : null;
@@ -59,10 +63,23 @@ export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
         getAccessToken: tokens.get, maxPayloadBytes: JOURNAL_LIMITS.responseBytes });
     }
     c2Transport ??= createC2HttpTransport({ baseUrl: config.c2BaseUrl });
+    const gmailSources = policyResult.policy.requiredSources.filter(s => ['gmail', 'mail'].includes(s.kind));
+    if (gmailSources.length > 1) return unavailable('gmail_multiple_accounts_not_configured');
+    let gmailReader = null;
+    if (gmailSources.length) {
+      const selectedSource = envRead('QUANTUS_V4_GMAIL_SOURCE_ID');
+      if ((gmailSources[0].kind === 'mail' && selectedSource !== gmailSources[0].id)
+        || (selectedSource !== undefined && selectedSource !== gmailSources[0].id)) return unavailable('gmail_source_policy_mismatch');
+      const account = envRead('QUANTUS_V4_GMAIL_ACCOUNT');
+      if (typeof account !== 'string' || account !== account.trim().toLowerCase()) return unavailable('gmail_account_not_configured');
+      gmailTokenSource ??= await createNetlifyGoogleTokenSource({ envRead });
+      if (gmailTokenSource?.available !== true || typeof gmailTokenSource.get !== 'function') return unavailable('gmail_credentials_not_configured');
+      gmailReader = createGmailV4Reader({ account, getAccessToken: gmailTokenSource.get, fetchImpl: gmailFetch });
+    }
     const openai = createOpenAITransport({ apiKey, model, fetchImpl: providerFetch,
       compactionThreshold: compact === undefined ? null : Number(compact),
       modelPricing: { inputMicrosPerMillionTokens: Number(rates[0]), outputMicrosPerMillionTokens: Number(rates[1]) } });
-    const inner = { async next({ runKey, sectionId, verifiedScope, signal }) {
+    const inner = { async next({ runKey, sectionId, verifiedScope, signal, deadlineAtMs }) {
       const startedAt = clockPort.now();
       function check(data) {
         if (signal?.aborted) throw new HttpError(409, 'leadership_interrupted');
@@ -78,6 +95,14 @@ export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
         return { holder: verifiedScope.holder, fence: verifiedScope.fence };
       }
       await activeLease();
+      if (gmailReader) {
+        if (!externalEffectsAllowed(config)) return { done: false, blocked: true, reason: 'external_effects_not_allowed' };
+        const preparation = createGmailWorkerPreparation({ reader: gmailReader, core: corePort, clock: clockPort,
+          artifacts: artifactStore, tenant: config.tenant, account: gmailReader.account, sourceId: gmailSources[0].id,
+          runKey, sectionId, verifiedScope, signal, policy: policyResult.policy });
+        const prepared = await preparation.next({ deadlineAtMs });
+        if (!prepared.ready) return { done: false, stepId: prepared.stepId, durationMs: prepared.durationMs, cursor: prepared.cursor };
+      }
       const journal = createLeadershipJournal({ core: corePort, clock: clockPort, runKey, verifiedScope, artifacts: artifactStore, signal });
       const gmailContext = createGmailContextHydrator({ core: corePort, clock: clockPort, artifacts: artifactStore,
         runKey, tenant: config.tenant, sectionId, verifiedScope, signal });

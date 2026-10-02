@@ -20,9 +20,11 @@ const costPolicy = { schema: 'quantus-v3-cost-policy/1', version: 'test-only', c
   dayLimitMicros: 1000000, runLimitMicros: 1000000, callLimitMicros: 100000, unresolvedBlockMicros: 1000000,
   featureFlags: { providers: 'live' }, models: { 'openai:test-model': {
     inputMicrosPerMillionTokens: 1000, outputMicrosPerMillionTokens: 1000, maxCallMicros: 100000 } } };
-async function build({ mode = 'live', providerFailure = false, compaction = false, large = false, gmail = false } = {}) {
+async function build({ mode = 'live', providerFailure = false, compaction = false, large = false, gmail = false, acquire = false } = {}) {
   const s = await setup(migrateCore({ entities: { tasks: { task1: { id: 'task1', status: 'todo', ...(large ? { notes: 'Large original '.repeat(large === 'long' ? 280000 : 65000) } : {}) } } } }, { now: T }).data);
-  const requests = [], tools = [];
+  const requests = [], tools = [], sourceRequests = [];
+  const runPolicy = acquire ? { ...assistantPolicy, noExternalSources: false,
+    requiredSources: [...assistantPolicy.requiredSources, { id: 'gmail-inbox', kind: 'mail' }] } : assistantPolicy;
   if (gmail) {
     const source = { core: s.core, clock: s.clock, artifacts: s.artifacts.store, tenant: 'quantus',
       account: 'mail@example.test', sourceId: 'gmail-test', runKey: RUN, sectionId: 'section-1', verifiedScope: s.scope, policy: assistantPolicy };
@@ -36,7 +38,8 @@ async function build({ mode = 'live', providerFailure = false, compaction = fals
   const env = { QUANTUS_V4_OPENAI_API_KEY: 'test-secret-not-real', QUANTUS_V4_OPENAI_MODEL: 'test-model',
     QUANTUS_V4_OPENAI_INPUT_MICROS_PER_MTOK: '1000', QUANTUS_V4_OPENAI_OUTPUT_MICROS_PER_MTOK: '1000',
     QUANTUS_V4_PROMPT_VERSION: '4.0.0', QUANTUS_V3_COST_POLICY_JSON: JSON.stringify(costPolicy),
-    [DOMAIN_PORT_VARS.policyJson]: JSON.stringify(assistantPolicy) };
+    [DOMAIN_PORT_VARS.policyJson]: JSON.stringify(runPolicy) };
+  if (acquire) Object.assign(env, { QUANTUS_V4_GMAIL_ACCOUNT: 'mail@example.test', QUANTUS_V4_GMAIL_SOURCE_ID: 'gmail-inbox' });
   if (compaction) env.QUANTUS_V4_OPENAI_COMPACT_THRESHOLD = '16000';
   const config = { ...F.configFor('worker', { QUANTUS_V3_RUNTIME_MODE: mode,
     QUANTUS_V3_REQUIRED_SOURCES: '["quantus-core"]', QUANTUS_V3_ALLOW_EXTERNAL_EFFECTS: 'true', QUANTUS_V3_ACTIVATION_GATES: F.allGatesPassed() }),
@@ -45,6 +48,17 @@ async function build({ mode = 'live', providerFailure = false, compaction = fals
   const args = { runKey: RUN, sectionId: 'section-1', verifiedScope: s.scope, cursor: { position: 0 } };
   const make = overrides => createOpenAIWorkerPorts({ config, corePort: { available: true, impl: s.core }, clockPort: s.clock,
     envRead: name => env[name], artifactStore: s.artifacts.store,
+    gmailTokenSource: { available: true, async get() { return { token: 'synthetic-gmail-token' }; } },
+    gmailFetch: async url => {
+      assert.equal(requests.length, 0, 'source acquisition precedes the first model request');
+      url = new URL(url); sourceRequests.push(url.pathname);
+      if (url.pathname.endsWith('/profile')) return Response.json({ emailAddress: 'mail@example.test', historyId: '100' });
+      if (url.pathname.endsWith('/messages')) return Response.json({ messages: [{ id: 'mail1', threadId: 'thread1' }] });
+      if (url.pathname.endsWith('/history')) return Response.json({ historyId: '200' });
+      const text = 'Automatically acquired mail reaches the model.';
+      return Response.json({ id: 'mail1', threadId: 'thread1', historyId: '150', internalDate: String(T),
+        payload: { mimeType: 'text/plain', headers: [], body: { size: Buffer.byteLength(text), data: Buffer.from(text).toString('base64url') } } });
+    },
     jobTokenIssuer: { available: true, async mint({ jobId, tenant }) {
       assert.equal(jobId, 'run_2026-10-02'); assert.equal(tenant, 'quantus'); return 'test-job-token';
     } },
@@ -52,7 +66,7 @@ async function build({ mode = 'live', providerFailure = false, compaction = fals
       tools.push(request);
       const params = request.searchParams, data = s.store.snapshot();
       const domain = createQuantusV3DomainAdapter({ policyVersion: '4.0', tenantId: 'quantus', mode: 'enforce',
-        now: () => T, ports: { policy: assistantPolicy, ownerId: 'test-owner' } });
+        now: () => T, ports: { policy: runPolicy, ownerId: 'test-owner' } });
       const revision = data.automation.dataRevision;
       let afterId = null;
       if (params.cursor) {
@@ -96,8 +110,37 @@ async function build({ mode = 'live', providerFailure = false, compaction = fals
           }) }]
           : [{ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'Review complete; backend proof still required.' }] }])] });
     }, ...overrides });
-  return { ...s, args, make, requests, tools, env, config };
+  return { ...s, args, make, requests, tools, env, config, sourceRequests };
 }
+
+test('actual OpenAI worker acquires Gmail, binds intake and persists source status before the first model call', async () => {
+  const s = await build({ acquire: true }); let result;
+  for (let n = 0; n < 25; n++) {
+    result = await (await s.make()).sectionWork.impl.next(s.args);
+    if (result.done || result.blocked) break;
+  }
+  assert.equal(result.done, true, JSON.stringify(result));
+  assert.equal(s.sourceRequests.length, 4);
+  const data = s.store.snapshot(), entries = Object.values(data.automation.intakeById);
+  assert.equal(entries.length, 1); assert.equal(entries[0].status, 'open');
+  assert.equal(data.dailyBriefing.assistantRuns['2026-10-02'].sourceChecks['gmail-inbox'].outcome, 'ok');
+  const delivered = s.requests.flatMap(r => r.input).filter(i => i.type === 'function_call_output')
+    .map(i => JSON.parse(i.output)).flatMap(t => t.response.body.items || []).find(i => i.sourceType === 'intake');
+  assert.ok(delivered.text.includes('Automatically acquired mail reaches the model.'));
+  assert.equal(data.automation.runtime.runsByKey[RUN].phase, 'active');
+});
+
+test('mail account/source/credentials and dry-run gates cannot silently skip required acquisition', async () => {
+  for (const mode of ['account', 'source', 'credentials', 'dry_run']) {
+    const s = await build({ acquire: true, mode: mode === 'dry_run' ? 'dry_run' : 'live' });
+    if (mode === 'account') delete s.env.QUANTUS_V4_GMAIL_ACCOUNT;
+    if (mode === 'source') delete s.env.QUANTUS_V4_GMAIL_SOURCE_ID;
+    const ports = await s.make(mode === 'credentials' ? { gmailTokenSource: { available: false } } : {});
+    if (mode === 'dry_run') assert.equal((await ports.sectionWork.impl.next(s.args)).blocked, true);
+    else assert.equal(ports.sectionWork.available, false);
+    assert.equal(s.sourceRequests.length, 0); assert.equal(s.requests.length, 0);
+  }
+});
 
 test('production composition delivers the exact bound mail original to model input and retains partial-source gates', async () => {
   for (const gmail of [true, 'partial']) {

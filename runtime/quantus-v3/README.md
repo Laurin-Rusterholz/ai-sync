@@ -279,8 +279,8 @@ Lücken zu löschen. Bei Laufwechsel werden offene Seiten fortgesetzt; ein berei
 abgeschlossener Abruf startet am bisherigen Cursor neu. Message-404 bleibt eine
 ausdrückliche Lücke. `done` bedeutet nur Abrufende; `partial` nennt weiterhin
 offene Quellen. Es wird weder `recordSourceCheck(ok)` aufgerufen noch eine Intake-
-Karte oder fachliche Erledigung erzeugt. Produktive Komposition und autorisierter
-OAuth-Zugang sind noch anzuschliessen. Maximal 3 MiB/10000 IDs pro gespeicherter
+Karte oder fachliche Erledigung erzeugt. Der unten beschriebene Vorbereitungsadapter
+übernimmt Bindung und Quellenstatus in der OpenAI-Komposition. Maximal 3 MiB/10000 IDs pro gespeicherter
 Seite; Core-, Lease- und Originalbündelgrenzen bleiben zusätzlich bestehen.
 
 ### Google-OAuth-Verbindung ausserhalb Netlify
@@ -306,9 +306,35 @@ Blobs-Client benötigt dafür `set(serialisiertesJSON,{onlyIfMatch})`; sein
 HTTP-Header mit der installierten Bibliothek. Late/unknown Writes werden nicht
 als bestätigter Zugang zurückgegeben; der nächste Aufruf liest den echten Stand.
 
-Noch keine produktive Cloud-Worker-Konfiguration oder Kompositionsanbindung.
+Die OpenAI-Komposition nutzt diese Quelle bei ausdrücklich konfigurierter Gmail-
+Pflichtquelle. Produktive Cloud-Worker-Credentials sind noch nicht eingerichtet.
 Der gemeinsame `gcal-shared`-Helfer nutzt denselben sicheren Refresh, einschliesslich
 `forceRefresh`, jedoch ohne Gmail-Scope-Pflicht für reine Kalender-Anmeldungen.
 Kontoadress-Anreicherung schreibt ebenfalls bedingt und prüft das zugehörige
 Access-Token. Statuslesungen verwenden starke Konsistenz. Nur eine ausdrücklich
 neue OAuth-Anmeldung ersetzt den kompletten Verbindungsdatensatz direkt.
+
+### Automatische Gmail-Vorbereitung vor OpenAI
+
+Die Policy muss genau eine Mailquelle mit `kind: "gmail"` oder `kind: "mail"`
+deklarieren. `QUANTUS_V4_GMAIL_ACCOUNT` enthält das explizite, kleingeschriebene
+Konto. Bei allgemeinem `kind: "mail"` muss `QUANTUS_V4_GMAIL_SOURCE_ID` genau dessen
+Policy-ID auswählen; bei `gmail` ist diese zusätzliche Auswahl optional, muss
+aber ebenfalls passen. Mehrere Mailquellen oder fehlende Kontodaten/Credentials
+bleiben unavailable. Es gibt keine Kontoannahme und kein stilles Überspringen.
+
+Vor dem ersten Modellschritt führt `gmail-worker-preparation` den dauerhaften
+Quellenabgleich und die Bindung jeder aktuellen Version an einen Eingang aus.
+Ein Aufruf arbeitet höchstens acht interne Checkpoint-Einheiten und beendet den
+Batch vor weiteren Einheiten bei knapper Zeit. Der bestehende Worker zählt jeden
+Batch weiterhin als Werkzeugschritt; seine 30-Schritt-/20-Minuten-Grenzen bleiben
+unverändert. Unvollständige Aufnahme und fehlende Bindungen überleben neue
+Instanzen; vorhandene Eingänge werden geprüft statt erneut angelegt.
+
+Nach vollständiger Aufnahme und Bindung werden Quellenstatus und Laufmarker
+atomar gespeichert. Fehlende Nachrichten/Anhänge ergeben `partial`, nicht `ok`.
+Der Marker wird unabhängig gelesen; der nächste Bootstrap nimmt neue Eingänge
+in den Lauf auf, bevor das Modell arbeiten darf. Originalauflösung und fachlicher
+Abschluss bleiben eigenständige Prüfungen. Dry-run und geschlossene externe
+Freigabetore verhindern schon den Gmail-Abruf. Produktive Zugangsdaten, grosse
+Bestände und Laufzeitnachweise im echten 90-Sekunden-Worker bleiben offen.

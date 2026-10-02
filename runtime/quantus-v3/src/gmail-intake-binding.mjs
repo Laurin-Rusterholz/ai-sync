@@ -16,6 +16,12 @@ const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const fail = code => { throw new HttpError(409, `gmail_intake_${code}`); };
 const ACTOR = Object.freeze({ kind: 'system', id: 'quantus-v4-gmail-intake' });
 
+export function gmailIntakeDescriptor(identity, row) {
+  return { binding: { schema: 'quantus-gmail-intake/1', identity, sourceKey: hash(identity), record: row },
+    intakeId: 'gmail-' + hash([identity, row.messageId, row.version, row.contentHash]),
+    text: `Gmail-Nachricht ${row.messageId}, Version ${row.version}. Vollstaendiges Original vor Bearbeitung lesen. Offene Inhaltsluecken: ${row.gapCount}.` };
+}
+
 export function createGmailIntakeBinding({ core, clock, artifacts, tenant, account, sourceId,
   runKey, sectionId, verifiedScope, signal, policy } = {}) {
   const parsed = parseSlotRunKey(runKey);
@@ -58,9 +64,7 @@ export function createGmailIntakeBinding({ core, clock, artifacts, tenant, accou
         || !Number.isSafeInteger(Number(timestamp)) || !Number.isFinite(new Date(Number(timestamp)).getTime())) fail('received_at_invalid');
       const receivedAt = new Date(Number(timestamp)).toISOString();
       const row = verified.record;
-      const binding = { schema: 'quantus-gmail-intake/1', identity, sourceKey: registry.sourceKey, record: row };
-      const intakeId = 'gmail-' + hash([identity, messageId, row.version, row.contentHash]);
-      const text = `Gmail-Nachricht ${messageId}, Version ${row.version}. Vollstaendiges Original vor Bearbeitung lesen. Offene Inhaltsluecken: ${row.gapCount}.`;
+      const { binding, intakeId, text } = gmailIntakeDescriptor(identity, row);
       const initial = await snapshot();
       if (!equal(current(initial, messageId), row)) fail('source_changed');
       if (initial.automation.intakeById[intakeId]) {
