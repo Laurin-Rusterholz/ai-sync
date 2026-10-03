@@ -417,7 +417,7 @@ test("C3a-06 Nutzer: intake.create/accept, task.create, lead.comment, briefing.a
   assert.equal((await sende(d, { verb: "note.append", payload: { noteId: "note_u2", text: "x", noteScope: "lead" } })).body.reason, "lead_id_required_for_lead_scope");
   assert.equal((await sende(d, { verb: "note.append", payload: { noteId: "note_u1", text: "anders", noteScope: "run" } })).body.reason, "NOTE_ID_TAKEN:note_u1");
   assert.equal((await sende(d, { verb: "note.append", payload: { noteId: "note_p1", text: "Pruefer", noteScope: "run" }, token: d._env.secrets.service.checker })).status, 200);
-  assert.equal((await sende(d, { verb: "lead.schedule", payload: { leadId: "l1", waitUntil: new Date(JETZT + 2 * TAG).toISOString(), counterparty: "Bank", nextAction: "nachfragen", evidenceRefs: ["ev_l1"] }, expectedEntityVersion: ver(d._store.snapshot, "chatgptLead", "l1") })).body.reason, "ACTOR_REJECTED:ACTOR_NOT_ALLOWED:user", "B erlaubt setWaiting nur der Leitung");
+  mussOk(await sende(d, { verb: "lead.schedule", payload: { leadId: "l1", waitUntil: new Date(JETZT + 2 * TAG).toISOString(), counterparty: "Bank", nextAction: "nachfragen", evidenceRefs: ["ev_l1"] }, expectedEntityVersion: ver(d._store.snapshot, "chatgptLead", "l1") }), "owner schedules an evidenced follow-up");
 });
 
 /* ══ 5. Leitung: Lease MITGEFUEHRT, je Versuch geprueft ═════════════════ */
@@ -906,6 +906,62 @@ test('desktop cancellation queue commits through real C2 exactly once and preser
   assert.deepEqual(reopened.operationalStateHistory[0].source.closure,actual.operationalStateSource.closure);
   assert.equal(reopened.operationalStateHistory[0].reason,'Es sind neue Unterlagen eingetroffen.');
   assert.equal((await client.list()).filter(e=>e.deliveryStatus==='acknowledged').length,2);
+});
+
+test('owner waiting queue commits once through real C2 and retained follow-ups count text-only deferrals',async t=>{
+  const {openLeadWaiting}=await import('../public/quantus-v4-lead-waiting.mjs');
+  const d=deps();let time=JETZT,lost=true,requests=0;
+  const original=structuredClone(d._store.snapshot.entities.chatgptLeads.l1);
+  const client=await openLeadWaiting({accountKey:OWNER,origin:APP,indexedDB:new IDBFactory(),now:()=>time,
+    getRun:()=>d._store.snapshot.dailyBriefing.assistantRuns[DATE],getAuth:async()=>({accountKey:OWNER,idToken:nutzerToken()}),
+    fetchImpl:async(url,init)=>{requests++;const result=await S.handleCommandRequest(FC.makeRequest({url,headers:{...init.headers,origin:APP},body:JSON.parse(init.body)}),d);
+      assert.equal(result.status,200,JSON.stringify(result.body));if(lost){lost=false;throw Error('lost waiting receipt');}
+      return new Response(JSON.stringify(result.body),{status:result.status});}});
+  t.after(()=>client.close());
+  await client.submit({lead:original,counterparty:'Bank',nextAction:'Nachfragen',waitUntil:new Date(JETZT+2*TAG).toISOString(),evidenceId:'ev_l1'});
+  await client.flush();const committed=structuredClone(d._store.snapshot),waiting=committed.automation.waitingById['chatgptLead:l1'];
+  assert.equal(committed.entities.chatgptLeads.l1.operationalState,'waiting_external');assert.equal(waiting.setBy,OWNER);
+  assert.equal(waiting.evidence.evidenceId,'ev_l1');assert.equal(committed.entities.chatgptLeads.l1.status,original.status);
+  time+=30000;await client.flush();assert.equal(requests,2);assert.deepEqual(d._store.snapshot,committed);
+  assert.equal((await client.list())[0].deliveryStatus,'acknowledged');
+  for(let i=1;i<=3;i++){
+    await client.submit({lead:structuredClone(d._store.snapshot.entities.chatgptLeads.l1),counterparty:'Bank',
+      nextAction:'Neue Formulierung '+i,waitUntil:new Date(JETZT+(2+i)*TAG).toISOString(),evidenceId:'ev_l1'});
+    await client.flush();
+  }
+  assert.equal(d._store.snapshot.automation.progressById['chatgptLead:l1'].deferrals,3);
+  assert.equal(d._store.snapshot.automation.waitingById['chatgptLead:l1'].waitingSince,waiting.waitingSince);
+});
+
+test('owner waiting cannot bypass evidence, version, identity or future-date invariants',async()=>{
+  const payload={leadId:'l1',waitUntil:new Date(JETZT+TAG).toISOString(),counterparty:'Bank',nextAction:'Nachfragen',evidenceRefs:['ev_l1']};
+  const initial=structuredClone(BASIS);
+  initial.automation.evidenceById.foreign={...initial.automation.evidenceById.ev_l1,id:'foreign',sourceId:'l2'};
+  for(const change of [{payload:{...payload,evidenceRefs:['foreign']}},{payload:{...payload,evidenceRefs:[]}},
+    {payload:{...payload,waitUntil:new Date(JETZT-1).toISOString()}},{payload:{...payload,counterparty:'chatgpt'}},
+    {expectedEntityVersion:ver(initial,'chatgptLead','l1')+1},{token:nutzerToken('different-owner')},
+    {token:nutzerToken(OWNER,'foreign-tenant')}]){
+    const d=deps({store:FC.makeStore({snapshot:initial})}),before=structuredClone(d._store.snapshot);
+    const r=await sende(d,{verb:'lead.schedule',payload,expectedEntityVersion:ver(initial,'chatgptLead','l1'),...change});
+    assert.notEqual(r.status,200,JSON.stringify(change));assert.deepEqual(d._store.snapshot,before);
+  }
+});
+
+test('an explicitly corrected rejected waiting intent can succeed without rewriting the failed one',async t=>{
+  const {openLeadWaiting}=await import('../public/quantus-v4-lead-waiting.mjs');
+  const d=deps(),original=structuredClone(d._store.snapshot.entities.chatgptLeads.l1);
+  const options={lead:original,counterparty:'chatgpt',nextAction:'Nachfragen',waitUntil:new Date(JETZT+TAG).toISOString(),evidenceId:'ev_l1'};
+  const client=await openLeadWaiting({accountKey:OWNER,origin:APP,indexedDB:new IDBFactory(),now:()=>JETZT,
+    getRun:()=>d._store.snapshot.dailyBriefing.assistantRuns[DATE],getAuth:async()=>({accountKey:OWNER,idToken:nutzerToken()}),
+    fetchImpl:async(url,init)=>{const r=await S.handleCommandRequest(FC.makeRequest({url,headers:{...init.headers,origin:APP},body:JSON.parse(init.body)}),d);
+      return new Response(JSON.stringify(r.body),{status:r.status});}});
+  t.after(()=>client.close());await client.submit(options);await client.flush();
+  assert.deepEqual(d._store.snapshot.entities.chatgptLeads.l1,original);
+  await client.submit({...options,counterparty:'Bank'});await client.flush();
+  const entries=await client.list();assert.equal(entries.length,2);assert.equal(entries.filter(e=>e.deliveryStatus==='acknowledged').length,1);
+  assert.equal(d._store.snapshot.automation.waitingById['chatgptLead:l1'].counterparty,'Bank');
+  assert.equal(d._store.snapshot.entities.chatgptLeads.l1.operationalStateVersion,original.operationalStateVersion+1);
+  assert.ok(entries.some(e=>e.legacyOperation.counterparty==='chatgpt'&&e.deliveryStatus!=='acknowledged'));
 });
 
 test('desktop completion binds the shown result and selected proof through C2, recovering a lost receipt once',async t=>{

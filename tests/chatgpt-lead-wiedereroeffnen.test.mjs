@@ -48,7 +48,7 @@ const v3Modell = schnitt("const V3_OPERATIONAL_STATES = Object.freeze([",
 // chatgptLeadStatusBoxHtml ruft zusaetzlich chatgptLeadOperationalBoxHtml(l)
 // auf (Betriebsmodell-Aktionen) — die Definition liegt unmittelbar davor und
 // muss mit ausgeschnitten werden, sonst ReferenceError beim Bauen des Test-Scopes.
-const statusBox = schnitt("function chatgptLeadOperationalBoxHtml(l) {", "function chatgptLeadCloseHistory(l) {",
+const statusBox = schnitt("function chatgptLeadWaitingState(l) {", "function chatgptLeadCloseHistory(l) {",
   "der Status-Kasten");
 const feldHandler = schnitt("  if (action === \"cgl-status\") {", "\n  return false;\n}",
   "der Statuswechsel");
@@ -65,6 +65,7 @@ function bauen(lead) {
   const win = { dbSendLeadAnswer: (id, question, answer) => antworten.push({ id, question, answer }) };
   const scope = {
     window: win,
+    coreAuthCurrentUser: () => ({uid:'fixture-owner'}),
     cglCancelLead: (lead, reason) => cancellations.push({id:lead.id,reason}),
     APP: { state: { data: { entities: { chatgptLeads: leads, chatgptTasks: {} } } } },
     ownEntity: (map, id) => map[id] || null,

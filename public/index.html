@@ -24126,7 +24126,7 @@ const V3_OPERATIONAL_STATE_LABEL = Object.freeze({
 // dann in Europe/Zurich ablesen, aus der Differenz den echten Offset holen.
 function v3ZurichLocalToUtcIso(ymd, hhmm) {
   const naive = new Date(ymd + "T" + hhmm + ":00.000Z");
-  if (Number.isNaN(naive.getTime())) return null;
+  if (Number.isNaN(naive.getTime()) || naive.toISOString().slice(0,10) !== ymd) return null;
   try {
     const teile = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Zurich", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).formatToParts(naive);
     const get = (t) => Number(teile.find((p) => p.type === t)?.value || 0);
@@ -51947,9 +51947,23 @@ function viewChatgptLeads() {
 // -postpone-followup/-ask-decision/-ask-information/-answer-question waren
 // zwar in chatgptModuleHandleAction implementiert, aber ohne dieses Feld
 // nirgends im UI erreichbar (toter Code, per Computer-Use nicht bedienbar).
+function chatgptLeadWaitingState(l) {
+  const a = APP.state.data.automation || {}, options = [];
+  for (const [id, row] of Object.entries(a.evidenceById || {})) {
+    if (row && row.id === id && row.sourceType === 'chatgptLead' && row.sourceId === l.id && row.ref && row.fingerprint
+      && !['jobsById','answersById','questionsById'].some(key => a[key]?.[id]))
+      options.push({id,label:String(row.kind) + ' · ' + String(row.ref).slice(0,180)});
+  }
+  const waiting = a.waitingById?.['chatgptLead:' + l.id];
+  const addressable = l.operationalStateSource && Number.isSafeInteger(l.operationalStateVersion) && l.operationalStateVersion > 0;
+  return {options,waiting,addressable};
+}
 function chatgptLeadOperationalBoxHtml(l) {
   const state = v3LeadOperationalState(l);
   if (["done", "cancelled"].includes(state)) return "";
+  const wait = chatgptLeadWaitingState(l);
+  const rawDraft = window._cglWaitingDraft;
+  const draft = rawDraft?.accountKey === coreAuthCurrentUser()?.uid && rawDraft?.leadId === l.id ? rawDraft.fields : {};
   const pq = l.pendingQuestion;
   const offenePq = pq && !pq.answeredAt;
   return `
@@ -51976,14 +51990,16 @@ function chatgptLeadOperationalBoxHtml(l) {
         <button class="btn sm" data-action="cgl-set-next-action" data-id="${l.id}">Nächsten Schritt setzen</button>
       </div>
       <div class="mini" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-        <input type="text" id="cglWaitOn_${l.id}" value="${esc(l.waitingOn || "")}" placeholder="Wartet auf wen/was" style="flex:1;min-width:120px" />
-        <input type="text" id="cglWaitNext_${l.id}" placeholder="Nächster Schritt danach" style="flex:1;min-width:120px" />
-        <input type="date" id="cglWaitUntil_${l.id}" style="min-width:120px" />
-        <button class="btn sm" data-action="cgl-set-waiting-external" data-id="${l.id}">Externes Warten setzen</button>
+        <input type="text" id="cglWaitOn_${l.id}" value="${esc(draft.cglWaitOn ?? wait.waiting?.counterparty ?? l.waitingOn ?? '')}" maxlength="200" aria-label="Wartepartner" placeholder="Wartet auf wen/was" style="flex:1;min-width:120px" />
+        <input type="text" id="cglWaitNext_${l.id}" value="${esc(draft.cglWaitNext ?? wait.waiting?.nextAction ?? '')}" maxlength="500" aria-label="Nächster Schritt nach dem Warten" placeholder="Nächster Schritt danach" style="flex:1;min-width:120px" />
+        <label>Nachfassen (09:00 Zürich)<input type="date" id="cglWaitUntil_${l.id}" value="${esc(draft.cglWaitUntil || '')}" style="min-width:120px" /></label>
+        <select id="cglWaitEvidence_${l.id}" aria-label="Beleg für das externe Warten"><option value="">Beleg auswählen</option>${wait.options.map(o => `<option value="${esc(o.id)}" ${draft.cglWaitEvidence === o.id ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select>
+        <button class="btn sm" data-action="cgl-set-waiting-external" data-id="${l.id}" ${!wait.addressable || !wait.options.length ? 'disabled' : ''}>Externes Warten setzen</button>
+        ${!wait.addressable ? '<span>Servermigration ausstehend · Wartezustand noch nicht änderbar.</span>' : !wait.options.length ? '<span>Es fehlt ein zugeordneter Beleg. Warten bleibt unbestätigt.</span>' : '<span>Beleg, nächster Schritt und Termin werden gemeinsam geprüft.</span>'}
       </div>
       <div class="mini" style="display:flex;gap:6px;flex-wrap:wrap">
-        <input type="text" id="cglPostponeAction_${l.id}" placeholder="Neuer Stand (leer = keine Änderung)" style="flex:1;min-width:140px" />
-        <input type="date" id="cglPostponeUntil_${l.id}" style="min-width:120px" />
+        <input type="text" id="cglPostponeAction_${l.id}" value="${esc(draft.cglPostponeAction || '')}" placeholder="Nächster Schritt (optional)" maxlength="500" style="flex:1;min-width:140px" />
+        <label>Neuer Termin (09:00 Zürich)<input type="date" id="cglPostponeUntil_${l.id}" value="${esc(draft.cglPostponeUntil || '')}" style="min-width:120px" /></label>
         <button class="btn sm ghost" data-action="cgl-postpone-followup" data-id="${l.id}">Follow-up verschieben</button>
       </div>
     </div>`;
@@ -52230,16 +52246,16 @@ async function cglCancellationAccount() {
   }
   return {accountKey,mod,client:await _v4CancellationClients.get(accountKey)};
 }
-async function cglFlushCancellations(client, accountKey) {
+async function cglFlushCancellations(client, accountKey, backupReason = 'pre_cancellation_refresh', refreshAcknowledged = false) {
   const before = new Set((await client.list()).filter(e => e.deliveryStatus === 'acknowledged').map(e => e.operationId));
   await client.flush();
   if (coreAuthCurrentUser()?.uid !== accountKey) return;
-  if (!(await client.list()).some(e => e.deliveryStatus === 'acknowledged' && !before.has(e.operationId))) return;
+  if (!(await client.list()).some(e => e.deliveryStatus === 'acknowledged' && (refreshAcknowledged || !before.has(e.operationId)))) return;
   // Refresh even when the worker changed dataRevision without meta.updatedAt.
   // No root upload: preserve the local snapshot before applying a read merge.
   const remote = await remoteGetByKey('app-data.json', {force:true,preferProvider:'rtdb'});
   if (!remote?.ok || !remote.data || coreAuthCurrentUser()?.uid !== accountKey) return;
-  if (!await idbBackup(APP.state.data, 'pre_cancellation_refresh')) return;
+  if (!await idbBackup(APP.state.data, backupReason)) return;
   if (coreAuthCurrentUser()?.uid !== accountKey) return;
   const merged = mergeData(APP.state.data, normalizeData(remote.data));
   if (await guardV3ProtectedWrite(merged) || coreAuthCurrentUser()?.uid !== accountKey) return;
@@ -52276,6 +52292,15 @@ function cglKeepStateDrafts() {
     const input = document.getElementById(inputId);
     if (window[key] && input) window[key].grund = input.value;
   }
+  const host = document.getElementById('cglWaitingQueue'), accountKey = coreAuthCurrentUser()?.uid;
+  if (host?.dataset.leadId && accountKey) {
+    const fields = {};
+    for (const name of ['cglWaitOn','cglWaitNext','cglWaitUntil','cglWaitEvidence','cglPostponeAction','cglPostponeUntil']) {
+      const input = document.getElementById(name + '_' + host.dataset.leadId);
+      if (input) fields[name] = input.value;
+    }
+    window._cglWaitingDraft = {accountKey,leadId:host.dataset.leadId,fields};
+  }
 }
 const _v4CancellationBusy = new Set();
 async function cglCancelLead(l, reason, toState = 'cancelled', evidenceRefs = []) {
@@ -52300,10 +52325,73 @@ async function cglCancelLead(l, reason, toState = 'cancelled', evidenceRefs = []
   } finally { _v4CancellationBusy.delete(l.id); }
 }
 
+const _v4WaitingClients = new Map(), _v4WaitingBusy = new Set();
+async function cglWaitingAccount() {
+  const gate = await coreAuthReady(), accountKey = gate?.user?.uid;
+  if (!accountKey) throw new Error('sign_in_required');
+  const mod = await import('/quantus-v4-lead-waiting.mjs');
+  if (!_v4WaitingClients.has(accountKey)) {
+    const getAuth = async () => {
+      const user = coreAuthCurrentUser(); if (user?.uid !== accountKey) return null;
+      const idToken = await user.getIdToken();
+      return coreAuthCurrentUser()?.uid === accountKey ? {accountKey,idToken} : null;
+    };
+    const getRun = () => coreAuthCurrentUser()?.uid === accountKey ? APP.state.data.dailyBriefing?.assistantRuns?.[todayYmd()] : null;
+    _v4WaitingClients.set(accountKey, mod.openLeadWaiting({accountKey,getAuth,getRun,origin:location.origin})
+      .catch(error => { _v4WaitingClients.delete(accountKey); throw error; }));
+  }
+  return {accountKey,mod,client:await _v4WaitingClients.get(accountKey)};
+}
+window.cglLoadWaiting = async function() {
+  const host = document.getElementById('cglWaitingQueue'); if (!host) return;
+  const generation = {}; host._generation = generation; clearTimeout(host._timer);
+  const current = uid => coreAuthCurrentUser()?.uid === uid && document.getElementById('cglWaitingQueue') === host && host._generation === generation;
+  try {
+    const {accountKey,mod,client} = await cglWaitingAccount();
+    const entries = (await client.list()).filter(e => e.legacyOperation.leadId === host.dataset.leadId);
+    if (!current(accountKey)) return;
+    host.innerHTML = entries.map(e => '<article class="card"><strong>' + esc(mod.waitingStatusText(e.deliveryStatus))
+      + '</strong><p>' + esc(e.legacyOperation.counterparty) + ' · ' + esc(e.legacyOperation.nextAction)
+      + ' · ' + esc(fmtDateTime(e.legacyOperation.waitUntil)) + '</p></article>').join('')
+      + (entries.length ? '<button class="btn sm" onclick="window.cglRetryWaiting()">Übertragung prüfen</button>' : '');
+    if (entries.some(e => ['run_pending','pending','retry_wait'].includes(e.deliveryStatus))) host._timer = setTimeout(async () => {
+      if (!current(accountKey)) return;
+      try { await cglFlushCancellations(client,accountKey,'pre_waiting_refresh',true); } catch (_) {}
+      if (current(accountKey)) await window.cglLoadWaiting();
+    }, Math.max(1000, Math.min(600000, (client.nextCheckAt() || Date.now()+30000)-Date.now())));
+  } catch (_) {
+    if (document.getElementById('cglWaitingQueue') === host && host._generation === generation)
+      host.textContent = 'Gesicherte Warteaufträge konnten nicht geladen werden. Bitte Anmeldung und lokalen Speicher prüfen.';
+  }
+};
+window.cglRetryWaiting = async function() {
+  try { const {client,accountKey} = await cglWaitingAccount(); await cglFlushCancellations(client,accountKey,'pre_waiting_refresh',true); }
+  catch (_) { toast('warn','Übertragung offen','Der gesicherte Warteauftrag bleibt auf diesem Gerät erhalten.'); }
+  await window.cglLoadWaiting();
+};
+async function cglSaveWaiting(l, input) {
+  if (_v4WaitingBusy.has(l.id)) return;
+  _v4WaitingBusy.add(l.id);
+  const expectedAccount = coreAuthCurrentUser()?.uid, original = JSON.parse(JSON.stringify(l));
+  try {
+    const {client,accountKey} = await cglWaitingAccount();
+    if (!expectedAccount || expectedAccount !== accountKey || coreAuthCurrentUser()?.uid !== accountKey) throw new Error('sign_in_required');
+    await client.submit({lead:original,...input});
+    if (coreAuthCurrentUser()?.uid !== accountKey) return;
+    // The complete form is durable before rendering. No local state/green claim.
+    cglKeepStateDrafts(); render(); toast('info','Warteauftrag gesichert','Der Server prüft Beleg, Termin und Lead-Version.');
+    await cglFlushCancellations(client,accountKey,'pre_waiting_refresh',true);
+    if (coreAuthCurrentUser()?.uid === accountKey) await window.cglLoadWaiting();
+  } catch (_) {
+    toast('warn','Warten nicht bestätigt','Eingaben oder gesicherter Auftrag bleiben erhalten. Beleg, Termin, Lead-Version und Anmeldung prüfen.');
+  } finally { _v4WaitingBusy.delete(l.id); }
+}
+
 function viewChatgptLeadDetail(id) {
   const l = ownEntity(APP.state.data.entities.chatgptLeads || {}, id);
   if (!l) return `<div class="card">Lead nicht gefunden. <a href="#/chatgptnotes/leads">Zurück zum Eingang</a></div>`;
   if (typeof window.cglLoadCancellations === 'function') setTimeout(() => window.cglLoadCancellations(), 0);
+  if (typeof window.cglLoadWaiting === 'function') setTimeout(() => window.cglLoadWaiting(), 0);
   const meta = CGL_STATUS_META[chatgptLeadDisplayStatus(l)] || CGL_STATUS_META.neu;
   const closed = chatgptLeadIsClosed(l);
   const links = chatgptLeadLinkCount(l);
@@ -52351,6 +52439,7 @@ function viewChatgptLeadDetail(id) {
     </div>
     <div id="cglCloseBox">${chatgptLeadCloseBoxHtml(l)}</div>
     <div id="cglCancellationQueue" data-lead-id="${esc(id)}" aria-live="polite"></div>
+    <div id="cglWaitingQueue" data-lead-id="${esc(id)}" aria-live="polite"></div>
     ${!closed ? (window._cglObsolete && window._cglObsolete.id === id ? `
       <div class="card mb-3" role="alertdialog" aria-labelledby="cglObsoleteFrage" style="border:1px solid rgba(217,107,91,.5);background:rgba(217,107,91,.08)">
         <div id="cglObsoleteFrage"><strong>Lead ohne Denkstruktur schliessen?</strong></div>
@@ -52695,29 +52784,32 @@ function chatgptModuleHandleAction(action, el, e) {
       const on = String((document.getElementById("cglWaitOn_" + id) || {}).value || "").trim();
       const next = String((document.getElementById("cglWaitNext_" + id) || {}).value || "").trim();
       const bis = String((document.getElementById("cglWaitUntil_" + id) || {}).value || "").trim();
-      if (!on || !next || !bis) { toast("warn", "Unvollständig", "Auf wen gewartet wird, nächster Schritt und Termin sind alle Pflicht."); return; }
-      l.waitingOn = on; l.nextAction = next;
-      l.waitingSince = l.waitingSince || nowIso();
-      l.followUpAt = new Date(bis + "T09:00:00").toISOString();
-      l.operationalState = "waiting_external";
-      l.updatedAt = nowIso();
-      scheduleSave(); render();
+      const evidenceId = String((document.getElementById("cglWaitEvidence_" + id) || {}).value || "").trim();
+      if (!on || !next || !bis || !chatgptLeadWaitingState(l).options.some(o => o.id === evidenceId)) {
+        toast("warn", "Unvollständig", "Wartepartner, nächster Schritt, Termin und zugeordneter Beleg sind Pflicht."); return;
+      }
+      const waitUntil = v3ZurichLocalToUtcIso(bis, '09:00');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(bis) || !waitUntil || Date.parse(waitUntil) <= Date.now()) {
+        toast('warn','Termin prüfen','Der Nachfass-Termin muss in der Zukunft liegen.'); return;
+      }
+      void cglSaveWaiting(l, {counterparty:on,nextAction:next,waitUntil,evidenceId});
       return;
     }
-    // Konzept v2 J-Regel: Verschiebung OHNE neuen lastAction zaehlt einen
-    // Deferral; ab 3 wird die Frage automatisch fuer morgen vorgemerkt.
+    // Verschiebungen verwenden dieselbe belegte Server-Wartekarte. Text ist
+    // kein Fortschrittsnachweis und setzt keinen Verschiebungszaehler zurueck.
     case "cgl-postpone-followup": {
       stop();
       const l = ownEntity(leads, id); if (!l) return;
       const neu = String((document.getElementById("cglPostponeAction_" + id) || {}).value || "").trim();
       const bis = String((document.getElementById("cglPostponeUntil_" + id) || {}).value || "").trim();
-      v3RegisterFollowUp(l, {
-        newLastAction: neu,
-        followUpAt: bis ? new Date(bis + "T09:00:00").toISOString() : null,
-        morgenIsoStr: v3ZurichLocalToUtcIso(addDaysYmd(todayYmd(), 1), "04:00"),
-      });
-      scheduleSave(); render();
-      toast(l.followUpDeferrals >= 3 ? "warn" : "ok", "Zurückgestellt", l.followUpDeferrals >= 3 ? "Mindestens 3 Verschiebungen — Fortschrittsnachweis fehlt; bleibt offen." : "Follow-up aktualisiert.");
+      const waiting = APP.state.data.automation?.waitingById?.['chatgptLead:' + id];
+      const proof = waiting?.evidence;
+      const evidenceId = proof?.evidenceId || proof?.questionId || proof?.jobId;
+      const waitUntil = v3ZurichLocalToUtcIso(bis, '09:00');
+      if (!waiting || !evidenceId || !/^\d{4}-\d{2}-\d{2}$/.test(bis) || !waitUntil || Date.parse(waitUntil) <= Date.now()) {
+        toast('warn','Follow-up nicht verschoben','Ein bestätigter Wartezustand mit Beleg und ein künftiger Termin sind erforderlich.'); return;
+      }
+      void cglSaveWaiting(l, {counterparty:waiting.counterparty,nextAction:neu || waiting.nextAction,waitUntil,evidenceId});
       return;
     }
     // Konzept v2 A/B: eine Frage an Laurin stellen (Entscheidung oder
