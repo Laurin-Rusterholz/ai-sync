@@ -92,3 +92,104 @@ test('invalid policy currency or approval metadata cannot poison the ledger',()=
  }
  assert.deepEqual(store.snapshot(),before);
 });
+
+const childBinding = operationId => ({allocationId:'shadow-1',bindingHash:'a'.repeat(64),operationId});
+const childCall = (input,id,tokens,operationId=id) => provider({...input,commissioning:childBinding(operationId)},id,tokens);
+const childClaim = (input,id,operationId=id) => d => S.claimCostDispatch(d,{...input,callId:id,claimId:'claim-'+id,commissioning:childBinding(operationId)});
+
+test('child reservations use the hold once while real day/run/call limits still apply',()=>{
+ const {store,input}=setup();casMutate(store,allocation(input,grant('shadow-1',40000000)));casMutate(store,provider(input,'live',10000000));
+ assert.equal(casMutate(store,childCall(input,'child',1000000)).result.ok,true);
+ assert.equal(monthToDateMicros(store.snapshot(),now).totalMicros,50000000);
+ assert.equal(casMutate(store,provider(input,'extra-live',1)).result.code,'monthly_budget_exceeded');
+ const limited={...input,policy:{...input.policy,dayLimitMicros:11000000,runLimitMicros:11000000,callLimitMicros:10000000}};
+ assert.equal(casMutate(store,childCall(limited,'excess-day',1)).result.code,'day_budget_exceeded');
+ casMutate(store,childClaim(input,'child'));
+ casMutate(store,d=>S.settleCost(d,{...input,callId:'child',actualMicros:300000,usageReceiptId:'child-receipt',providerRequestId:'child-provider'}));
+ assert.deepEqual(monthToDateMicros(store.snapshot(),now),{month:'2026-09',totalMicros:50000000,settledMicros:300000,openMicros:49700000});
+});
+test('concurrent child commitments cannot exceed their allocation inside the real CAS',()=>{
+ const {store,input}=setup();casMutate(store,allocation(input,grant('shadow-1',10000)));
+ const race=casRace(store,childCall(input,'child-a',6000),childCall(input,'child-b',6000));
+ assert.equal(race.a.wrote,true);assert.equal(race.b.conflict,true);assert.equal(race.retryB.result.code,'commissioning_budget_exceeded');
+ assert.equal(race.retryB.wrote,false);assert.equal(monthToDateMicros(race.finalData,now).totalMicros,10000);
+});
+test('global operation identity rejects changed ids and binding; lost replies never allow a second dispatch',()=>{
+ const {store,input}=setup();casMutate(store,allocation(input,grant()));
+ const original=childCall(input,'original',1000,'stable-operation');
+ casMutate(store,original);
+ assert.equal(casMutate(store,original).wrote,false);
+ assert.equal(casMutate(store,childCall(input,'different-id',1000,'stable-operation')).result.code,'commissioning_operation_conflict');
+ assert.equal(casMutate(store,provider(input,'original',1000)).result.code,'commissioning_binding_conflict');
+ assert.equal(casMutate(store,d=>S.claimCostDispatch(d,{...input,callId:'original',claimId:'unbound'})).result.code,'commissioning_binding_conflict');
+ const claim=childClaim(input,'original','stable-operation');assert.equal(casMutate(store,claim).result.dispatchAllowed,true);
+ assert.equal(casMutate(store,claim).result.code,'dispatch_already_claimed');
+ assert.equal(casMutate(store,original).result.dispatchAllowed,false);
+ casMutate(store,d=>S.markCostOutcomeUnknown(d,{...input,callId:'original',reason:'lost_reply'}));
+ assert.equal(casMutate(store,childCall(input,'restored-child-id',1000,'stable-operation')).result.code,'commissioning_operation_conflict');
+ assert.equal(monthToDateMicros(store.snapshot(),now).totalMicros,10000000);
+});
+test('released child cannot recycle its operation or commitment; settled excess remains globally visible',()=>{
+ const {store,input}=setup();casMutate(store,allocation(input,grant('shadow-1',1000)));
+ casMutate(store,childCall(input,'released',400));
+ casMutate(store,d=>S.releaseCostReservation(d,{...input,callId:'released',evidence:{kind:'not_dispatched',ref:'test'}}));
+ assert.equal(casMutate(store,childCall(input,'new',601)).result.code,'commissioning_budget_exceeded');
+ assert.equal(casMutate(store,childCall(input,'reused-op',1,'released')).result.code,'commissioning_operation_conflict');
+ casMutate(store,childCall(input,'settled',600));casMutate(store,childClaim(input,'settled'));
+ casMutate(store,d=>S.settleCost(d,{...input,callId:'settled',actualMicros:700,usageReceiptId:'overrun-receipt',providerRequestId:'overrun-provider'}));
+ assert.deepEqual(monthToDateMicros(store.snapshot(),now),{month:'2026-09',totalMicros:1100,settledMicros:700,openMicros:400});
+ assert.equal(casMutate(store,provider(input,'after-overrun',1)).result.code,'cost_overrun_blocks_reservation');
+});
+test('expiry after reservation blocks a fresh child dispatch without erasing the obligation',()=>{
+ const {store,input}=setup();const auth={...grant(),expiresAtMs:now+100};
+ casMutate(store,allocation(input,auth));casMutate(store,childCall(input,'expires',1000));
+ assert.throws(()=>childClaim({...input,now:now+100},'expires')(store.snapshot()),{code:'commissioning_authorization_expired'});
+ assert.equal(monthToDateMicros(store.snapshot(),now+100).totalMicros,10000000);
+ assert.equal(store.snapshot().automation.runtime.cost.callsById.expires.dispatch.claimed,false);
+});
+test('foreign or tampered child links never reduce the global obligation',()=>{
+ const {store,input}=setup();casMutate(store,allocation(input,grant()));casMutate(store,childCall(input,'child',1000));
+ for(const patch of [{allocationId:'missing'},{bindingHash:'b'.repeat(64)},{operationId:null},{extra:'x'}]){
+  const data=store.snapshot();Object.assign(data.automation.runtime.cost.callsById.child.commissioning,patch);
+  assert.throws(()=>monthToDateMicros(data,now),{code:'commissioning_call_ledger_invalid'});
+ }
+ const data=store.snapshot();data.automation.runtime.cost.commissioningAllocationsById['shadow-1'].authorization.maxMicros=999;
+ assert.throws(()=>monthToDateMicros(data,now),{code:'commissioning_call_ledger_invalid'});
+});
+
+import * as F from './quantus-v3-e2-fixtures.mjs';
+import {createCostAdapter} from '../runtime/quantus-v3/src/cost-adapter.mjs';
+import {createPortRegistry,availablePort} from '../runtime/quantus-v3/src/ports.mjs';
+function adapterSetup({expiresAtMs=now+86400000,delayRead=false,mode='live'}={}) {
+ const {store,input}=setup();casMutate(store,allocation(input,{...grant(),expiresAtMs}));
+ const core=F.createCorePort(store),clock=F.createClock(now);
+ let readCount=0;
+ const wrapped=availablePort('core',{
+  read:async()=>{const out=await core.port.impl.read();if(delayRead&&++readCount===4)clock.set(expiresAtMs);return out;},
+  mutate:args=>core.port.impl.mutate(args)
+ });
+ const ports=createPortRegistry('worker',{core:wrapped,clock:clock.port,costPolicy:availablePort('costPolicy',{load:async()=>input.policy})});
+ const config=F.configFor('worker',{QUANTUS_V3_RUNTIME_MODE:mode,QUANTUS_V3_ALLOW_EXTERNAL_EFFECTS:'true',QUANTUS_V3_ACTIVATION_GATES:F.allGatesPassed(),QUANTUS_V3_REQUIRED_SOURCES:JSON.stringify(['gmail-inbox'])});
+ const adapter=createCostAdapter({ports,config,now,requestId:'req-child',verifiedScope:input.verifiedScope},{__allowFixturePolicy:true,monthlyCap:{capMicros:50000000}});
+ return {adapter,store};
+}
+const adapterReserve = adapter => adapter.reserve({callId:'adapter-child',runKey:'quantus:2026-09-19:process09:3.0',provider:'synthetic',model:'model',contentHash:'hash-adapter-child-0000',inputTokens:1000,outputTokens:0,commissioning:childBinding('adapter-operation')});
+test('real cost adapter carries binding through reservation, dispatch, settlement and receipt replay',async()=>{
+ const {adapter,store}=adapterSetup();let sends=0;
+ await adapterReserve(adapter);
+ const request={callId:'adapter-child',claimId:'adapter-claim',commissioning:childBinding('adapter-operation'),send:async()=>{sends++;return {outcome:'settled',actualMicros:700,usageReceiptId:'adapter-receipt'};}};
+ await adapter.claimAndDispatch(request);
+ assert.equal(sends,1);assert.equal(store.snapshot().automation.runtime.cost.callsById['adapter-child'].state,'settled');
+ await assert.rejects(()=>adapter.claimAndDispatch(request));assert.equal(sends,1);
+ assert.equal(monthToDateMicros(store.snapshot(),now).totalMicros,10000000);
+});
+test('approval expiring during final awaited source read prevents the actual send',async()=>{
+ const {adapter}=adapterSetup({expiresAtMs:now+100,delayRead:true});let sends=0;
+ await adapterReserve(adapter);
+ await assert.rejects(()=>adapter.claimAndDispatch({callId:'adapter-child',claimId:'expire-claim',commissioning:childBinding('adapter-operation'),send:async()=>{sends++;return {outcome:'unknown'};}}),e=>e.detail?.code==='commissioning_authorization_expired');
+ assert.equal(sends,0);
+});
+test('allocation support does not bypass the shadow activation gate',async()=>{
+ const {adapter}=adapterSetup({mode:'shadow'});
+ await assert.rejects(()=>adapterReserve(adapter),e=>e.code==='external_effects_not_allowed'||e.error==='external_effects_not_allowed');
+});

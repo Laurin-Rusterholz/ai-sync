@@ -54,19 +54,21 @@ export function monthToDateMicros(data, nowMs) {
   let totalMicros = 0;
   let settledMicros = 0;
   let openMicros = 0;
+  let settledFromHolds = 0;
   for (const call of Object.values(callsById)) {
     if (!call || typeof call !== "object") continue;
     if (typeof call.billingLocalDate !== "string" || call.billingLocalDate.slice(0, 7) !== month) continue;
     if (call.state === "settled") {
       const v = Number.isSafeInteger(call.settledMicros) ? call.settledMicros : 0;
       settledMicros += v; totalMicros += v;
+      if (call.commissioning) settledFromHolds += Math.min(v, call.maxMicros);
     } else if (call.state === "reserved" || call.state === "unknown") {
       const v = Number.isSafeInteger(call.maxMicros) ? call.maxMicros : 0;
-      openMicros += v; totalMicros += v;
+      if (!call.commissioning) { openMicros += v; totalMicros += v; }
     }
     // "released" traegt bewusst nichts bei — nachweislich nicht abgerechnet.
   }
-  const held=commissioningHeldMicros(cost.commissioningAllocationsById,month);
+  const held=commissioningHeldMicros(cost.commissioningAllocationsById,month)-settledFromHolds;
   totalMicros+=held;openMicros+=held;
   if(!Number.isSafeInteger(totalMicros)||!Number.isSafeInteger(openMicros))throw Object.assign(new Error("monthly_cost_total_invalid"),{code:"monthly_cost_total_invalid",status:503});
   return { month, totalMicros, settledMicros, openMicros };

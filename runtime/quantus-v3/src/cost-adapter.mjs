@@ -45,6 +45,7 @@ import * as E1 from "../../../netlify/lib/quantus-v3-runtime-state.mjs";
 import { localDate as zurichLocalDate } from "../../../netlify/lib/quantus-v3-runtime-plan.mjs";
 import { HttpError, conflict } from "./errors.mjs";
 import { externalEffectsAllowed } from "./config.mjs";
+import {validCommissioningCallBinding, sameCommissioningCallBinding} from "../../../netlify/lib/quantus-v4-commissioning-allocation-schema.mjs";
 import { reserveCostWithMonthlyCap } from "./monthly-cost-cap.mjs";
 
 export const DISPATCH_OUTCOMES = Object.freeze(["settled", "unknown"]);
@@ -117,6 +118,7 @@ function leaseRest(data, verifiedScope, now) {
 /* Der Zustand, den die Anspruchsmutation aus ihrem eigenen Schnappschuss
  * mitgibt. Reine Werte, damit der Idempotenzumschlag sie speichern kann. */
 function gateAus(data, callId) {
+  E1.readRuntime(data);
   const lease = data.automation ? data.automation.activeLease : null;
   const call = leseAufruf(data, callId);
   return {
@@ -130,13 +132,21 @@ function gateAus(data, callId) {
     claimedAtMs: call && call.dispatch && Number.isSafeInteger(call.dispatch.claimedAtMs) ? call.dispatch.claimedAtMs : null,
     billingLocalDate: call && typeof call.billingLocalDate === "string" ? call.billingLocalDate : null,
     maxMicros: call && Number.isSafeInteger(call.maxMicros) ? call.maxMicros : null,
+    commissioningBinding: call?.commissioning,
+    commissioningExpiresAtMs: call?.commissioning
+      ? data.automation.runtime.cost.commissioningAllocationsById?.[call.commissioning.allocationId]?.authorization.expiresAtMs ?? 0 : null,
   };
 }
 
 /* Die letzte Pruefung vor dem externen Aufruf. Rein, ohne I/O — genau
  * deshalb kann zwischen ihr und dem Aufruf keine Zeit mehr vergehen. */
-export function pruefeUnmittelbarVorSendung({ gate, policy, verifiedScope, sendeZeit, leaseReserveMs, allowFixture = false }) {
+export function pruefeUnmittelbarVorSendung({ gate, policy, verifiedScope, sendeZeit, leaseReserveMs, allowFixture = false, commissioning }) {
   if (!Number.isSafeInteger(sendeZeit) || sendeZeit <= 0) return { ok: false, code: "server_clock_invalid" };
+  if (!sameCommissioningCallBinding(gate.commissioningBinding, commissioning)) return {ok:false,code:"commissioning_binding_conflict"};
+  if (gate.commissioningExpiresAtMs !== undefined && gate.commissioningExpiresAtMs !== null
+    && (!Number.isSafeInteger(gate.commissioningExpiresAtMs) || sendeZeit >= gate.commissioningExpiresAtMs)) {
+    return {ok:false,code:"commissioning_authorization_expired"};
+  }
   // Fuehrung: noch dieselbe, noch derselbe Fence, noch lange genug.
   if (gate.leaseHolder !== verifiedScope.holder || gate.leaseScope !== verifiedScope.scope) {
     return { ok: false, code: "lease_lost", detail: { holder: gate.leaseHolder } };
@@ -182,6 +192,12 @@ function pruefeTransportPreis(policy, provider, model, modelPricing) {
   }
 }
 
+function retainedCommissioning(binding) {
+  if (binding === undefined) return undefined;
+  if (!validCommissioningCallBinding(binding)) throw new HttpError(400, "commissioning_binding_invalid");
+  return structuredClone(binding);
+}
+
 export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseReserveMs = DISPATCH_LEASE_RESERVE_MS, monthlyCap = null } = {}) {
   const fixture = __allowFixturePolicy === true;
 
@@ -191,7 +207,8 @@ export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseRese
      * globale Monatsgrenze geprueft (`monthly-cost-cap.mjs`) — atomar, weil
      * die Pruefung innerhalb desselben, bei einem Konflikt wiederholten
      * Mutators laeuft wie `E1.reserveCost` selbst. */
-    async reserve({ callId, runKey, provider, model, contentHash, inputTokens, outputTokens, modelPricing }) {
+    async reserve({ callId, runKey, provider, model, contentHash, inputTokens, outputTokens, modelPricing, commissioning }) {
+      const binding = retainedCommissioning(commissioning);
       const clock = clockOf(ctx);
       await pruefeFrisch(ctx, "reserve");
       const policy = await ladePolicy(ctx, "reserve");
@@ -201,13 +218,13 @@ export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseRese
       const out = await mutiere(ctx, `cost-reserve:${callId}`, (data) => (monthlyCap
         ? reserveCostWithMonthlyCap(data, {
           callId, runKey, provider, model, contentHash,
-          inputTokens, outputTokens,
+          inputTokens, outputTokens, commissioning: binding,
           now, verifiedScope: ctx.verifiedScope, policy,
           __allowFixturePolicy: fixture,
         }, monthlyCap)
         : E1.reserveCost(data, {
           callId, runKey, provider, model, contentHash,
-          inputTokens, outputTokens,
+          inputTokens, outputTokens, commissioning: binding,
           now, verifiedScope: ctx.verifiedScope, policy,
           __allowFixturePolicy: fixture,
         })));
@@ -216,7 +233,8 @@ export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseRese
     },
 
     /* Anspruch, Sendung, Ausgang — in dieser Reihenfolge und nur so. */
-    async claimAndDispatch({ callId, claimId, send, modelPricing }) {
+    async claimAndDispatch({ callId, claimId, send, modelPricing, commissioning }) {
+      const binding = retainedCommissioning(commissioning);
       if (typeof send !== "function") throw new HttpError(500, "dispatch_function_required");
       const clock = clockOf(ctx);
       await pruefeFrisch(ctx, "claim");
@@ -243,7 +261,7 @@ export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseRese
       }
 
       const claim = await mutiere(ctx, `cost-claim:${callId}:${claimId}`, (data) => E1.claimCostDispatch(data, {
-        callId, claimId, now, verifiedScope: ctx.verifiedScope, policy,
+        callId, claimId, commissioning: binding, now, verifiedScope: ctx.verifiedScope, policy,
         __allowFixturePolicy: fixture,
       }));
 
@@ -286,7 +304,7 @@ export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseRese
       const sendeZeit = clock.now();
       const endkontrolle = pruefeUnmittelbarVorSendung({
         gate, policy, verifiedScope: ctx.verifiedScope,
-        sendeZeit, leaseReserveMs, allowFixture: fixture,
+        sendeZeit, leaseReserveMs, allowFixture: fixture, commissioning: binding,
       });
       if (!endkontrolle.ok) {
         // Der Anspruch steht schon. Er bleibt als beansprucht und
