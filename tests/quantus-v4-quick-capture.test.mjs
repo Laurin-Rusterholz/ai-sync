@@ -68,7 +68,7 @@ test('actual quick-capture button secures full input before clearing and only cl
   const win = { _dbQuickLeadDraft: {}, dbQuickLeadDraftForAccount() { return this._dbQuickLeadDraft; }, dbLoadQuickCaptures: async () => {}, dbKeepLeadDraft() {} };
   const notices = []; let refreshed = 0;
   const mod = await import('../public/quantus-v4-quick-capture.mjs');
-  new Function('window','document','dbQuickCaptureAccount','coreAuthCurrentUser','toast','syncFreshness',source.slice(start,end))(
+  new Function('window','document','dbQuickCaptureAccount','coreAuthCurrentUser','toast','dbRefreshCapturedLeads',source.slice(start,end))(
     win,{ getElementById: id => inputs[id] },async()=>({ accountKey:'owner',mod,client }),()=>({uid:'owner'}),
     (...args)=>notices.push(args),async()=>{refreshed++;});
   const sending = win.dbCreateQuickLead();
