@@ -65,3 +65,26 @@ from productive completion. Only actual observed slots count toward the trial.
 
 No live gates, credentials, IAM grants, source data, provider permissions or
 trial records are changed by this code package.
+
+## Shared monthly allocation accounting
+
+`reserveCommissioningWithMonthlyCap` can reserve an immutable, explicitly
+approved hold in the authoritative source core's cost ledger, under its current
+leadership fence and fresh cost policy. Productive reservations and holds share
+the same CAS and USD 50 Zurich calendar-month ceiling. A hold is counted in full
+as an open obligation for its original month, including after approval expiry.
+Retries cannot duplicate it or change its binding, amount or approval. There is
+no release operation, automatic expiry refund or provider dispatch permission.
+Malformed allocation records block normal cost reads and reservations as well.
+Existing cores without allocations remain compatible.
+
+This is accounting infrastructure, not an authenticated approval endpoint:
+`approvedBy` and `approvalRef` are immutable records, not proof of caller identity.
+No runtime route currently exposes or creates these holds. Before activating
+commissioning, the authenticated source broker must bind reviewed authorization
+to the exact isolation binding, allocate child claims only within the held sum,
+and fence restored or copied child stores against replay. The source ledger must
+remain authoritative for obligations throughout ambiguous replies and restores.
+Day/run/call limits and actual provider settlement also remain required. A cloned
+ledger, a caller-supplied approval object or a held amount alone grants no right
+to spend. No real allocation or trial was created by this implementation.

@@ -51,6 +51,8 @@ import {
   localDate as zurichLocalDate, isLocalDate,
 } from "./quantus-v3-runtime-plan.mjs";
 
+import {validateCommissioningAllocations, validCommissioningAuthorization, sameCommissioningAuthorization} from './quantus-v4-commissioning-allocation-schema.mjs';
+
 export const RUNTIME_SCHEMA_VERSION = 1;
 export const AUTOMATION_SCHEMA_VERSION = 3;
 
@@ -1148,6 +1150,7 @@ export function validateCostArea(cost) {
   for (const field of ["callsById", "receiptIndex", "providerRequestIndex", "contentHashIndex", "byDay", "byRun", "unresolved"]) {
     if (!isRecord(cost[field])) fail("cost_area_invalid", 503, { reason: "missing_field", field });
   }
+  if (!validateCommissioningAllocations(cost.commissioningAllocationsById)) fail("commissioning_allocation_ledger_invalid", 503);
   requireMicros(cost.overrunMicros, "overrunMicros");
   if (!Number.isSafeInteger(cost.dryRunChargeCount) || cost.dryRunChargeCount < 0) fail("cost_area_invalid", 503, { reason: "dryRunChargeCount" });
 
@@ -1359,6 +1362,38 @@ function blockingCallForHash(cost, contentHash, exceptCallId = null) {
     }
   }
   return null;
+}
+
+/** Reserve a specifically approved commissioning hold, not a model call.
+ * The monthly wrapper must enforce the one global cap in the same CAS.
+ * No release/dispatch operation exists until the cross-store claim and restore
+ * fencing protocol can prove that no child obligation remains outstanding.
+ */
+export function reserveCommissioningAllocation(data,input={}) {
+  const now=requireMs(input.now,"now"), verified=requireVerifiedScope(input.verifiedScope);
+  const authorization=input.authorization;
+  if(!validCommissioningAuthorization(authorization))fail("commissioning_authorization_invalid",400);
+  if(now<authorization.approvedAtMs||now>=authorization.expiresAtMs)fail("commissioning_authorization_expired",409);
+  if(authorization.month!==zurichLocalDate(now).slice(0,7))fail("commissioning_month_mismatch",409);
+  assertPaidCallAllowed(input.policy,{now,allowFixture:input.__allowFixturePolicy===true});
+  if(input.policy.currency!=="USD"||input.policy.approval.approvedAtMs>now)fail("commissioning_policy_invalid",503);
+  const entry={allocationId:authorization.allocationId,state:"held",authorization:structuredClone(authorization),
+    reservedAtMs:now,policyVersion:input.policy.version,policyApprovalRef:input.policy.approval.approvalRef};
+  if(!validateCommissioningAllocations({[authorization.allocationId]:entry}))fail("commissioning_policy_invalid",503);
+  assertLeadership(data,verified,now);
+  const cost=readRuntime(data).cost,known=cost?.commissioningAllocationsById?.[authorization.allocationId];
+  if(known){
+    if(!sameCommissioningAuthorization(known.authorization,authorization))return reject(data,"commissioning_allocation_conflict");
+    return noop(data,{allocationId:known.allocationId,duplicate:true,heldMicros:known.authorization.maxMicros,dispatchAllowed:false});
+  }
+  if(Object.keys(cost?.commissioningAllocationsById||{}).length>=512)return reject(data,"commissioning_allocation_capacity");
+  if(cost?.overrunMicros>0)return reject(data,"cost_overrun_blocks_reservation");
+  if(cost?.unresolved?.micros>input.policy.unresolvedBlockMicros)return reject(data,"unresolved_cost_blocking");
+  const {next,runtime}=begin(data,now);
+  const area=costArea(runtime);
+  area.commissioningAllocationsById??={};
+  area.commissioningAllocationsById[authorization.allocationId]=entry;
+  return commit(next,{allocationId:authorization.allocationId,heldMicros:authorization.maxMicros,dispatchAllowed:false});
 }
 
 /* VERBINDLICHE Reservierung vor jedem bezahlten Modellaufruf. Sie allein
