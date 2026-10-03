@@ -124,3 +124,11 @@ test('a delayed valid claim uses its committed timestamp and still dispatches on
  const r=await s.request();assert.equal(r.status,200,r.body);assert.equal(s.sends,1);
  assert.equal(Object.values(s.store.snapshot().automation.runtime.cost.callsById)[0].dispatch.claimedAtMs,T+10);
 });
+
+
+test('recovery-only admission never creates or dispatches a missing source operation',async()=>{
+ const s=await setup(),before=s.store.snapshot();const missing=await s.request({recoveryOnly:true});
+ assert.equal(missing.status,409);assert.match(missing.body,/commissioning_recovery_missing/);assert.equal(s.sends,0);assert.deepEqual(s.store.snapshot(),before);
+ assert.equal((await s.request()).status,200);const recovered=await s.request({recoveryOnly:true});assert.equal(recovered.status,200);assert.equal(recovered.json.replayed,true);assert.equal(s.sends,1);
+ assert.equal((await s.request({recoveryOnly:false})).status,400);
+});

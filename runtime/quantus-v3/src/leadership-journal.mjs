@@ -13,10 +13,14 @@ import { parseSlotRunKey } from '../../../netlify/lib/quantus-v3-runtime-plan.mj
 import { HttpError } from './errors.mjs';
 import { validArtifactReference } from './work-artifact-store.mjs';
 import { leadershipCoverageFacts } from './leadership-coverage.mjs';
+import {isCommissioningClientFor,commissioningClientContract} from './commissioning-client.mjs';
 import { commandUnconfirmed } from './leadership-command-state.mjs';
 
 import { JOURNAL_LIMITS, encodeRuntimePayload, assertActiveRuntimeCapacity } from './runtime-payload.mjs';
 export { JOURNAL_LIMITS, WORK_PAYLOAD_BYTES, WORK_RESULT_BYTES, encodeRuntimePayload, assertActiveRuntimeCapacity } from './runtime-payload.mjs';
+const commissionedJournals=new WeakMap();
+export const isCommissioningJournal=journal=>commissionedJournals.has(journal);
+export const commissioningJournalContract=journal=>commissionedJournals.get(journal)??null;
 const record = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const hash = text => createHash('sha256').update(text).digest('hex');
 const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
@@ -73,9 +77,11 @@ function validateEntries(entries, schemaVersion) {
   }
 }
 
-export function createLeadershipJournal({ core, clock, runKey, verifiedScope, artifacts, signal } = {}) {
+export function createLeadershipJournal({ core, clock, runKey, verifiedScope, artifacts, signal, commissioningClient } = {}) {
   const parsed = parseSlotRunKey(runKey);
   if (!core?.read || !core?.mutate || !clock?.now || !record(verifiedScope) || !artifacts?.put || !artifacts?.read) throw new TypeError('journal_configuration_missing');
+  if(commissioningClient&&!isCommissioningClientFor(commissioningClient,core))fail('journal_commissioning_binding_invalid',503);
+  const sourceProofs=new Map();
   const scope = Object.freeze({ ...verifiedScope });
   if (scope.scope !== `${parsed.tenant}:mainrun`) fail('journal_scope_mismatch');
   function authority(data) {
@@ -129,7 +135,31 @@ export function createLeadershipJournal({ core, clock, runKey, verifiedScope, ar
     return { callId: entry.callId, requestHash: entry.requestHash, actualMicros: response.actualMicros,
       usageReceiptId: response.usageReceiptId, providerRequestId: response.providerRequestId ?? null };
   }
+  function ordinal(journal,callId) {
+    const offset=journal?.archivedCount||0,index=journal?.entries.findIndex(e=>e.callId===callId);
+    if(!Number.isInteger(index)||index<0)fail('journal_entry_missing');
+    const n=offset+index;
+    if(callId!=='lead-'+hash(JSON.stringify([runKey,n])))fail('journal_sequence_invalid');
+    return n;
+  }
+  async function verifySource(original,index) {
+    if(!commissioningClient)return null;
+    if(original.callId!=='lead-'+hash(JSON.stringify([runKey,index])))fail('journal_sequence_invalid');
+    const proof=await commissioningClient.recover({runKey,stepIndex:index,request:original.request,verifiedScope:scope,signal});
+    if(proof.requestHash!==original.requestHash||proof.outcome!=='settled'
+      ||JSON.stringify(proof.response)!==JSON.stringify(original.response))fail('journal_source_receipt_mismatch');
+    sourceProofs.set(original.callId,{requestHash:original.requestHash,proof});
+    await snapshot();return proof;
+  }
   function verifyCost(data, usage) {
+    if(commissioningClient){
+      const verified=sourceProofs.get(usage.callId),proof=verified?.proof;
+      if(verified?.requestHash!==usage.requestHash||proof?.outcome!=='settled'||proof.settledMicros!==usage.actualMicros
+        ||proof.response.usageReceiptId!==usage.usageReceiptId
+        ||(usage.providerRequestId&&proof.response.providerRequestId!==usage.providerRequestId)||proof.overrunMicros!==0)
+        fail('journal_history_cost_unconfirmed');
+      return;
+    }
     const cost = readRuntime(data).cost?.callsById?.[usage.callId];
     if (cost?.runKey !== runKey || cost.state !== 'settled' || cost.dispatch?.claimed !== true
       || cost.contentHash !== usage.requestHash || cost.settledMicros !== usage.actualMicros
@@ -230,7 +260,7 @@ export function createLeadershipJournal({ core, clock, runKey, verifiedScope, ar
       fail('journal_readback_failed', 502);
     return viewed;
   }
-  return Object.freeze({
+  const journalApi=Object.freeze({
     async read() {
       const journal = area(await snapshot(), runKey);
       checkReadBudget(journal);
@@ -253,8 +283,9 @@ export function createLeadershipJournal({ core, clock, runKey, verifiedScope, ar
       // Retain the latest exchange in full, including a pending response/tool.
       // Only settled predecessors can enter an immutable history segment.
       const entries = initial.entries.slice(0, -1), summaries = [], usages = [];
-      for (const entry of entries) {
+      for (const [index,entry] of entries.entries()) {
         const original = await view(entry), usage = usageForClosed(original);
+        await verifySource(original,(initial.archivedCount||0)+index);
         verifyCost(await snapshot(), usage); usages.push(usage); summaries.push(summary(original));
       }
       const start = initial.archivedCount || 0;
@@ -285,6 +316,7 @@ export function createLeadershipJournal({ core, clock, runKey, verifiedScope, ar
         for (let index = 0; index < archive.entries.length; index++) {
           const original = await view(archive.entries[index]);
           if (JSON.stringify(summary(original)) !== JSON.stringify(archive.summaries[index])) fail('journal_history_proof_mismatch');
+          await verifySource(original,segment.start+index);
           usages.push(usageForClosed(original));
         }
         const data = await snapshot(); usages.forEach(u => verifyCost(data, u));
@@ -318,12 +350,29 @@ export function createLeadershipJournal({ core, clock, runKey, verifiedScope, ar
     begin({ callId, requestHash, request }) { return write('request', { callId, requestHash, payload: request }); },
     recordResponse({ callId, requestHash, response }) { return write('response', { callId, requestHash, payload: response }); },
     recordTool({ callId, requestHash, tool }) { return write('tool', { callId, requestHash, payload: tool }); },
+    ...(commissioningClient?{async dispatchCommissioning({callId,requestHash,signal:callSignal}){
+      const initial=area(await snapshot(),runKey),entry=initial?.entries.find(e=>e.callId===callId);
+      if(!entry||entry.requestHash!==requestHash)fail('journal_entry_missing');
+      const request=await readPayload(entry.request,'request');
+      if(commissioningClientContract(commissioningClient).prepare(request).contentHash!==requestHash)fail('journal_request_contract_mismatch');
+      const proof=await commissioningClient.respond({runKey,stepIndex:ordinal(initial,callId),request,verifiedScope:scope,signal:callSignal??signal});
+      if(callSignal?.aborted)fail('journal_interrupted');
+      if(proof.requestHash!==requestHash)fail('journal_source_receipt_mismatch');
+      await write('response',{callId,requestHash,payload:proof.response});
+      return proof;
+    }}:{}),
     async settleResponse({ callId }) {
       // Recover only a receipt already persisted in this run's private journal.
       // The caller cannot supply a price, usage count or evidence object here.
       const observed = area(await snapshot(), runKey)?.entries.find(e => e.callId === callId);
       if (!observed?.response) fail('journal_response_missing');
       const loadedResponse = await readPayload(observed.response, 'response');
+      if(commissioningClient){
+        const initial=area(await snapshot(),runKey);
+        const proof=await verifySource(await view(observed),ordinal(initial,callId));
+        if(JSON.stringify(area(await snapshot(),runKey)?.entries.find(e=>e.callId===callId))!==JSON.stringify(observed))fail('journal_response_changed');
+        return {settled:true,overrunMicros:proof.overrunMicros};
+      }
       function evidence(data) {
         const entry = area(data, runKey)?.entries.find(e => e.callId === callId);
         if (!entry?.response) fail('journal_response_missing');
@@ -354,4 +403,6 @@ export function createLeadershipJournal({ core, clock, runKey, verifiedScope, ar
       return { settled: true, overrunMicros: cost.overrunMicros };
     },
   });
+  if(commissioningClient)commissionedJournals.set(journalApi,commissioningClientContract(commissioningClient));
+  return journalApi;
 }

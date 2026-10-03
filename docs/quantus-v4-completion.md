@@ -1064,3 +1064,9 @@ A separate `commissioning-server.mjs` command wires the existing authenticated i
 ### Isolated broker client and exact source receipts
 
 The isolated caller now has a bounded, authenticated source-broker client and a genuinely keyless request preparer shared with the paid OpenAI transport. It verifies active shadow authority before and after asynchronous I/O, checks the exact Google identity, refuses redirects, validates source receipt identity/hash/model/token/usage fields, and makes no local cost claims. Tests connect this client to the real ingress/composition/CAS/artifact pipeline with synthetic network dependencies: repeated input recovers one stored provider result and leaves shadow state unchanged. The client still needs installation into the leadership loop and its history/settlement verification before a real trial can run.
+
+### Leadership loop uses authoritative commissioning receipts
+
+The existing leadership loop can now use the branded isolated broker client with its exact keyless request contract. Responses are persisted in the ordinary private leadership journal; settlement, archive rollover and restored history verify the original source receipt before tools or completion proceed. Shadow storage never fabricates a provider cost row. A recovery-only broker operation refuses missing claims and cannot start a new paid call while verifying history. Abort signals propagate to dispatch.
+
+The 164 combined commissioning, leadership and composition checks and 42 final focused checks pass. New cases cover restart recovery, archive verification, conflicting receipts before tool execution, forged clients and mismatched request contracts. These are synthetic integration proofs. Installation into the worker composition, live identity/configuration, deployment, all acceptance proofs and the genuine 14-day trial remain outstanding.
