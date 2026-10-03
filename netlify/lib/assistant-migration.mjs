@@ -21,6 +21,7 @@ import {
   leereAutomation, rollenAbleiten,
 } from "./assistant-schema.mjs";
 import { isoAus, istLokalDatum } from "./assistant-zeit.mjs";
+import { isUnmigratedDesktopLead, mapLegacyDesktopOverlay } from "./assistant-legacy-desktop-state.mjs";
 
 export class CoreDocumentError extends Error {
   // violations (optional): die STRUKTURIERTE Fassung von pruefeKernStruktur()
@@ -96,7 +97,11 @@ export function v3Spuren(data) {
     const store = data.entities[q.store];
     if (!istKarte(store)) continue;
     for (const [id, e] of Object.entries(store)) {
-      if (istKarte(e) && (e.operationalStateSource !== undefined || e.operationalState !== undefined || e.operationalStateVersion !== undefined || e.operationalRoles !== undefined)) { spuren.push(`entities.${q.store}.${id}`); break; }
+      // A bare, recognized desktop Lead UI state predates the canonical core.
+      // Any canonical marker, other collection or unrecognized shape remains
+      // a v3 trace: missing ledgers must never be reconstructed on that path.
+      const desktopOnly = q.store === 'chatgptLeads' && isUnmigratedDesktopLead(e);
+      if (istKarte(e) && (e.operationalStateSource !== undefined || (e.operationalState !== undefined && !desktopOnly) || e.operationalStateVersion !== undefined || e.operationalRoles !== undefined || e.operationalStateUnmapped !== undefined)) { spuren.push(`entities.${q.store}.${id}`); break; }
     }
   }
   return spuren;
@@ -123,10 +128,12 @@ function mappeZustaende(data, nowIso, bericht) {
     for (const [id, e] of Object.entries(store)) {
       if (!istKarte(e)) { bericht.conflicts.push({ kind: "corrupt_entity", sourceType, sourceId: id }); continue; }
       if (istKarte(e.operationalStateSource)) continue;   // bereits migriert: fuehrend, nie erneut ableiten
-      const m = MAPPER[sourceType](e);
+      const legacyMapping = MAPPER[sourceType](e);
+      const m = sourceType === 'chatgptLead' ? mapLegacyDesktopOverlay(e, legacyMapping) : legacyMapping;
       e.operationalState = m.operationalState;
       e.operationalStateVersion = 1;
       e.operationalStateSource = { model: STATE_MODEL_VERSION, legacyField: m.legacyField, legacyValue: m.legacyValue, mappedAt: nowIso, note: m.note || null };
+      if (m.desktopState !== undefined) e.operationalStateSource.legacyDesktopState = m.desktopState;
       e.operationalRoles = rollenAbleiten(sourceType, e);
       if (m.unmapped) {
         e.operationalStateUnmapped = m.reason;
