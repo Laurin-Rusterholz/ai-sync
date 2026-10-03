@@ -879,3 +879,27 @@ test('quick-capture API retains all fields through actual registration and accep
     assert.equal(bad.status, 400); assert.ok(!d._store.snapshot.automation.intakeById.invalid_capture);
   }
 });
+
+test('desktop cancellation queue commits through real C2 exactly once and preserves legacy fields',async t=>{
+  const {openLeadCancellations}=await import('../public/quantus-v4-lead-cancellation.mjs');
+  const d=deps();let time=JETZT,lost=true,requests=0;
+  const original=structuredClone(d._store.snapshot.entities.chatgptLeads.l1);
+  const client=await openLeadCancellations({accountKey:OWNER,origin:APP,indexedDB:new IDBFactory(),now:()=>time,
+    getRun:()=>d._store.snapshot.dailyBriefing.assistantRuns[DATE],getAuth:async()=>({accountKey:OWNER,idToken:nutzerToken()}),
+    fetchImpl:async(url,init)=>{requests++;const result=await S.handleCommandRequest(FC.makeRequest({url,headers:{...init.headers,origin:APP},body:JSON.parse(init.body)}),d);
+      assert.equal(result.status,200,JSON.stringify(result.body));
+      if(lost){lost=false;throw Error('lost after commit');}return new Response(JSON.stringify(result.body),{status:result.status});}});
+  t.after(()=>client.close());await client.submit({lead:original,reason:'Dieser Auftrag ist hinfällig.'});await client.flush();
+  const committed=structuredClone(d._store.snapshot),actual=committed.entities.chatgptLeads.l1;
+  assert.equal(actual.operationalState,'cancelled');assert.equal(actual.operationalStateSource.closure.actorId,OWNER);
+  assert.equal(actual.status,original.status);assert.equal(actual.operationalStateVersion,original.operationalStateVersion+1);
+  assert.equal((await client.list())[0].deliveryStatus,'retry_wait');time+=30000;await client.flush();
+  assert.equal((await client.list())[0].deliveryStatus,'acknowledged');assert.equal(requests,2);assert.deepEqual(d._store.snapshot,committed);
+  await client.submit({lead:actual,reason:'Es sind neue Unterlagen eingetroffen.',toState:'doing'});await client.flush();
+  const reopened=d._store.snapshot.entities.chatgptLeads.l1;
+  assert.equal(reopened.operationalState,'doing');assert.equal(reopened.operationalStateVersion,actual.operationalStateVersion+1);
+  assert.equal(reopened.operationalStateHistory.length,1);
+  assert.deepEqual(reopened.operationalStateHistory[0].source.closure,actual.operationalStateSource.closure);
+  assert.equal(reopened.operationalStateHistory[0].reason,'Es sind neue Unterlagen eingetroffen.');
+  assert.equal((await client.list()).filter(e=>e.deliveryStatus==='acknowledged').length,2);
+});

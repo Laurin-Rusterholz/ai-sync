@@ -101,7 +101,7 @@ export function v3Spuren(data) {
       // Any canonical marker, other collection or unrecognized shape remains
       // a v3 trace: missing ledgers must never be reconstructed on that path.
       const desktopOnly = q.store === 'chatgptLeads' && isUnmigratedDesktopLead(e);
-      if (istKarte(e) && (e.operationalStateSource !== undefined || (e.operationalState !== undefined && !desktopOnly) || e.operationalStateVersion !== undefined || e.operationalRoles !== undefined || e.operationalStateUnmapped !== undefined)) { spuren.push(`entities.${q.store}.${id}`); break; }
+      if (istKarte(e) && (e.operationalStateSource !== undefined || (e.operationalState !== undefined && !desktopOnly) || e.operationalStateVersion !== undefined || e.operationalRoles !== undefined || e.operationalStateUnmapped !== undefined || e.operationalStateHistory !== undefined)) { spuren.push(`entities.${q.store}.${id}`); break; }
     }
   }
   return spuren;

@@ -61,9 +61,11 @@ function bauen(lead) {
   let gezeichnet = 0;
   const felder = new Map();
   const antworten = [];
+  const cancellations = [];
   const win = { dbSendLeadAnswer: (id, question, answer) => antworten.push({ id, question, answer }) };
   const scope = {
     window: win,
+    cglCancelLead: (lead, reason) => cancellations.push({id:lead.id,reason}),
     APP: { state: { data: { entities: { chatgptLeads: leads, chatgptTasks: {} } } } },
     ownEntity: (map, id) => map[id] || null,
     nowIso: () => "2026-09-11T22:30:00.000Z",
@@ -103,7 +105,7 @@ function bauen(lead) {
     zugriff.handeln(action, { dataset: { id: lead.id } }, { preventDefault() {}, stopPropagation() {} });
   };
   win.__leads = leads;
-  return { win, lead, meldungen, klick, zugriff, antworten,
+  return { win, lead, meldungen, klick, zugriff, antworten, cancellations,
     statusBox: () => String(zugriff.statusBox(lead)),
     waehle: (wert) => zugriff.statusWechsel({ value: wert, dataset: { id: lead.id }, type: "select-one" }),
     box: () => String(zugriff.closeBox(lead)),
@@ -238,10 +240,12 @@ const BRIEFING = () => ({
   t.klick("cgl-obsolete", { cglObsoleteGrund: "" });
   eq(t.lead.status, "in_arbeit", "ohne Begründung wurde als hinfällig geschlossen");
   t.klick("cgl-obsolete", { cglObsoleteGrund: "Anfrage hat sich erledigt" });
-  eq(t.lead.status, "abgeschlossen", "der Ausnahmeweg schliesst nicht mehr");
-  eq(t.lead.closedBy, "laurin", "die Ausnahme wird nicht als Laurins vermerkt");
-  eq(t.lead.obsoleteReason, "Anfrage hat sich erledigt", "der Grund wurde nicht vermerkt");
-  eq(t.lead.operationalState, "cancelled", "Review-Fix a1de2c2 Punkt 5: 'hinfällig geschlossen' muss operationalState auf 'cancelled' setzen, nicht 'done' oder unveraendert lassen");
+  eq(t.lead.status, "in_arbeit", "ohne Serverbeleg darf der Ausnahmeweg nicht lokal schliessen");
+  eq(t.lead.closedBy, null, "kein erfundener Abschlussurheber");
+  eq(t.cancellations.length, 1, "ein ausdruecklicher API-Auftrag fehlt");
+  eq(t.cancellations[0].reason, "Anfrage hat sich erledigt", "Begruendung muss vollstaendig uebergeben werden");
+  // Der bestehende Wiedereroeffnungstest beginnt mit einem bestaetigten Serverstand.
+  Object.assign(t.lead, {status:'abgeschlossen',operationalState:'cancelled',closedBy:'laurin',closedAt:'2026-09-11',obsoleteReason:'Anfrage hat sich erledigt'});
   // Auch das ist umkehrbar — und der Grund bleibt in der Historie.
   t.klick("cgl-reopen-ask");
   t.klick("cgl-reopen-do", { cglReopenStatus: "neu", cglReopenGrund: "doch noch aktuell", cglReopenBlocked: "" });

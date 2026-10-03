@@ -4,7 +4,7 @@
 const DESKTOP_STATES = new Set(['doing', 'waiting_external', 'followup_scheduled',
   'decision_required', 'information_required', 'delegated_cowork', 'review', 'done', 'cancelled']);
 const LEGACY_STATUSES = new Set(['neu', 'verstanden', 'in_arbeit', 'wartet', 'abgeschlossen']);
-const CANONICAL_MARKERS = ['operationalStateSource', 'operationalStateVersion', 'operationalRoles', 'operationalStateUnmapped'];
+const CANONICAL_MARKERS = ['operationalStateSource', 'operationalStateVersion', 'operationalRoles', 'operationalStateUnmapped', 'operationalStateHistory'];
 
 export function isUnmigratedDesktopLead(entity) {
   return !!entity && typeof entity === 'object' && !Array.isArray(entity)
