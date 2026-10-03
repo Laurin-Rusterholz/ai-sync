@@ -51,7 +51,7 @@ import {
   localDate as zurichLocalDate, isLocalDate,
 } from "./quantus-v3-runtime-plan.mjs";
 
-import {validateCommissioningAllocations, validCommissioningAuthorization, sameCommissioningAuthorization} from './quantus-v4-commissioning-allocation-schema.mjs';
+import {validateCommissioningAllocations, validCommissioningAuthorization, sameCommissioningAuthorization, validCommissioningCallBinding, sameCommissioningCallBinding, validateCommissioningCallLinks} from './quantus-v4-commissioning-allocation-schema.mjs';
 
 export const RUNTIME_SCHEMA_VERSION = 1;
 export const AUTOMATION_SCHEMA_VERSION = 3;
@@ -1151,6 +1151,7 @@ export function validateCostArea(cost) {
     if (!isRecord(cost[field])) fail("cost_area_invalid", 503, { reason: "missing_field", field });
   }
   if (!validateCommissioningAllocations(cost.commissioningAllocationsById)) fail("commissioning_allocation_ledger_invalid", 503);
+  if (!validateCommissioningCallLinks(cost)) fail("commissioning_call_ledger_invalid", 503);
   requireMicros(cost.overrunMicros, "overrunMicros");
   if (!Number.isSafeInteger(cost.dryRunChargeCount) || cost.dryRunChargeCount < 0) fail("cost_area_invalid", 503, { reason: "dryRunChargeCount" });
 
@@ -1396,6 +1397,20 @@ export function reserveCommissioningAllocation(data,input={}) {
   return commit(next,{allocationId:authorization.allocationId,heldMicros:authorization.maxMicros,dispatchAllowed:false});
 }
 
+/* The source ledger, never a child snapshot, owns the operation identity.
+ * These are internal reducers; authenticated commissioning ingress must still
+ * supply the reviewed binding and stable operation identity server-side. */
+function commissioningCallGate(cost, binding, now, policy) {
+  if (!validCommissioningCallBinding(binding)) fail("commissioning_binding_invalid", 400);
+  const allocation = cost.commissioningAllocationsById?.[binding.allocationId];
+  if (!allocation || allocation.authorization.bindingHash !== binding.bindingHash) fail("commissioning_allocation_mismatch", 409);
+  const auth = allocation.authorization;
+  if (now < auth.approvedAtMs || now >= auth.expiresAtMs) fail("commissioning_authorization_expired", 409);
+  if (zurichLocalDate(now).slice(0,7) !== auth.month) fail("commissioning_month_mismatch", 409);
+  if (policy.currency !== "USD" || policy.approval.approvedAtMs > now) fail("commissioning_policy_invalid", 503);
+  return allocation;
+}
+
 /* VERBINDLICHE Reservierung vor jedem bezahlten Modellaufruf. Sie allein
  * erlaubt noch KEINE Sendung — dafuer gibt es claimCostDispatch. */
 export function reserveCost(data, input = {}) {
@@ -1438,6 +1453,7 @@ export function reserveCost(data, input = {}) {
   const costBefore = isRecord(runtimeBefore.cost) ? runtimeBefore.cost : emptyRuntimeArea().cost;
   const known = isRecord(costBefore.callsById) ? costBefore.callsById[callId] : undefined;
   if (isRecord(known)) {
+    if (!sameCommissioningCallBinding(known.commissioning, input.commissioning)) return reject(data, "commissioning_binding_conflict");
     // Gegenbeispiel 6: gebunden wird der GANZE Vertrag, nicht nur der Hash.
     if (!contractEquals(known.contract, contract)) {
       return reject(data, "cost_call_conflict", { callId, differs: contractDifferences(known.contract, contract) });
@@ -1448,6 +1464,18 @@ export function reserveCost(data, input = {}) {
       dispatchAllowed: false,
       dispatchClaimed: known.dispatch.claimed === true,
     });
+  }
+
+  if (input.commissioning !== undefined) {
+    const allocation = commissioningCallGate(costBefore, input.commissioning, now, policy);
+    if (!chargeable) return reject(data, "commissioning_requires_live_policy");
+    let committedMicros = 0;
+    for (const child of Object.values(costBefore.callsById)) {
+      if (child.commissioning?.allocationId !== allocation.allocationId) continue;
+      if (child.commissioning.operationId === input.commissioning.operationId) return reject(data, "commissioning_operation_conflict");
+      committedMicros = safeAdd(committedMicros, child.maxMicros, "commissioning.committedMicros");
+    }
+    if (safeAdd(committedMicros, estimateMicros, "commissioning.committedMicros") > allocation.authorization.maxMicros) return reject(data, "commissioning_budget_exceeded");
   }
 
   const blocking = blockingCallForHash(costBefore, contentHash);
@@ -1490,6 +1518,7 @@ export function reserveCost(data, input = {}) {
     providerRequestId: null, usageReceiptId: null,
     policyVersion: policy.version, fence: verified.fence, holder: verified.holder,
   };
+  if (input.commissioning !== undefined) cost.callsById[callId].commissioning = structuredClone(input.commissioning);
   if (!Array.isArray(cost.contentHashIndex[contentHash])) cost.contentHashIndex[contentHash] = [];
   cost.contentHashIndex[contentHash].push(callId);
   rebuildCostAggregates(cost);
@@ -1544,6 +1573,8 @@ export function claimCostDispatch(data, input = {}) {
   const costBefore = isRecord(runtimeBefore.cost) ? runtimeBefore.cost : emptyRuntimeArea().cost;
   const call = isRecord(costBefore.callsById) ? costBefore.callsById[callId] : undefined;
   if (!isRecord(call)) return reject(data, "cost_call_unknown", { callId });
+  if (!sameCommissioningCallBinding(call.commissioning, input.commissioning)) return reject(data, "commissioning_binding_conflict");
+  if (call.commissioning !== undefined) commissioningCallGate(costBefore, call.commissioning, now, policy);
   if (call.state !== "reserved") return reject(data, "cost_state_invalid", { callId, state: call.state });
   if (call.dispatch.claimed === true) {
     return reject(data, "dispatch_already_claimed", {

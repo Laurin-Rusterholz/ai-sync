@@ -39,3 +39,38 @@ export function commissioningHeldMicros(entries,month){
   }
   return total;
 }
+
+export function validCommissioningCallBinding(value) {
+  return record(value) && Object.keys(value).length === 3
+    && ['allocationId', 'bindingHash', 'operationId'].every(k => Object.hasOwn(value, k))
+    && id(value.allocationId) && id(value.operationId)
+    && typeof value.bindingHash === 'string' && /^[a-f0-9]{64}$/.test(value.bindingHash);
+}
+export function sameCommissioningCallBinding(a, b) {
+  if (a === undefined && b === undefined) return true;
+  return validCommissioningCallBinding(a) && validCommissioningCallBinding(b)
+    && ['allocationId', 'bindingHash', 'operationId'].every(k => a[k] === b[k]);
+}
+/** Validate source-ledger ownership and cumulative commitments, including
+ * released calls. A release never recycles an operation or its allocation. */
+export function validateCommissioningCallLinks(cost) {
+  const totals = new Map(), operations = new Set();
+  for (const call of Object.values(cost.callsById || {})) {
+    if (call?.commissioning === undefined) continue;
+    const binding = call.commissioning;
+    if (!validCommissioningCallBinding(binding)) return false;
+    const allocation = cost.commissioningAllocationsById?.[binding.allocationId];
+    const auth = allocation?.authorization;
+    if (!auth || auth.bindingHash !== binding.bindingHash || !call.chargeable || call.mode !== 'live'
+      || !Number.isSafeInteger(call.maxMicros) || call.maxMicros < 0
+      || !ms(call.reservedAtMs) || call.reservedAtMs < allocation.reservedAtMs || call.reservedAtMs >= auth.expiresAtMs
+      || typeof call.billingLocalDate !== 'string' || call.billingLocalDate.slice(0, 7) !== auth.month) return false;
+    const key = JSON.stringify([binding.allocationId, binding.operationId]);
+    if (operations.has(key)) return false;
+    operations.add(key);
+    const total = (totals.get(binding.allocationId) || 0) + call.maxMicros;
+    if (!Number.isSafeInteger(total) || total > auth.maxMicros) return false;
+    totals.set(binding.allocationId, total);
+  }
+  return true;
+}

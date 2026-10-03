@@ -88,3 +88,33 @@ remain authoritative for obligations throughout ambiguous replies and restores.
 Day/run/call limits and actual provider settlement also remain required. A cloned
 ledger, a caller-supplied approval object or a held amount alone grants no right
 to spend. No real allocation or trial was created by this implementation.
+
+## Source-ledger child calls
+
+The normal cost reducer and adapter now accept an optional internal
+`commissioning` binding containing `allocationId`, `bindingHash` and a stable
+`operationId`. This does not expose an endpoint or change activation gates.
+The authenticated broker must provide these values from its reviewed run/job
+identity, not accept a fresh identity from a restored child's request.
+
+Each child call lives in the existing authoritative `callsById` ledger. Its
+maximum commitment consumes the allocation once. All children together must
+fit the held maximum, including settled and released calls. Reusing an
+operation with a new call ID conflicts; dropping or changing its binding also
+conflicts. Ordinary day/run/call limits, cost-policy checks, source leadership,
+claim-once, ambiguous outcomes and settlement continue to use the existing
+cost machinery. Provider dispatch checks allocation expiry both in the CAS
+claim and again after the final awaited source read, immediately before send.
+
+Monthly accounting keeps the allocation's full maximum reserved: settlement
+moves its covered amount from open to settled without charging it twice.
+Actual cost above an individual reservation is added and blocks new work under
+the existing overrun rule. Release does not free the parent hold or make its
+operation reusable. Missing, foreign, malformed or overcommitted child links
+fail closed for ordinary cost reads as well.
+
+The remaining commissioning ingress must authenticate the shadow principal,
+verify the exact source/isolation deployment binding, derive stable operation
+identities across child restore/retry, enforce approved model/request scope,
+and execute through the source cost adapter. This package does not configure
+that ingress, permit shadow external effects, or prove the full restore drill.
