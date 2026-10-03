@@ -1086,3 +1086,9 @@ The existing server can construct Cloud Tasks transport for a branded isolated w
 The existing Terraform module now has explicit optional isolated worker and continuation inputs. Worker identity is tied to the attached service account; Tasks target/queue/account derive from the deployment's own resources. The shadow worker no longer fetches, mounts or receives access to an OpenAI key. Worker permissions are excluded from monitor/watchdog, and task permission is excluded from watchdog. Scheduler pause and all live/trial gates remain unchanged.
 
 Offline tests render actual Cloud Run environments and exercise refusal of wrong mode, identity, binding and retained provider-secret configuration. A CI bridge loads those rendered environments into the real runtime, shadow isolation, keyless worker and task-permission constructors with synthetic credentials and no network. Actual source broker deployment, IAM/credential verification, notification delivery and the genuine trial remain outstanding.
+
+### Separate source broker deployment
+
+The dedicated source service now has its own Terraform root, explicit broker command, full-route custom audience, single reviewed shadow caller, digest-pinned image, pinned secret references and private retained response bucket. Its attached identity must match the actual source credential identity used by both CAS and artifact access. The public worker connection derives from the same reviewed profile/authority configuration; no source allocation or ordinary activation is created by deployment.
+
+Offline infrastructure checks feed the rendered source environment into the real broker composition and source-funded response/replay path with synthetic dependencies. This verifies configuration wiring and refusals, not real cloud installation. Source credential/database permissions, actual Cloud Run identity checks, budget allocation, warning delivery, restore proof and the real 14-day trial still require evidence.
