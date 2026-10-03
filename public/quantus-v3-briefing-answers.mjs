@@ -1,10 +1,26 @@
-import { openCommandQueue, createCommandTransport } from './quantus-v3-command-client.mjs';
+import { openCommandQueue, createCommandTransport, canonicalIntentJson } from './quantus-v3-command-client.mjs';
 
 const safeId = value => typeof value === 'string' && /^[A-Za-z0-9_:-]{1,120}$/.test(value) && !value.includes('__');
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const dateValid = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
   && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
+const digest = async (text, cryptoImpl) => Array.from(new Uint8Array(await cryptoImpl.subtle.digest('SHA-256', new TextEncoder().encode(text))), b => b.toString(16).padStart(2, '0')).join('');
+
+export async function legacyAnswerIntent({ accountKey, leadId, question, answer, cryptoImpl = globalThis.crypto }) {
+  if (typeof accountKey !== 'string' || !accountKey || accountKey.length > 200) fail('sign_in_required');
+  if (!safeId(leadId) || !question || typeof question.text !== 'string' || !question.text.trim()
+    || question.answeredAt) fail('legacy_question_not_addressable');
+  if (typeof answer !== 'string' || !answer.trim() || answer.trim().length > 8000) fail('answer_invalid');
+  const original = JSON.parse(canonicalIntentJson(question));
+  const fingerprint = await digest(canonicalIntentJson([leadId, original]), cryptoImpl);
+  const key = await digest(JSON.stringify([accountKey, fingerprint]), cryptoImpl);
+  const intent = { accountKey, operationId: 'legacy-answer-' + key,
+    legacyOperation: { kind: 'legacy_question_answer', schemaVersion: 1, leadId, question: original,
+      fingerprint, questionId: 'legacyq_' + fingerprint, answer: answer.trim() } };
+  canonicalIntentJson(intent.legacyOperation);
+  return intent;
+}
 
 // A question is immutable and accepts exactly one answer. Its operation key
 // survives reloads, multiple tabs and lost responses; a different answer must
@@ -20,8 +36,9 @@ export async function answerIntent({ accountKey, question, answer, cryptoImpl = 
       payload: { briefingId: 'run_' + question.runDate, questionId: question.id, answer: answer.trim(), answerId: 'answer_' + key } } };
 }
 
-export async function openBriefingAnswers({ accountKey, getAuth, origin, indexedDB, fetchImpl, now = Date.now, cryptoImpl = globalThis.crypto } = {}) {
+export async function openBriefingAnswers({ accountKey, getAuth, origin, indexedDB, fetchImpl, getQuestions = () => [], now = Date.now, cryptoImpl = globalThis.crypto } = {}) {
   const queue = await openCommandQueue({ indexedDB, databaseName: 'quantus-v3-briefing-answers', now });
+  let nextCheckAt = 0;
   const transport = createCommandTransport({ origin, getAuth, fetchImpl, now, writesEnabled: true });
   const checkedTransport = { async send(entry, options) {
     const result = await transport.send(entry, options);
@@ -31,21 +48,63 @@ export async function openBriefingAnswers({ accountKey, getAuth, origin, indexed
     }
     return result;
   } };
+  const legacyEntries = entries => entries.filter(e => e.legacyOperation?.kind === 'legacy_question_answer' && e.legacyOperation.schemaVersion === 1);
+  async function list() {
+    const entries = await queue.list(accountKey, { includeAcknowledged: true });
+    const questions = await getQuestions();
+    const commands = new Map(entries.filter(e => e.command?.verb === 'briefing.answer').map(e => [e.command.payload.questionId, e]));
+    return entries.map(entry => {
+      if (!entry.legacyOperation || entry.legacyOperation.kind !== 'legacy_question_answer') return entry;
+      const command = commands.get(entry.legacyOperation.questionId);
+      const same = command && command.command.payload.answer === entry.legacyOperation.answer;
+      const question = Array.isArray(questions) && questions.find(q => q?.id === entry.legacyOperation.questionId
+        && q?.legacySource?.fingerprint === entry.legacyOperation.fingerprint && q.sourceId === entry.legacyOperation.leadId);
+      return { ...entry, deliveryStatus: command ? same ? command.status : 'conflict' : question && question.status !== 'open' ? 'source_changed' : 'legacy_unmapped',
+        resolvedOperationId: same ? command.operationId : null };
+    });
+  }
+  async function reconcileLegacy() {
+    const questions = await getQuestions();
+    if (!Array.isArray(questions)) fail('questions_unavailable');
+    let unmapped = 0, mapped = 0;
+    const entries = await queue.list(accountKey, { includeAcknowledged: true });
+    const commands = new Map(entries.filter(e => e.command?.verb === 'briefing.answer').map(e => [e.command.payload.questionId, e]));
+    for (const entry of legacyEntries(entries)) {
+      const old = entry.legacyOperation;
+      if (commands.has(old.questionId)) continue;
+      const question = questions.find(q => q?.id === old.questionId && q?.legacySource?.leadId === old.leadId
+        && q.legacySource.fingerprint === old.fingerprint && q.sourceType === 'chatgptLead' && q.sourceId === old.leadId);
+      if (!question || question.status !== 'open' || !dateValid(question.runDate)) { unmapped++; continue; }
+      if (mapped >= 32) { unmapped++; continue; }
+      const verified = await legacyAnswerIntent({ accountKey, leadId: old.leadId, question: old.question, answer: old.answer, cryptoImpl });
+      if (entry.operationId !== verified.operationId || canonicalIntentJson(old) !== canonicalIntentJson(verified.legacyOperation)) fail('stored_operation_corrupt');
+      try { await queue.enqueue(await answerIntent({ accountKey, question, answer: old.answer, cryptoImpl })); }
+      catch (error) { if (error?.code !== 'operation_id_conflict') throw error; }
+      mapped++;
+    }
+    return unmapped;
+  }
   return Object.freeze({
     close: () => queue.close(),
-    list: () => queue.list(accountKey, { includeAcknowledged: true }),
+    list,
+    nextCheckAt: () => nextCheckAt,
+    async submitLegacy(leadId, question, answer) {
+      return queue.retainLegacy(await legacyAnswerIntent({ accountKey, leadId, question, answer, cryptoImpl }));
+    },
     async submit(question, answer) {
       const intent = await answerIntent({ accountKey, question, answer, cryptoImpl });
       // Only this durable commit permits the UI to say 'on this device saved'.
       return queue.enqueue(intent);
     },
     async flush() {
+      nextCheckAt = now() + 30_000;
       const auth = await getAuth();
       if (!auth || auth.accountKey !== accountKey) fail('sign_in_required');
+      const unmapped = await reconcileLegacy();
       await queue.resumeAfterSignIn(accountKey);
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 20_000);
-      try { return await queue.drain(accountKey, { transport: checkedTransport, limit: 8, signal: controller.signal }); }
+      try { return { ...await queue.drain(accountKey, { transport: checkedTransport, limit: 8, signal: controller.signal }), unmapped }; }
       finally { clearTimeout(timeout); }
     },
   });
@@ -59,7 +118,10 @@ const labels = Object.freeze({
   conflict: 'Konflikt · gespeicherte Antwort prüfen; keine zweite Antwort versandt',
   upgrade_required: 'Auf diesem Gerät gesichert · App-Aktualisierung erforderlich',
   needs_review: 'Übertragung ungeklärt · Antwort bleibt auf diesem Gerät erhalten',
+  legacy_unmapped: 'Auf diesem Gerät gesichert · die ursprüngliche Frage muss noch vom Server übernommen werden',
+  source_changed: 'Frage geändert oder bereits beantwortet · die auf diesem Gerät gesicherte Antwort bitte prüfen',
 });
+export const answerDeliveryText = status => labels[status] || 'Übertragung ungeklärt';
 
 export function renderBriefingAnswers(questions, entries = [], drafts = {}) {
   const byQuestion = new Map(entries.filter(e => e.command?.verb === 'briefing.answer').map(e => [e.command.payload.questionId, e]));
@@ -67,7 +129,11 @@ export function renderBriefingAnswers(questions, entries = [], drafts = {}) {
   // An unresolved local intention remains visible even after another device
   // answers the question, or the server question disappears from this snapshot.
   for (const [id, entry] of byQuestion) if (entry.status !== 'acknowledged' && !shown.has(id)) shown.set(id, { id, text: 'Noch nicht bestätigte Antwort', status: 'unavailable' });
+  const retained = entries.filter(e => e.legacyOperation?.kind === 'legacy_question_answer' && !e.resolvedOperationId);
   return '<h3>Fragen aus der automatischen Verarbeitung</h3><p class="mini">Aus dem synchronisierten Fragenbestand. Antworten werden einzeln an den Server übertragen.</p>'
+    + retained.map(e => '<div class="db-item" style="display:block"><strong>' + esc(e.legacyOperation.question.text) + '</strong>'
+      + '<p>' + esc(e.legacyOperation.answer) + '</p><p class="mini" role="status">' + esc(answerDeliveryText(e.deliveryStatus)) + '</p>'
+      + '<button class="btn sm" data-action="cgl-open" data-id="' + esc(e.legacyOperation.leadId) + '">Zugehörigen Lead öffnen</button></div>').join('')
     + (shown.size ? Array.from(shown.values()).map(q => {
       const entry = byQuestion.get(q.id), addressable = dateValid(q.runDate) && q.status === 'open';
       const text = entry?.command.payload.answer ?? drafts[q.id] ?? q.legacyAnswerDraft ?? '';
@@ -95,10 +161,10 @@ export function bindBriefingAnswers({ host, client, questions, drafts, isCurrent
     if (isCurrent() && host.isConnected) {
       host.innerHTML = renderBriefingAnswers(questions, entries, drafts);
       clearTimeout(host._answerRetryTimer);
-      const pending = entries.filter(e => ['pending', 'retry_wait'].includes(e.status));
+      const pending = entries.filter(e => ['pending', 'retry_wait'].includes(e.status) || e.deliveryStatus === 'legacy_unmapped');
       if (pending.length) host._answerRetryTimer = setTimeout(async () => {
         if (!isCurrent() || !host.isConnected) return;
-        if (busy) { await draw(); return; }
+        if (busy) return;
         busy = true;
         try {
           const result = await client.flush();
@@ -106,7 +172,7 @@ export function bindBriefingAnswers({ host, client, questions, drafts, isCurrent
           if (result.paused) status('Die Server-Schnittstelle ist noch nicht zum Schreiben freigegeben. Deine Antwort bleibt auf diesem Gerät gesichert.');
         } catch (_) { status('Übertragung noch offen. Bitte Anmeldung prüfen oder Übertragungen erneut prüfen.'); }
         finally { busy = false; }
-      }, Math.min(600_000, Math.max(30_000, Math.min(...pending.map(e => e.nextAttemptAt || 0)) - Date.now())));
+      }, Math.min(600_000, Math.max(100, Math.max(client.nextCheckAt?.() || 0, Math.min(...pending.map(e => e.nextAttemptAt || 0))) - Date.now())));
     }
   }
   host.oninput = event => {

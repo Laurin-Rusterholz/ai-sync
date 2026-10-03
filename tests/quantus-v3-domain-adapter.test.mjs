@@ -769,3 +769,36 @@ test('C2 scans the whole allowed original before fragmentation so split provider
   assert.equal(r.status, 403); assert.equal(r.body.reason, 'secret_in_read_result');
   assert.equal(r.body.items, undefined);
 });
+
+test('retained legacy click resolves after real migration and crosses authenticated CAS exactly once', async t => {
+  const { planLegacyQuestions } = await import('../netlify/lib/assistant-legacy-questions.mjs');
+  let data = structuredClone(BASIS);
+  const original = { text: 'Welche Firma?', options: ['Muster AG'], answer: null, answeredAt: null, sourceExtra: { keep: true } };
+  data.entities.chatgptLeads.l1.pendingQuestion = structuredClone(original);
+  const d = deps({ store: FC.makeStore({ snapshot: data }) });
+  let time = JETZT, lost = true, requests = 0;
+  const client = await openBriefingAnswers({ accountKey: OWNER, origin: APP, indexedDB: new IDBFactory(), now: () => time,
+    getQuestions: () => Object.values(d._store.snapshot.automation.questionsById),
+    getAuth: async () => ({ accountKey: OWNER, idToken: nutzerToken() }),
+    fetchImpl: async (url, init) => {
+      requests++;
+      const result = await S.handleCommandRequest(FC.makeRequest({ url, headers: { ...init.headers, origin: APP }, body: JSON.parse(init.body) }), d);
+      assert.equal(result.status, 200, JSON.stringify(result.body));
+      if (lost) { lost = false; throw new Error('receipt lost after real commit'); }
+      return new Response(JSON.stringify(result.body), { status: result.status });
+    } });
+  t.after(() => client.close());
+  await client.submitLegacy('l1', original, 'Muster AG');
+  await client.flush(); assert.equal(requests, 0); assert.deepEqual(d._store.snapshot, data);
+  const migrated = bCmd(data, 'migrateLegacyQuestions', { date: DATE, items: planLegacyQuestions(data).items }, JETZT, { kind: 'system', id: 'migration' });
+  Object.assign(d._store.snapshot, migrated);
+  await client.flush();
+  const committed = structuredClone(d._store.snapshot);
+  const answer = Object.values(committed.automation.answersById).find(a => a.text === 'Muster AG');
+  assert.ok(answer); assert.equal(answer.answeredBy, OWNER);
+  assert.deepEqual(committed.entities.chatgptLeads.l1.pendingQuestion, original);
+  assert.equal((await client.list()).find(e => e.legacyOperation).deliveryStatus, 'retry_wait');
+  time += 30_000; await client.flush();
+  assert.equal((await client.list()).find(e => e.legacyOperation).deliveryStatus, 'acknowledged');
+  assert.equal(requests, 2); assert.deepEqual(d._store.snapshot, committed);
+});

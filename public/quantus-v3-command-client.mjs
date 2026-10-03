@@ -43,6 +43,10 @@ function json(value, maxBytes = 65_536) {
   return result;
 }
 
+// The same strict canonical JSON is used to bind retained legacy intentions to
+// the complete original. It never invokes accessors or silently drops fields.
+export function canonicalIntentJson(value) { return json(value); }
+
 export function serializeCommand(command) {
   const serialized = json(command);
   const safe = JSON.parse(serialized);

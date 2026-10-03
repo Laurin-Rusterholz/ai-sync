@@ -60,7 +60,8 @@ function bauen(lead) {
   const meldungen = [];
   let gezeichnet = 0;
   const felder = new Map();
-  const win = {};
+  const antworten = [];
+  const win = { dbSendLeadAnswer: (id, question, answer) => antworten.push({ id, question, answer }) };
   const scope = {
     window: win,
     APP: { state: { data: { entities: { chatgptLeads: leads, chatgptTasks: {} } } } },
@@ -102,7 +103,7 @@ function bauen(lead) {
     zugriff.handeln(action, { dataset: { id: lead.id } }, { preventDefault() {}, stopPropagation() {} });
   };
   win.__leads = leads;
-  return { win, lead, meldungen, klick, zugriff,
+  return { win, lead, meldungen, klick, zugriff, antworten,
     statusBox: () => String(zugriff.statusBox(lead)),
     waehle: (wert) => zugriff.statusWechsel({ value: wert, dataset: { id: lead.id }, type: "select-one" }),
     box: () => String(zugriff.closeBox(lead)),
@@ -368,9 +369,12 @@ const BRIEFING = () => ({
     pendingQuestion: { text: "Format?", options: ["A", "B"], recommendation: "A", askedAt: "2026-09-10T08:00:00.000Z", answeredAt: null, answer: null },
   });
   const t3 = bauen(offenMitFrage);
+  const vorher = JSON.stringify(t3.lead);
   t3.klick("cgl-answer-question", { ["cglAnswerText_" + t3.lead.id]: "A bitte" });
-  ok(t3.lead.pendingQuestion.answeredAt && t3.lead.pendingQuestion.answer === "A bitte", "eine Antwort auf einen offenen Lead wird faelschlich abgelehnt");
-  ok(t3.lead.operationalState === "doing", "operationalState wechselt bei einer angenommenen Antwort nicht auf 'doing'");
+  ok(t3.antworten.length === 1 && t3.antworten[0].answer === "A bitte", "offene Antwort muss die getrennte Warteschlange erreichen");
+  eq(JSON.stringify(t3.lead), vorher, "ein Antwortklick darf keinen lokalen Lead-Zustand oder Antwortbeleg erzeugen");
+  ok(t3.antworten[0].question !== t3.lead.pendingQuestion, "Frage muss als unveraenderlicher Klick-Snapshot weitergegeben werden");
+  ok(t.antworten.length === 0, "geschlossener Lead darf keine Antwort einreihen");
 }
 
 console.log(`chatgpt lead wiedereroeffnen: ok (${checks} Pruefungen)`);
