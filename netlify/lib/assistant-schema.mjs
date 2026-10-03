@@ -329,7 +329,7 @@ export const COMMAND_SCHEMAS = Object.freeze({
   observeSource:        Object.freeze({ required: ["sourceType", "sourceId"], optional: [], actors: ["agent", "system"] }),
   setWaiting:           Object.freeze({ required: ["sourceType", "sourceId", "expectedVersion", "state", "counterparty", "nextAction", "followUpAt", "evidence"], optional: [], actors: ["agent"] }),
   transitionState:      Object.freeze({ required: ["sourceType", "sourceId", "state"], optional: ["expectedVersion", "reason", "evidence", "linkTo", "results"], actors: ["agent", "user"] }),
-  registerIntake:       Object.freeze({ required: ["intakeId", "text", "channel"], optional: ["receivedAt", "sourceType", "sourceId"], actors: ["user", "adapter", "system"] }),
+  registerIntake:       Object.freeze({ required: ["intakeId", "text", "channel"], optional: ["receivedAt", "sourceType", "sourceId", "capture"], actors: ["user", "adapter", "system"] }),
   acceptIntake:         Object.freeze({ required: ["intakeId", "date"], optional: ["leadId"], actors: ["user"] }),
   askQuestion:          Object.freeze({ required: ["questionId", "sourceType", "sourceId", "text"], optional: ["date", "options"], actors: ["agent"] }),
   migrateLegacyQuestions: Object.freeze({ required: ['date', 'items'], optional: [], actors: ['system'] }),

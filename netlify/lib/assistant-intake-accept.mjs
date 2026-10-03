@@ -3,10 +3,12 @@ import { canonicalJson, pruefeId, effektiverZustand, ABGESCHLOSSENE_ZUSTAENDE, S
 import { klon, requireCore } from './assistant-migration.mjs';
 import { bump } from './assistant-buchhaltung.mjs';
 import { istLokalDatum, isoAus } from './assistant-zeit.mjs';
+import { validateIntakeCapture } from './assistant-intake-capture.mjs';
 
 const fail = (error, detail = null) => ({ ok: false, error, detail });
 const intakeFingerprint = entry => createHash('sha256').update(canonicalJson([
   entry.id, entry.text, entry.channel, entry.receivedAt, entry.registeredAt, entry.registeredBy, entry.origin ?? null,
+  ...(entry.capture === undefined ? [] : [entry.capture]),
 ])).digest('hex');
 // Source identity, independent of caller, run, retry and idempotency key.
 export const acceptedIntakeLeadId = (tenant, intakeId) => 'intake_lead_' + createHash('sha256').update(canonicalJson([tenant, intakeId])).digest('hex');
@@ -40,6 +42,8 @@ export function acceptIntake(input, { intakeId, date, leadId }, ctx) {
       return fail('INTAKE_ACCEPT_CONFLICT', 'accepted_lead_missing_or_changed');
     return { ok: true, data, leadId: targetId, created: false };
   }
+  const captureError = validateIntakeCapture(data, entry.capture);
+  if (captureError) return fail(captureError);
   if ((linked || leadId) && !lead) return fail('LINK_TARGET_NOT_FOUND', targetId);
   if (!linked && !leadId && lead) return fail('INTAKE_ACCEPT_CONFLICT', 'derived_id_taken');
   const now = isoAus(ctx.now), created = !lead;
@@ -53,9 +57,12 @@ export function acceptIntake(input, { intakeId, date, leadId }, ctx) {
     lead.operationalStateVersion = state.version + 1;
     lead.updatedAt = now;
   } else {
-    lead = { id: targetId, title: entry.text.split('\n')[0].trim().slice(0, 200), rawInput: entry.text,
+    lead = { id: targetId, title: entry.capture?.title || entry.text.split('\n')[0].trim().slice(0, 200), rawInput: entry.text,
       status: 'neu', assignee: 'chatgpt', createdAt: now, updatedAt: now, createdBy: ctx.actor.id,
       sourceIntakeId: intakeId, intakeRefs: [intakeId], comments: [],
+      ...(entry.capture?.projectId ? { linkedProjects: [entry.capture.projectId] } : {}),
+      ...(entry.capture?.sourceUrl ? { externalLinks: [{ label: 'Originalquelle', url: entry.capture.sourceUrl }] } : {}),
+      ...(entry.capture?.nextAction ? { nextAction: entry.capture.nextAction } : {}),
       operationalState: 'doing', operationalStateVersion: 1,
       operationalStateSource: { model: STATE_MODEL_VERSION, legacyField: 'status', legacyValue: 'neu', mappedAt: now, note: 'acceptIntake' } };
     lead.operationalRoles = rollenAbleiten('chatgptLead', lead);

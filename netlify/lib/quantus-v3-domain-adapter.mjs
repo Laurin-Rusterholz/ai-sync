@@ -718,7 +718,8 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
     let r; let ids = [];
     switch (verb) {
       case "intake.create": {
-        r = ausfuehren("registerIntake", { intakeId: resource.id, text: p.text ? String(p.title) + "\n" + String(p.text) : String(p.title), channel: String(p.source) });
+        const capture = Object.fromEntries(['title', 'projectId', 'sourceUrl', 'nextAction'].filter(k => p[k] !== undefined).map(k => [k, p[k]]));
+        r = ausfuehren("registerIntake", { intakeId: resource.id, text: p.text ? String(p.title) + "\n" + String(p.text) : String(p.title), channel: String(p.source), capture });
         ids = [["intake", resource.id]]; break;
       }
       case "intake.accept": {

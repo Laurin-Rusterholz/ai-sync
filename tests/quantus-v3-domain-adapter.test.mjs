@@ -860,5 +860,22 @@ test('parallel intake acceptance cannot create two leads or replace an accepted 
   const entry = d._store.snapshot.automation.intakeById.race_in;
   assert.equal(entry.linkedTo.sourceId, entry.acceptance.leadId);
   assert.ok(d._store.snapshot.entities.chatgptLeads[entry.linkedTo.sourceId].intakeRefs.includes('race_in'));
-  assert.equal(Object.keys(d._store.snapshot.entities.chatgptLeads).length, Object.keys(data.entities.chatgptLeads).length + 1);
+  assert.equal(Object.keys(d._store.snapshot.entities.chatgptLeads).length, Object.keys(data.entities.chatgptLeads).length + (entry.linkedTo.sourceId === 'l1' ? 0 : 1));
+});
+
+test('quick-capture API retains all fields through actual registration and acceptance, validates references and stays immutable', async () => {
+  const data = structuredClone(BASIS); data.entities.projects.project_capture = { id: 'project_capture', title: 'Projekt' };
+  const d = deps({ store: FC.makeStore({ snapshot: data }) });
+  const payload = { intakeId: 'capture_fields', source: 'manual', title: 'Titel', text: 'Originalauftrag', projectId: 'project_capture', sourceUrl: 'https://example.org/original', nextAction: 'Zuerst prüfen' };
+  const created = mussOk(await sende(d, { verb: 'intake.create', payload, idempotencyKey: 'capture-full' }), 'create full capture');
+  const accepted = mussOk(await sende(d, { verb: 'intake.accept', payload: { intakeId: payload.intakeId }, expectedEntityVersion: created.body.entityVersions[payload.intakeId], idempotencyKey: 'capture-full-accept' }), 'accept full capture');
+  const lead = d._store.snapshot.entities.chatgptLeads[accepted.body.effect.leadId];
+  assert.equal(lead.title, payload.title); assert.equal(lead.rawInput, 'Titel\nOriginalauftrag');
+  assert.deepEqual(lead.linkedProjects, ['project_capture']); assert.equal(lead.externalLinks[0].url, payload.sourceUrl); assert.equal(lead.nextAction, payload.nextAction);
+  const changed = await sende(d, { verb: 'intake.create', payload: { ...payload, nextAction: 'Andere Anweisung' }, idempotencyKey: 'capture-change' });
+  assert.equal(changed.status, 409); assert.equal(changed.body.reason, 'INTAKE_IMMUTABLE:capture_fields');
+  for (const change of [{ projectId: 'missing' }, { sourceUrl: 'javascript:alert(1)' }, { sourceUrl: 'https://name:secret@example.org' }]) {
+    const bad = await sende(d, { verb: 'intake.create', payload: { ...payload, intakeId: 'invalid_capture', ...change }, idempotencyKey: 'bad-' + Object.keys(change)[0] + (change.sourceUrl?.startsWith('https') ? '-credentials' : '') });
+    assert.equal(bad.status, 400); assert.ok(!d._store.snapshot.automation.intakeById.invalid_capture);
+  }
 });

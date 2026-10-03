@@ -76,3 +76,15 @@ test('acceptance is bound to original source; later legacy text or link edits ca
     const rejected = accept(r.data); assert.equal(rejected.error, 'INTAKE_ACCEPT_CONFLICT'); assert.deepEqual(rejected.data, before);
   }
 });
+
+test('captured project is rechecked inside acceptance; invalid or removed metadata never creates a partial lead', () => {
+  const data = fixture(); data.entities.projects.project_one = { id: 'project_one', title: 'Projekt' };
+  const capture = { title: 'Originaltitel', projectId: 'project_one', sourceUrl: 'https://example.org/source', nextAction: 'Erster Schritt' };
+  const registered = apply(data, 'registerIntake', { intakeId: 'captured', text: 'Originalauftrag', channel: 'manual', capture });
+  assert.equal(registered.ok, true);
+  delete registered.data.entities.projects.project_one;
+  const before = structuredClone(registered.data);
+  const rejected = apply(registered.data, 'acceptIntake', { intakeId: 'captured', date });
+  assert.equal(rejected.error, 'CAPTURE_PROJECT_MISSING'); assert.deepEqual(rejected.data, before);
+  assert.equal(apply(data, 'registerIntake', { intakeId: 'bad', text: 'Original', channel: 'manual', capture: { ...capture, root: {} } }).error, 'CAPTURE_INVALID');
+});

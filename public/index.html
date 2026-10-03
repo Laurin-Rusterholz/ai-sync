@@ -24209,13 +24209,13 @@ function renderBriefingProjectContext(projects) {
     }).join('') + '</div></details>';
 }
 function renderBriefingQuickLead(projects) {
-  const draft = window._dbQuickLeadDraft || {};
-  return '<section class="db-section" id="dbQuickLead"><h3>Neue Anfrage an ChatGPT</h3><p class="mini">Kurz beschreiben, optional Projekt und Quelle wählen. Der Originallead ist danach direkt erreichbar.</p><div class="db-capture-grid">'
+  const draft = window.dbQuickLeadDraftForAccount ? window.dbQuickLeadDraftForAccount() : (window._dbQuickLeadDraft || {});
+  return '<section class="db-section" id="dbQuickLead"><h3>Neue Anfrage an ChatGPT</h3><p class="mini">Kurz beschreiben, optional Projekt und Quelle wählen. Die Anfrage bleibt bis zur Serverbestätigung als offen sichtbar.</p><div class="db-capture-grid">'
     + '<label>Titel<input id="dbLeadTitle" value="' + esc(draft.title || '') + '" oninput="window.dbKeepLeadDraft()" placeholder="Was soll erledigt werden?" maxlength="180"></label>'
     + '<label>Projekt<select id="dbLeadProject" onchange="window.dbKeepLeadDraft()"><option value="">Noch nicht zugeordnet</option>' + (projects || []).map(p => '<option value="' + esc(p.id) + '"' + (draft.projectId === p.id ? ' selected' : '') + '>' + esc(p.title || 'Projekt') + '</option>').join('') + '</select></label>'
     + '<label class="db-wide">Auftrag / gewünschtes Ergebnis<textarea id="dbLeadText" rows="3" oninput="window.dbKeepLeadDraft()" placeholder="Text einfügen, eine Frage stellen oder das gewünschte Ergebnis beschreiben.">' + esc(draft.text || '') + '</textarea></label>'
     + '<label>Quellenlink (optional)<input id="dbLeadSource" value="' + esc(draft.source || '') + '" oninput="window.dbKeepLeadDraft()" type="url" placeholder="https://…"></label><label>Nächster Schritt (optional)<input id="dbLeadNext" value="' + esc(draft.next || '') + '" oninput="window.dbKeepLeadDraft()" placeholder="Was soll ChatGPT zuerst prüfen?"></label>'
-    + '</div><button class="btn primary" onclick="window.dbCreateQuickLead()">Lead erstellen</button><span class="mini" id="dbQuickLeadResult" role="status"></span></section>';
+    + '</div><button class="btn primary" id="dbQuickLeadSubmit" onclick="window.dbCreateQuickLead()">Anfrage übernehmen</button><span class="mini" id="dbQuickLeadResult" role="status"></span><div id="dbQuickCaptureQueue"></div></section>';
 }
 function renderBriefingWeekReview(date) {
   const { start, end } = dbWeekBounds(date);
@@ -24234,9 +24234,14 @@ window.dbShowDailyReview = function() {
   for (let parent = area.parentElement; parent; parent = parent.parentElement) if (parent.tagName === 'DETAILS') parent.open = true;
   area.scrollIntoView({ behavior: 'smooth', block: 'center' }); area.focus();
 };
+window.dbQuickLeadDraftForAccount = function() {
+  const accountKey = coreAuthCurrentUser()?.uid;
+  return accountKey && window._dbQuickLeadDraft?.accountKey === accountKey ? window._dbQuickLeadDraft : {};
+};
 window.dbKeepLeadDraft = function() {
   const value = id => String(document.getElementById(id)?.value || '');
-  window._dbQuickLeadDraft = { title: value('dbLeadTitle'), text: value('dbLeadText'), source: value('dbLeadSource'), projectId: value('dbLeadProject'), next: value('dbLeadNext') };
+  window._dbQuickLeadDraft = { ...window.dbQuickLeadDraftForAccount(), accountKey: coreAuthCurrentUser()?.uid,
+    title: value('dbLeadTitle'), text: value('dbLeadText'), source: value('dbLeadSource'), projectId: value('dbLeadProject'), next: value('dbLeadNext') };
 };
 window.dbKeepWeekDraft = function() {
   const { start } = dbWeekBounds(window._dbDate || todayYmd());
@@ -24263,24 +24268,92 @@ window.dbSaveWeekReview = function() {
   if (window._dbWeekReviewDrafts) delete window._dbWeekReviewDrafts[start];
   scheduleSave(); render(); toast('ok', 'Wochenbriefing gespeichert', 'Der Synchronisierungsstatus steht im Kontrollbereich.');
 };
-window.dbCreateQuickLead = function() {
-  const value = id => String(document.getElementById(id)?.value || '').trim();
-  const title = value('dbLeadTitle'), text = value('dbLeadText'), source = value('dbLeadSource'), projectId = value('dbLeadProject'), next = value('dbLeadNext');
-  if (!title && !text) { toast('warn', 'Auftrag fehlt', 'Bitte Titel oder Beschreibung eintragen.'); return; }
-  if (source && !dbSafeSourceUrl(source)) { toast('warn', 'Quellenlink prüfen', 'Bitte einen gültigen http(s)-Link verwenden.'); return; }
-  if (projectId && !APP.state.data.entities.projects?.[projectId]) { toast('warn', 'Projekt fehlt', 'Bitte erneut auswählen.'); return; }
-  const id = window.createChatgptLead(title, text);
-  const lead = APP.state.data.entities.chatgptLeads?.[id];
-  if (!lead) return;
-  lead.operationalState = 'doing'; lead.assignee = 'chatgpt';
-  if (projectId) lead.linkedProjects = [projectId];
-  if (source) lead.externalLinks = [{ label: 'Originalquelle', url: dbSafeSourceUrl(source) }];
-  if (next) lead.nextAction = next;
-  lead.updatedAt = nowIso();
-  window._dbQuickLeadDraft = {};
-  scheduleSave(); render();
-  const result = document.getElementById('dbQuickLeadResult');
-  if (result) result.innerHTML = ' Lead angelegt. <button class="btn sm" data-action="open-entity" data-kind="chatgptLead" data-id="' + esc(id) + '">Lead öffnen</button>';
+const _v4CaptureClients = new Map();
+async function dbQuickCaptureAccount() {
+  const gate = await coreAuthReady(), accountKey = gate?.user?.uid;
+  if (!accountKey) throw Object.assign(new Error('sign_in_required'), { code: 'sign_in_required' });
+  const mod = await import('/quantus-v4-quick-capture.mjs');
+  if (!_v4CaptureClients.has(accountKey)) {
+    const getAuth = async () => {
+      const user = coreAuthCurrentUser(); if (user?.uid !== accountKey) return null;
+      const idToken = await user.getIdToken();
+      return coreAuthCurrentUser()?.uid === accountKey ? { accountKey, idToken } : null;
+    };
+    const getRun = () => coreAuthCurrentUser()?.uid === accountKey
+      ? APP.state.data.dailyBriefing?.assistantRuns?.[todayYmd()] : null;
+    _v4CaptureClients.set(accountKey, mod.openQuickCapture({ accountKey, getAuth, getRun, origin: location.origin })
+      .catch(error => { _v4CaptureClients.delete(accountKey); throw error; }));
+  }
+  return { accountKey, mod, client: await _v4CaptureClients.get(accountKey) };
+}
+async function dbFlushQuickCaptures(client, accountKey) {
+  const before = new Set((await client.list()).filter(e => e.leadId).map(e => e.operationId));
+  await client.flush();
+  if (coreAuthCurrentUser()?.uid !== accountKey) return;
+  if ((await client.list()).some(e => e.leadId && !before.has(e.operationId))) await syncFreshness('v4-quick-capture-recovery');
+}
+window.dbLoadQuickCaptures = async function() {
+  const host = document.getElementById('dbQuickCaptureQueue'); if (!host) return;
+  const generation = {}; host._captureGeneration = generation; clearTimeout(host._captureTimer);
+  const current = uid => coreAuthCurrentUser()?.uid === uid && document.getElementById('dbQuickCaptureQueue') === host && host._captureGeneration === generation;
+  try {
+    const { accountKey, mod, client } = await dbQuickCaptureAccount();
+    const entries = await client.list(); if (!current(accountKey)) return;
+    host.innerHTML = entries.map(e => {
+      const p = e.legacyOperation.payload;
+      return '<article class="db-item" style="display:block"><strong>' + esc(p.title) + '</strong><p class="mini">' + esc(mod.captureStatusText(e.deliveryStatus)) + '</p>'
+        + '<details><summary>Gesicherte Eingabe ansehen</summary><p>' + esc(p.text || '') + '</p><p>Projekt: ' + esc(p.projectId || 'Nicht zugeordnet') + '</p><p>Quelle: ' + esc(p.sourceUrl || 'Keine') + '</p><p>Nächster Schritt: ' + esc(p.nextAction || 'Nicht festgelegt') + '</p></details>'
+        + (e.leadId ? '<button class="btn sm" data-action="open-entity" data-kind="chatgptLead" data-id="' + esc(e.leadId) + '">Lead öffnen</button>' : '') + '</article>';
+    }).join('') + (entries.length ? '<button class="btn sm" onclick="window.dbRetryQuickCaptures()">Übertragungen prüfen</button>' : '');
+    const pending = entries.filter(e => ['run_pending', 'pending', 'retry_wait', 'accept_pending'].includes(e.deliveryStatus));
+    if (pending.length) host._captureTimer = setTimeout(async () => {
+      if (!current(accountKey)) return;
+      try { await dbFlushQuickCaptures(client, accountKey); } catch (_) {}
+      if (current(accountKey)) await window.dbLoadQuickCaptures();
+    }, Math.min(600000, Math.max(1000, (client.nextCheckAt() || Date.now() + 30000) - Date.now())));
+  } catch (_) {
+    if (document.getElementById('dbQuickCaptureQueue') === host && host._captureGeneration === generation)
+      host.textContent = 'Gesicherte Anfragen konnten nicht geladen werden. Bitte Anmeldung und lokalen Speicher prüfen.';
+  }
+};
+window.dbRetryQuickCaptures = async function() {
+  try { const { client, accountKey } = await dbQuickCaptureAccount(); await dbFlushQuickCaptures(client, accountKey); }
+  catch (_) { toast('warn', 'Übertragung noch offen', 'Gesicherte Anfragen bleiben auf diesem Gerät erhalten.'); }
+  await window.dbLoadQuickCaptures();
+};
+let _v4CaptureBusy = false;
+window.dbCreateQuickLead = async function() {
+  if (_v4CaptureBusy) return;
+  _v4CaptureBusy = true;
+  const button = document.getElementById('dbQuickLeadSubmit'); if (button) button.disabled = true;
+  const value = id => String(document.getElementById(id)?.value || '');
+  const fields = { title: value('dbLeadTitle'), text: value('dbLeadText'), sourceUrl: value('dbLeadSource'), projectId: value('dbLeadProject'), nextAction: value('dbLeadNext') };
+  const signature = JSON.stringify(fields);
+  let saved = false;
+  try {
+    const { accountKey, mod, client } = await dbQuickCaptureAccount();
+    if (coreAuthCurrentUser()?.uid !== accountKey) throw Object.assign(new Error('sign_in_required'), { code: 'sign_in_required' });
+    const draft = window.dbQuickLeadDraftForAccount();
+    const captureId = draft.captureId || crypto.randomUUID();
+    window._dbQuickLeadDraft = { ...draft, accountKey, captureId };
+    const entry = await client.submit({ captureId, fields }); saved = true;
+    if (coreAuthCurrentUser()?.uid !== accountKey) return;
+    toast('ok', 'Anfrage auf diesem Gerät gesichert', 'Die Serverbestätigung steht noch aus.');
+    const currentFields = { title: value('dbLeadTitle'), text: value('dbLeadText'), sourceUrl: value('dbLeadSource'), projectId: value('dbLeadProject'), nextAction: value('dbLeadNext') };
+    if (JSON.stringify(currentFields) === signature) {
+      window._dbQuickLeadDraft = { accountKey };
+      for (const id of ['dbLeadTitle','dbLeadText','dbLeadSource','dbLeadProject','dbLeadNext']) { const field = document.getElementById(id); if (field) field.value = ''; }
+    } else { window.dbKeepLeadDraft(); delete window._dbQuickLeadDraft.captureId; }
+    await window.dbLoadQuickCaptures(); await client.flush();
+    if (coreAuthCurrentUser()?.uid !== accountKey) return;
+    const result = (await client.list()).find(e => e.operationId === entry.operationId);
+    toast(result?.leadId ? 'ok' : 'warn', result?.leadId ? 'Lead vom Server bestätigt' : 'Anfrage noch nicht vollständig bestätigt', mod.captureStatusText(result?.deliveryStatus));
+    if (result?.leadId) await syncFreshness('v4-quick-capture');
+    await window.dbLoadQuickCaptures();
+  } catch (error) {
+    toast('warn', saved ? 'Serverbestätigung noch offen' : 'Anfrage noch nicht gesichert',
+      saved ? 'Die vollständige Eingabe bleibt auf diesem Gerät erhalten.' : error?.code === 'sign_in_required' ? 'Bitte anmelden; die Eingabe wurde noch nicht übertragen.' : 'Eingabe und lokalen Speicher prüfen. Bereits gesicherte Aufträge werden nicht überschrieben.');
+  } finally { _v4CaptureBusy = false; if (button) button.disabled = false; }
 };
 
 function renderV3ChatgptCockpit(leads, { nowMs = Date.now() } = {}) {
@@ -24642,7 +24715,7 @@ window.dbSendLeadAnswer = async function(leadId, original, answer, button) {
 
 function viewDailyBriefing() {
   // Defer until the view is attached; loading this panel never writes core.
-  setTimeout(() => window.dbLoadServerQuestions(), 0);
+  setTimeout(() => { window.dbLoadServerQuestions(); window.dbLoadQuickCaptures(); }, 0);
   const db = APP.state.data.dailyBriefing || {};
   const mode = db.mode || "planning";
   const realToday = todayYmd();

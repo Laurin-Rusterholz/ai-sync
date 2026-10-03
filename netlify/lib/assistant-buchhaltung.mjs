@@ -23,6 +23,8 @@ import {
 import { klon, requireCore } from "./assistant-migration.mjs";
 import { classifyBlobKey } from "./blob-key-policy.mjs";
 import { verifyLegacyQuestionSource } from './assistant-legacy-questions.mjs';
+import { validateIntakeCapture } from './assistant-intake-capture.mjs';
+import { canonicalJson } from './assistant-schema.mjs';
 import {
   istLokalDatum, isoAus, msAus, slotBeginnMs, slotKey, slotDefinition, ZEIT,
 } from "./assistant-zeit.mjs";
@@ -716,14 +718,16 @@ export function transitionState(input, { sourceType, sourceId, state, expectedVe
 }
 
 /* ── Eingang ────────────────────────────────────────────────────────────── */
-export function registerIntake(input, { intakeId, text, channel, receivedAt, sourceType, sourceId }, ctx) {
+export function registerIntake(input, { intakeId, text, channel, receivedAt, sourceType, sourceId, capture }, ctx) {
   ctxPruefen(ctx);
   const data = klon(requireCore(input));
   pruefeId(intakeId, "intakeId");
   if (!String(text || "").trim()) return fehler("INTAKE_TEXT_MISSING");
+  const captureError = validateIntakeCapture(data, capture);
+  if (captureError) return fehler(captureError);
   const vorhanden = data.automation.intakeById[intakeId];
   if (vorhanden) {
-    if (vorhanden.text === String(text).trim()) return { ok: true, data, entry: vorhanden, created: false };
+    if (vorhanden.text === String(text).trim() && canonicalJson(vorhanden.capture ?? null) === canonicalJson(capture ?? null)) return { ok: true, data, entry: vorhanden, created: false };
     return fehler("INTAKE_IMMUTABLE", intakeId);
   }
   const eintrag = {
@@ -732,6 +736,7 @@ export function registerIntake(input, { intakeId, text, channel, receivedAt, sou
     registeredAt: isoAus(ctx.now), registeredBy: ctx.actor ? ctx.actor.id : null,
     status: "open", linkedTo: null, handledAt: null,
     origin: sourceType && sourceId ? { sourceType, sourceId } : null,
+    ...(capture === undefined ? {} : { capture: klon(capture) }),
   };
   data.automation.intakeById[intakeId] = eintrag;
   bump(data, ctx.now);
