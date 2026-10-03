@@ -261,15 +261,23 @@ export function createClosureEvidencePort(bauen) {
   };
 }
 
-export function createAlertPort({ delivered = true, throws = false } = {}) {
-  const sent = [];
+export function createAlertPort({ delivered = true, throws = false, now = () => 1 } = {}) {
+  const sent = [], records = new Map();
   return {
     sent,
     port: availablePort("alert", {
       async send(payload) {
-        sent.push(payload);
+        if (!records.has(payload.warningId)) {
+          sent.push(payload);
+          records.set(payload.warningId, { warningId: payload.warningId, receiptId: 'receipt-' + records.size,
+            channel: 'synthetic-watchdog', deliveredAtMs: now(), delivered });
+        }
         if (throws) throw new Error("alert_transport_failed");
-        return { delivered };
+        return { receiptId: records.get(payload.warningId).receiptId };
+      },
+      async readReceipt({ warningId, receiptId }) {
+        const value = records.get(warningId);
+        return value?.receiptId === receiptId ? structuredClone(value) : null;
       },
     }),
   };

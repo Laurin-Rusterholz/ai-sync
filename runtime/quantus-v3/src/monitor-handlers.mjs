@@ -18,6 +18,8 @@ import * as PLAN from "../../../netlify/lib/quantus-v3-runtime-plan.mjs";
 import { HttpError, conflict } from "./errors.mjs";
 import { requireSchema } from "./schema.mjs";
 import { continuationTaskId } from "./task-names.mjs";
+import { externalEffectsAllowed } from "./config.mjs";
+import { jsonHash } from "./domain-fingerprint.mjs";
 
 export const EMPTY_REQUEST = Object.freeze({ type: "object", required: [], properties: {} });
 
@@ -64,6 +66,8 @@ export const WATCHDOG_RESPONSE = Object.freeze({
     ageMs: { type: "integer", minimum: 0, maximum: 9007199254740991 },
     missedTicks: { type: "integer", minimum: 0, maximum: 1000000 },
     escalatedToWatchdogChannel: { type: "boolean" },
+    warningDeliveryPending: { type: "boolean" },
+    duplicate: { type: "boolean" },
   },
 });
 
@@ -211,36 +215,65 @@ export async function handleWatchdogCheck(ctx) {
   requireSchema(ctx.body ?? {}, EMPTY_REQUEST, "watchdog_check_invalid");
   const view = await readView(ctx);
   const heartbeat = PLAN.planHeartbeat({ now: ctx.now, lastHeartbeatAtMs: view.monitor.lastHeartbeatAtMs });
-  if (!heartbeat.stale) {
-    return { status: 200, body: { stale: false, alerted: false, mode: ctx.config.mode, ageMs: heartbeat.ageMs ?? 0, missedTicks: heartbeat.missedTicks ?? 0, escalatedToWatchdogChannel: false } };
+  const unresolved = view.monitor.warnFailures > view.monitor.acknowledgedWarnFailures;
+  const base = { stale: heartbeat.stale, mode: ctx.config.mode,
+    ageMs: heartbeat.ageMs ?? 0, missedTicks: heartbeat.missedTicks ?? 0 };
+  if ((!heartbeat.stale && !unresolved) || !externalEffectsAllowed(ctx.config)) {
+    return { status: 200, body: { ...base, alerted: false,
+      warningDeliveryPending: unresolved, escalatedToWatchdogChannel: false } };
   }
 
+  const kind = unresolved ? "warning_delivery_failed" : "monitor_heartbeat_stale";
+  const warningId = "warning-" + jsonHash([ctx.config.tenant, kind,
+    unresolved ? view.monitor.warnFailures : view.monitor.lastHeartbeatAtMs]);
+  const prior = view.monitor.warningDeliveriesById[warningId];
+  if (prior?.warningId === warningId) {
+    return { status: 200, body: { ...base, alerted: true, duplicate: true,
+      warningDeliveryPending: false, escalatedToWatchdogChannel: unresolved } };
+  }
   const alert = ctx.ports.require("alert");
-  let delivered = false;
-  let failure = null;
+  // Adapter contract: send is idempotent by warningId, including unknown outcomes.
+  // A provider acceptance alone is insufficient: the receipt must be read back.
+  if (typeof alert.send !== 'function' || typeof alert.readReceipt !== 'function')
+    throw new HttpError(503, "warning_receipt_port_unavailable");
+  const validId = v => typeof v === "string" && /^[A-Za-z0-9._:-]{1,120}$/.test(v);
+  let receipt = null, expectedReceiptId = null;
   try {
-    const out = await alert.send({
-      kind: "monitor_heartbeat_stale",
-      ageMs: heartbeat.ageMs, missedTicks: heartbeat.missedTicks,
-      tenant: ctx.config.tenant, atMs: ctx.now, mode: ctx.config.mode,
-    });
-    delivered = out && out.delivered === true;
-    if (!delivered) failure = "not_delivered";
-  } catch (err) {
-    failure = "send_failed";
+    const out = await alert.send({ warningId, kind, tenant: ctx.config.tenant,
+      lastHeartbeatAtMs: view.monitor.lastHeartbeatAtMs,
+      observedFailureCount: view.monitor.warnFailures });
+    if (validId(out?.receiptId)) {
+      expectedReceiptId = out.receiptId;
+      receipt = await alert.readReceipt({ warningId, receiptId: expectedReceiptId });
+    }
+  } catch { /* A timeout never establishes delivery. The same ID is retained. */ }
+  const confirmedAtMs = ctx.ports.require("clock").now();
+  if (receipt?.delivered === true && receipt.warningId === warningId
+    && receipt.receiptId === expectedReceiptId && validId(receipt.receiptId) && validId(receipt.channel)
+    && receipt.deliveredAtMs >= (unresolved ? view.monitor.lastWarnFailureAtMs : view.monitor.lastHeartbeatAtMs)
+    && Number.isSafeInteger(receipt.deliveredAtMs) && receipt.deliveredAtMs > 0 && Number.isSafeInteger(confirmedAtMs)
+    && confirmedAtMs >= ctx.now && receipt.deliveredAtMs <= confirmedAtMs) {
+    const core = ctx.ports.require("core");
+    const saved = await core.mutate({ commandKey: "warning-delivery:" + warningId,
+      requestId: ctx.requestId, now: confirmedAtMs, mutate: data => E1.recordWarningDelivery(data, {
+        ...receipt, now: confirmedAtMs, observedFailureCount: view.monitor.warnFailures,
+      }) });
+    const fresh = await readView(ctx);
+    if (!saved?.result?.receipt || jsonHash(fresh.monitor.warningDeliveriesById[warningId]) !== jsonHash(saved.result.receipt))
+      throw new HttpError(503, "warning_delivery_readback_failed");
+    return { status: 200, body: { ...base, alerted: true,
+      warningDeliveryPending: fresh.monitor.warnFailures > fresh.monitor.acknowledgedWarnFailures,
+      escalatedToWatchdogChannel: unresolved } };
   }
 
-  if (delivered) {
-    return { status: 200, body: { stale: true, alerted: true, mode: ctx.config.mode, ageMs: heartbeat.ageMs ?? 0, missedTicks: heartbeat.missedTicks ?? 0, escalatedToWatchdogChannel: false } };
+  // A failed escalation remains pending without creating an endless chain of
+  // failure-about-failure warnings. A new primary incident has its own stable ID.
+  if (!unresolved) {
+    const core = ctx.ports.require("core");
+    await core.mutate({ commandKey: "warn-failure:" + warningId, requestId: ctx.requestId, now: ctx.now,
+      mutate: data => E1.recordWarningFailure(data, { channel: "watchdog_primary", failureId: warningId, now: ctx.now }) });
+    if (!(await readView(ctx)).monitor.warnFailureIds.includes(warningId))
+      throw new HttpError(503, "warning_failure_readback_failed");
   }
-
-  // Die Warnung gilt NICHT als zugestellt. Sie wird verbucht und der
-  // Aufruf schlaegt fehl, damit der Zeitplan es erneut versucht.
-  const core = ctx.ports.require("core");
-  const failureId = `warn:${ctx.config.tenant}:${Math.floor(ctx.now / PLAN.MONITOR_INTERVAL_MS) * PLAN.MONITOR_INTERVAL_MS}`;
-  await core.mutate({
-    commandKey: `warn-failure:${failureId}`, requestId: ctx.requestId, now: ctx.now,
-    mutate: (data) => E1.recordWarningFailure(data, { channel: "watchdog_primary", failureId, now: ctx.now }),
-  });
-  throw new HttpError(503, "warning_delivery_failed", { reason: failure, recorded: true });
+  throw new HttpError(503, "warning_delivery_failed", { reason: "delivery_unconfirmed", recorded: true });
 }

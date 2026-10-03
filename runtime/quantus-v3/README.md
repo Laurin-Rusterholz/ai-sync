@@ -420,3 +420,17 @@ bereits gespeicherten Korrekturbelege. Historische Tage anderer Policy-Versionen
 werden bis zur verfügbaren historischen Policy ausdrücklich verweigert.
 Dry-run/shadow oder geschlossene Aktivierungstore ändern keine Abschlussdaten.
 Produktive Konfiguration, Laufzeiten und Archivierung der Belege bleiben offen.
+
+
+### Zustellnachweise des Watchdogs (v4)
+
+Der Watchdog prueft neben dem Monitor-Heartbeat auch nicht bestaetigte Warnfehler. Ein wieder frischer Heartbeat loescht sie nicht. Die Quittung bestaetigt nur den vor dem Versand beobachteten Fehlerzaehler; parallel entstandene Fehler bleiben offen. Historische Fehler werden nicht entfernt. `warningDeliveriesById` und `acknowledgedWarnFailures` sind systemeigene Belege im Laufzeitbereich, keine Modellkommandos. Inkonsistente Zaehler oder fehlende Belege werden abgewiesen. Eine weitere Bestaetigung desselben Belegs darf dessen Inhalt nicht veraendern.
+
+Ein produktiver `alert`-Adapter muss beide Methoden implementieren:
+
+- `send({ warningId, kind, tenant, lastHeartbeatAtMs, observedFailureCount })` gibt eine `receiptId` zurueck. `warningId` ist der dauerhafte Idempotenzschluessel. Bei wiederholtem Aufruf und nach unbekanntem Ergebnis muss der Adapter denselben Vorgang abgleichen; er darf keine neue Nachricht blind versenden.
+- `readReceipt({ warningId, receiptId })` liest den tatsaechlichen Zustellbeleg unabhaengig zurueck: `{ warningId, receiptId, channel, deliveredAtMs, delivered: true }`. Annahme/Warteschlange beim Provider ist noch kein Zustellnachweis. Kennungen sind hoechstens 120 Zeichen aus Buchstaben, Ziffern, Punkt, Unterstrich, Doppelpunkt und Bindestrich. Keine Adresse oder Nachrichtentexte in diesen Belegen.
+
+Erst ein passender, zeitlich plausibler Beleg und dessen unabhaengiger Kern-Readback erlauben `alerted: true`. Der aktuelle vertrauenswuerdige Zeitpunkt wird nach dem Kanalabruf erneut gelesen. `warningDeliveryPending` zeigt neuere, noch nicht bestaetigte Fehler an. Fuer `dry_run` und `shadow` erfolgen weder Versand noch Quittierungs-Schreibzugriffe. Der Adapter muss eigene Netzwerkfristen und dauerhafte Idempotenz besitzen.
+
+**Weiter offen:** Ein solcher produktiver Adapter ist noch nicht im Server angeschlossen. Die Kanalwahl wurde beim Nutzer angefragt; ein Versand wurde nicht ausgeloest. Die HTTP-Tests verwenden einen explizit idempotenten synthetischen Kanal mit separatem Belegabruf. Sie beweisen Erkennung, Authentifizierung, CAS, Quittierung und Fehlerverhalten, aber weder reale Zustellung noch einen unabhaengigen Warnweg bei Ausfall des Kernspeichers. Externe technische Protokolle, Archive und der produktive T39-Nachweis bleiben erforderlich.

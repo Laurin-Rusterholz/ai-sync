@@ -223,6 +223,24 @@ export function validateRuntimeArea(automation, runtime) {
     if (v !== null && !(Number.isSafeInteger(v) && v > 0)) fail("runtime_area_invalid", 503, { reason: "monitor_field", field });
   }
   requireCounter(monitor.warnFailures, "monitor_warn_failures");
+  requireCounter(monitor.acknowledgedWarnFailures ?? 0, "monitor_acknowledged_warn_failures");
+  if ((monitor.acknowledgedWarnFailures ?? 0) > monitor.warnFailures) fail("runtime_area_invalid", 503, { reason: "warning_ack_ahead" });
+  const deliveries = monitor.warningDeliveriesById ?? {};
+  if (!isRecord(deliveries)) fail("runtime_area_invalid", 503, { reason: "warning_receipts_invalid" });
+  let deliveredFailureCount = 0;
+  for (const [id, receipt] of Object.entries(deliveries)) {
+    if (!isRecord(receipt) || receipt.warningId !== id || !ID_RE.test(id)
+      || typeof receipt.channel !== "string" || !ID_RE.test(receipt.channel)
+      || typeof receipt.receiptId !== "string" || !ID_RE.test(receipt.receiptId)
+      || !Number.isSafeInteger(receipt.deliveredAtMs) || receipt.deliveredAtMs <= 0
+      || !Number.isSafeInteger(receipt.observedFailureCount) || receipt.observedFailureCount < 0
+      || receipt.observedFailureCount > monitor.warnFailures)
+      fail("runtime_area_invalid", 503, { reason: "warning_receipt_invalid" });
+    deliveredFailureCount = Math.max(deliveredFailureCount, receipt.observedFailureCount);
+  }
+  if (deliveredFailureCount !== (monitor.acknowledgedWarnFailures ?? 0))
+    fail("runtime_area_invalid", 503, { reason: "warning_ack_receipt_mismatch" });
+
   if (!Array.isArray(monitor.recentTickIds) || !isRecord(monitor.ticksById)) fail("runtime_area_invalid", 503, { reason: "monitor_history" });
   validateCostArea(runtime.cost);
   const observed = observedMaxFence(automation, runtime);
@@ -1858,6 +1876,10 @@ export function projectMonitorView(data) {
       lastTickAtMs: Number.isSafeInteger(monitor.lastTickAtMs) ? monitor.lastTickAtMs : null,
       lastHeartbeatAtMs: Number.isSafeInteger(monitor.lastHeartbeatAtMs) ? monitor.lastHeartbeatAtMs : null,
       warnFailures: monitor.warnFailures || 0,
+      acknowledgedWarnFailures: monitor.acknowledgedWarnFailures || 0,
+      warningDeliveriesById: structuredClone(monitor.warningDeliveriesById || {}),
+      warnFailureIds: [...(monitor.warnFailureIds || [])],
+      lastWarnFailureAtMs: monitor.lastWarnFailureAtMs ?? null,
     },
   };
 }
@@ -1954,6 +1976,33 @@ export function recordWarningFailure(data, input = {}) {
   monitor.lastWarnFailureAtMs = now;
   monitor.lastWarnFailureChannel = channel;
   return commit(next, { failureId, channel, warnFailures: monitor.warnFailures, assumeDelivered: false });
+}
+
+/** A delivery can acknowledge only the failure count observed BEFORE sending.
+ * A concurrent failure must remain visible. The trusted adapter has independently
+ * read the provider receipt; no user/model command can invoke this mutation. */
+export function recordWarningDelivery(data, input = {}) {
+  const now = requireMs(input.now, "now");
+  const warningId = requireId(input.warningId, "warningId");
+  const channel = requireId(input.channel, "channel");
+  const receiptId = requireId(input.receiptId, "receiptId");
+  const deliveredAtMs = requireMs(input.deliveredAtMs, "deliveredAtMs");
+  const observed = requireCounter(input.observedFailureCount, "observed_failure_count");
+  assertCore(data);
+  const before = readRuntime(data).monitor;
+  if (observed > before.warnFailures || deliveredAtMs > now)
+    fail("warning_delivery_invalid", 409);
+  const receipt = { warningId, channel, receiptId, deliveredAtMs, observedFailureCount: observed };
+  const previous = before.warningDeliveriesById?.[warningId];
+  if (previous) {
+    if (JSON.stringify(previous) !== JSON.stringify(receipt)) fail("warning_receipt_conflict", 409);
+    return noop(data, { duplicate: true, receipt });
+  }
+  const { next, runtime } = begin(data, now);
+  runtime.monitor.acknowledgedWarnFailures = Math.max(before.acknowledgedWarnFailures || 0, observed);
+  runtime.monitor.warningDeliveriesById ??= {};
+  runtime.monitor.warningDeliveriesById[warningId] = receipt;
+  return commit(next, { receipt });
 }
 
 export { slotRunKey };
