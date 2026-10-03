@@ -25,6 +25,6 @@ export function artifactFixture({ tenant = 'quantus', bucket = 'quantus-test-art
     }
     return json({ bucket, name, generation: found.generation, size: String(Buffer.byteLength(found.text)) });
   };
-  return { objects, calls, setPrivate: v => { privateBucket = v; },
+  return { objects, calls, fetchImpl, setPrivate: v => { privateBucket = v; },
     store: createWorkArtifactStore({ bucket, tenant, timeoutMs, maxPayloadBytes, getAccessToken: async () => 'test-token', fetchImpl }) };
 }

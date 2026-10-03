@@ -20,7 +20,11 @@ for (const version of [3, 4]) {
     assert.ok(bundle.instruction.length > 2000);
   }
 }
-const server = spawn(process.execPath, ['runtime/quantus-v3/src/server.mjs'], {
+for (const [entry, route, expected] of [
+  ['server.mjs','/v3/slot/start','runtime_not_configured'],
+  ['commissioning-server.mjs','/v4/commissioning/respond','commissioning_not_configured'],
+]) {
+const server = spawn(process.execPath, ['runtime/quantus-v3/src/' + entry], {
   env: { PATH: process.env.PATH, PORT: '8080', NODE_ENV: 'production', NODE_OPTIONS: '--disable-proto=throw' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -32,16 +36,18 @@ try {
   let response;
   for (let i = 0; i < 50; i++) {
     if (server.exitCode !== null) throw new Error('runtime exited before HTTP startup: ' + output);
-    try { response = await fetch('http://127.0.0.1:8080/v3/slot/start', { method: 'POST', signal: AbortSignal.timeout(500) }); break; }
+    try { response = await fetch('http://127.0.0.1:8080' + route, { method: 'POST', signal: AbortSignal.timeout(500) }); break; }
     catch { await delay(100); }
   }
   assert.ok(response, 'runtime failed to listen: ' + output);
   assert.equal(response.status, 503);
   const body = await response.json();
-  assert.equal(body.error, 'runtime_not_configured');
-  assert.ok(Array.isArray(body.missing) && body.missing.length > 0);
-  console.log('Image imports, both reviewed prompt versions and fail-closed HTTP startup verified.');
+  assert.equal(body.error, expected);
+  if (entry === 'server.mjs') assert.ok(Array.isArray(body.missing) && body.missing.length > 0);
+  else assert.deepEqual(body, {error:expected});
+  console.log(entry + ': image imports, reviewed prompts and fail-closed HTTP startup verified.');
 } finally {
   server.kill('SIGTERM');
   await exited;
+}
 }

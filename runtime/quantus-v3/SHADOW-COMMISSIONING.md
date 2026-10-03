@@ -219,3 +219,44 @@ client still need implementation/commissioning. No general effects, source
 synchronization, Tasks scheduling or real trial evidence follows from this
 module. Current tests use actual admission/CAS/artifact/cost machinery with
 synthetic Google signatures, provider responses and explicit fixture policies.
+
+## Dedicated source process
+
+The same image now contains a separate command:
+
+```
+node runtime/quantus-v3/src/commissioning-server.mjs
+```
+
+It is not selected by the ordinary image CMD. The source service must use this
+explicit command and source-project credentials. `createCommissioningService`
+connects the real integration CAS port, source binding, Google OIDC keys,
+fresh environment cost policy, private Cloud Storage, reviewed OpenAI transport,
+broker and authenticated ingress. Startup creates no allocation and performs no
+provider or storage operation. Invalid configuration serves only a generic 503;
+raw configuration or credential errors are never logged.
+
+Required reviewed configuration, in addition to the explicit Firebase service
+account/project/database values, is:
+
+- `QUANTUS_V4_COMMISSIONING_AUTHORITY_JSON`: the exact existing ingress authority.
+- `QUANTUS_V4_COMMISSIONING_PROFILE_SLOTS_JSON`: a JSON object mapping every
+  authority profile/section ID to a reviewed slot (`briefing04`, `process09`,
+  `continue14`, `close23`). Its keys must equal the authority profile keys.
+- `QUANTUS_V4_PROMPT_VERSION`, `QUANTUS_V4_OPENAI_API_KEY`,
+  `QUANTUS_V4_OPENAI_MODEL`, both `QUANTUS_V4_OPENAI_*_MICROS_PER_MTOK` rates,
+  `QUANTUS_V4_ARTIFACT_BUCKET`, and the fresh `QUANTUS_V3_COST_POLICY_JSON`.
+- Optional `QUANTUS_V4_OPENAI_COMPACT_THRESHOLD`, with the transport's existing
+  bounds. It must agree with the isolated caller's approved contract.
+
+Profile hashes are calculated from the shared `loadV4LeadershipInstructions`
+output and `leadershipToolDefinitions`, not operator-provided free-form prompt
+text. The ordinary loop uses the same instructions helper. Ingress validates
+exact profile hashes; execution additionally checks the run slot against its
+configured section profile before source lease/cost mutation. No fixture-policy
+permission is exposed by this composition.
+
+Deployment must still establish the reviewed source Cloud Run service, invoker
+IAM, isolated worker client, actual held allocation and source access. This
+source entrypoint does not activate shadow scheduling, Gmail, tools or the
+14-day trial. Request recovery remains through the existing source broker.
