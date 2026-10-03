@@ -52008,7 +52008,8 @@ function chatgptLeadCloseHistory(l) {
   const canonical = Array.isArray(l && l.operationalStateHistory) ? l.operationalStateHistory : [];
   return legacy.concat(canonical.filter(h => h && typeof h === "object").map(h => ({
     closedAt: h.source?.changedAt || h.source?.mappedAt || null,
-    closedBy: h.source?.closure?.actorId || null,
+    closedBy: ['cancel','user'].includes(h.source?.closure?.kind) ? 'user' : 'assistant',
+    closedByLabel: ['cancel','user'].includes(h.source?.closure?.kind) ? 'durch Benutzer' : 'durch Assistenz',
     obsoleteReason: h.source?.closure?.reason || null,
     reopenedAt: h.reopenedAt, reopenedTo:'in_arbeit', reason:h.reason,
   })));
@@ -52058,7 +52059,7 @@ function chatgptLeadCloseHistoryHtml(l) {
       <div class="sep"></div>
       ${hist.map(h => `
         <div class="mini" style="padding:6px 0;border-bottom:1px solid var(--border)">
-          Abgeschlossen ${fmtDateTime(h.closedAt)}${h.closedBy === "laurin" ? " (hinfällig, durch Laurin)" : (h.closedBy ? " (Assistent)" : "")}${h.obsoleteReason ? ` · hinfällig, weil: ${esc(h.obsoleteReason)}` : ""}<br />
+          Abgeschlossen ${fmtDateTime(h.closedAt)}${h.closedByLabel ? " (" + esc(h.closedByLabel) + ")" : h.closedBy === "laurin" ? " (hinfällig, durch Laurin)" : (h.closedBy ? " (Assistent)" : "")}${h.obsoleteReason ? ` · hinfällig, weil: ${esc(h.obsoleteReason)}` : ""}<br />
           Wieder geöffnet ${fmtDateTime(h.reopenedAt)} → ${esc((CGL_STATUS_META[h.reopenedTo] || {}).label || h.reopenedTo || "")}${h.reason ? ` · weil: ${esc(h.reason)}` : ""}
         </div>`).join("")}
     </div>`;
