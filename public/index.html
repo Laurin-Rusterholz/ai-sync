@@ -24468,11 +24468,30 @@ window.dbCreateQuickLead = async function() {
   } finally { _v4CaptureBusy = false; if (button) button.disabled = false; }
 };
 
+// Question visibility is independent of a migrated operational-state conflict.
+// This projection never repairs canonical state or claims an answer was given.
+function dbLeadQuestionClosed(l) {
+  return l && Object.prototype.hasOwnProperty.call(l, 'operationalStateSource')
+    ? chatgptLeadIsClosed(l) : ['done','cancelled'].includes(v3LeadOperationalState(l));
+}
+function dbLeadOpenQuestionKind(l) {
+  if (!l || dbLeadQuestionClosed(l) || l.pendingQuestion?.answeredAt) return null;
+  const state = v3LeadOperationalState(l);
+  const hasText = typeof l.pendingQuestion?.text === 'string' && !!l.pendingQuestion.text.trim();
+  if (!hasText && !['decision_required','information_required'].includes(state)) return null;
+  const hint = l.operationalStateSource?.legacyDesktopState;
+  return state === 'decision_required' || hint === 'decision_required' || l.pendingQuestion?.kind === 'decision'
+    ? 'decision' : 'information';
+}
+function dbLeadStateUnresolved(l) {
+  return !!l && Object.prototype.hasOwnProperty.call(l, 'operationalStateSource')
+    && (l.operationalStateUnmapped || typeof l.operationalState !== 'string');
+}
+
 function renderV3ChatgptCockpit(leads, { nowMs = Date.now() } = {}) {
-  const aktiv = (leads || []).filter((l) => l && typeof l === "object" && !["done", "cancelled"].includes(v3LeadOperationalState(l)));
-  const faellig = (l) => !l.pendingQuestion?.answeredAt; // v4: unbeantwortete Fragen sofort sichtbar
-  const entscheidungen = aktiv.filter((l) => v3LeadOperationalState(l) === "decision_required" && faellig(l));
-  const fragen = aktiv.filter((l) => v3LeadOperationalState(l) === "information_required" && faellig(l));
+  const aktiv = (leads || []).filter((l) => l && typeof l === "object" && !dbLeadQuestionClosed(l));
+  const entscheidungen = aktiv.filter((l) => dbLeadOpenQuestionKind(l) === "decision");
+  const fragen = aktiv.filter((l) => dbLeadOpenQuestionKind(l) === "information");
   const cowork = aktiv.filter((l) => ["delegated_cowork", "review"].includes(v3LeadOperationalState(l)));
 
   const frageBlock = (l) => {
@@ -24482,6 +24501,7 @@ function renderV3ChatgptCockpit(leads, { nowMs = Date.now() } = {}) {
     return '<div class="db-item" data-legacy-question-lead="' + esc(l.id) + '" data-legacy-question-original="' + esc(JSON.stringify(pq)) + '" style="flex-direction:column;align-items:stretch;gap:6px">'
       + '<span class="title" data-action="open-entity" data-kind="chatgptLead" data-id="' + l.id + '" style="cursor:pointer">' + esc(l.title || "(ohne Titel)") + '</span>'
       + '<div class="mini">' + esc(pq.text || "") + '</div>' + optionenHtml + empfehlungHtml
+      + (dbLeadStateUnresolved(l) ? '<div class="mini">Arbeitsstatus nach Migration ungeklärt; diese Frage ist weiterhin unbeantwortet.</div>' : '')
       + '<div style="display:flex;gap:6px;flex-wrap:wrap">'
       + '<input type="text" id="cglAnswerText_' + l.id + '" placeholder="Option wählen oder eigene Antwort schreiben" style="flex:1;min-width:120px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--panel2);color:var(--text);font-size:12px" />'
       + '<button class="btn sm primary" data-action="cgl-answer-question" data-id="' + l.id + '">Antwort speichern</button>'
@@ -24494,10 +24514,10 @@ function renderV3ChatgptCockpit(leads, { nowMs = Date.now() } = {}) {
     return '<div class="db-item" style="flex-direction:column;align-items:stretch;gap:4px">'
       + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center">'
       + '<span class="title" data-action="open-entity" data-kind="chatgptLead" data-id="' + l.id + '" style="cursor:pointer">' + esc(l.title || "(ohne Titel)") + '</span>'
-      + '<span class="db-tag">' + v3LeadStatusText(l, { nowMs }) + '</span></div>'
+      + '<span class="db-tag">' + (dbLeadOpenQuestionKind(l) ? '🟡 Antwort ausstehend' : dbLeadStateUnresolved(l) ? '⚪ Arbeitsstatus ungeklärt' : v3LeadStatusText(l, { nowMs })) + '</span></div>'
       + '<dl class="db-facts"><dt>Einordnung</dt><dd>' + esc(l.interpretation || 'Noch keine Zusammenfassung hinterlegt.') + '</dd><dt>Letzte Aktion</dt><dd>' + esc(l.lastAction || 'Nicht dokumentiert') + '</dd><dt>Stand</dt><dd>' + esc(l.updatedAt ? fmtDateTime(l.updatedAt) : 'Unbekannt') + '</dd><dt>Blockiert durch</dt><dd>' + esc(l.blockedReason || l.waitingOn || 'Kein Blocker hinterlegt') + '</dd></dl>'
       + renderBriefingLinks(l)
-      + '<div class="mini">Nächster Schritt: ' + naechster + ' · Zug: ' + esc(v3LeadWhoseTurn(state)) + (l.followUpDeferrals ? ' · ' + l.followUpDeferrals + 'x verschoben' : '') + '</div>'
+      + '<div class="mini">Nächster Schritt: ' + naechster + ' · Zug: ' + esc(dbLeadOpenQuestionKind(l) ? 'Laurin – offene Frage' : dbLeadStateUnresolved(l) ? 'ungeklärt' : v3LeadWhoseTurn(state)) + (l.followUpDeferrals ? ' · ' + l.followUpDeferrals + 'x verschoben' : '') + '</div>'
       // Konzept v2 D: echter Upload/Verarbeitungsstatus DIREKT im Briefing —
       // dieselbe, bereits bestehende Anhangs-Pipeline wie im Lead-Detail
       // (renderFileAttachments), keine zweite Upload-Logik, kein erfundener

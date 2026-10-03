@@ -1044,3 +1044,9 @@ The source broker now acquires and independently verifies its own real source le
 A separate provider-only cost adapter factory requires opaque admission and branded source authority under the shared monthly cap. It does not manufacture live gates, alter ordinary runtime modes or grant Tasks/tool/mail rights. Commissioning CAS retries recheck current time and admission; the final dispatch check uses the committed claim timestamp. This prevents a delayed CAS retry from reserving or claiming after source lease expiry.
 
 The initial 122 targeted checks passed. Further focused checks cover fresh CAS timing, valid delayed claims, concurrent delivery, all four acknowledgement-loss points, storage preflight failure, late responses, source takeover and forged/misdirected admission. No production server route or Cloud Run/IAM configuration was activated. Source entrypoint/deployment, isolated client integration, full source/Tasks/monitor operation and the actual 14-day trial remain open.
+
+### Migrated unanswered questions remain visible (03 October 2026)
+
+Read-only RTDB comparison confirmed the Silvia, Budget and Armin questions remain stored and unanswered. Their migration preserved the former desktop question states as evidence but marked the canonical operational state ambiguous. The cockpit incorrectly fell back to ordinary assistant work and hid all three questions.
+
+The cockpit now derives question visibility from the retained unanswered question independently of canonical work-state resolution. Original options and answer-delivery identity remain intact. It explicitly labels unresolved migration state and distinguishes the pending personal answer from a resolved work assignment. No source questions, answers, roles or state are rewritten. Closed and answered questions remain excluded. Focused regression covers these cases, including stale legacy closure and retained canonical conflict.
