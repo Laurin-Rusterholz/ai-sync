@@ -66,7 +66,14 @@ export function createCommissioningBroker({ports,transport,artifacts,artifactBuc
           }});
           if(!out?.result?.ok)fail('commissioning_unknown_unrecorded',502);
         }
-        return {callId:operation.callId,outcome:response.outcome,response,replayed,dispatchAllowed:false};
+        const confirmed=await data();assertLeadership(confirmed,verifiedScope,clock.now());
+        const receipt=readRuntime(confirmed).cost.callsById[operation.callId];
+        return {schemaVersion:1,callId:operation.callId,requestHash:operation.prepared.contentHash,
+          runKey:operation.runKey,sectionId:operation.sectionId,stepIndex:operation.stepIndex,
+          provider:operation.provider,model:operation.model,commissioning:operation.commissioning,
+          contract:{inputTokens:operation.prepared.inputTokens,outputTokens:operation.prepared.outputTokens},
+          settledMicros:receipt.settledMicros??null,overrunMicros:receipt.overrunMicros??0,
+          outcome:response.outcome,response,replayed,dispatchAllowed:false};
       }
       const retained=await recover(true);if(retained)return retained;
       const adapter=createCommissioningCostAdapter({ports,config,now:clock.now(),requestId:holder,verifiedScope},

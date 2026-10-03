@@ -103,18 +103,19 @@ function modelResult(body, tools, compactionEnabled) {
   return { usable: true, toolCalls: calls, text: texts.join('\n'), output: body.output };
 }
 
-export function createOpenAITransport({ apiKey, model, modelPricing, fetchImpl = fetch, maxOutputTokens = 4096, timeoutMs = 45000,
-  compactionThreshold = null } = {}) {
-  if (typeof apiKey !== 'string' || !apiKey.trim() || typeof model !== 'string' || !model.trim()) throw new TypeError('openai_configuration_missing');
-  integer(maxOutputTokens, 1, 100000, 'max_output_tokens_invalid');
-  integer(timeoutMs, 1, 85000, 'timeout_invalid');
-  if (compactionThreshold !== null) integer(compactionThreshold, 1000, 100000, 'compaction_threshold_invalid');
-  const inputRate = integer(modelPricing?.inputMicrosPerMillionTokens, 0, Number.MAX_SAFE_INTEGER, 'input_price_invalid');
-  const outputRate = integer(modelPricing?.outputMicrosPerMillionTokens, 0, Number.MAX_SAFE_INTEGER, 'output_price_invalid');
-  const preparedRequests = new WeakMap();
-  return Object.freeze({
-    provider: 'openai', model, maxOutputTokens, compactionThreshold,
-    modelPricing: Object.freeze({ inputMicrosPerMillionTokens: inputRate, outputMicrosPerMillionTokens: outputRate }),
+const requestContracts = new WeakMap();
+export const isOpenAIRequestContract = value => requestContracts.has(value);
+/** Exact immutable request preparation without any provider credential or
+ * dispatch capability. The paid transport uses this same implementation. */
+export function createOpenAIRequestContract({model,modelPricing,maxOutputTokens=4096,compactionThreshold=null}={}) {
+  if(typeof model!=='string'||!model.trim())throw new TypeError('openai_configuration_missing');
+  integer(maxOutputTokens,1,100000,'max_output_tokens_invalid');
+  if(compactionThreshold!==null)integer(compactionThreshold,1000,100000,'compaction_threshold_invalid');
+  const inputRate=integer(modelPricing?.inputMicrosPerMillionTokens,0,Number.MAX_SAFE_INTEGER,'input_price_invalid');
+  const outputRate=integer(modelPricing?.outputMicrosPerMillionTokens,0,Number.MAX_SAFE_INTEGER,'output_price_invalid');
+  const preparedRequests=new WeakMap();
+  const contract=Object.freeze({provider:'openai',model,maxOutputTokens,compactionThreshold,
+    modelPricing:Object.freeze({inputMicrosPerMillionTokens:inputRate,outputMicrosPerMillionTokens:outputRate}),
     prepare({ instructions, input, tools }) {
       if (typeof instructions !== 'string' || !instructions.trim() || !Array.isArray(input) || !input.length
         || !Array.isArray(tools) || !tools.length || tools.length > 4) throw new TypeError('request_invalid');
@@ -140,6 +141,19 @@ export function createOpenAITransport({ apiKey, model, modelPricing, fetchImpl =
       preparedRequests.set(prepared, { body, definitions });
       return prepared;
     },
+  });
+  requestContracts.set(contract,preparedRequests);
+  return contract;
+}
+
+export function createOpenAITransport({ apiKey, model, modelPricing, fetchImpl = fetch, maxOutputTokens = 4096, timeoutMs = 45000,
+  compactionThreshold = null } = {}) {
+  if(typeof apiKey!=='string'||!apiKey.trim())throw new TypeError('openai_configuration_missing');
+  integer(timeoutMs,1,85000,'timeout_invalid');
+  const contract=createOpenAIRequestContract({model,modelPricing,maxOutputTokens,compactionThreshold});
+  const preparedRequests=requestContracts.get(contract);
+  const {inputMicrosPerMillionTokens:inputRate,outputMicrosPerMillionTokens:outputRate}=contract.modelPricing;
+  return Object.freeze({...contract,
     async dispatch({ prepared, requestId, signal } = {}) {
       const request = preparedRequests.get(prepared);
       if (!request || !SAFE_ID.test(requestId ?? '')) throw new TypeError('prepared_request_required');
