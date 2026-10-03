@@ -27,6 +27,7 @@ import { COMMAND_SCHEMAS, validateCommandShape, validateActor, validatePolicy } 
 import { requireCore } from "./assistant-migration.mjs";
 import * as B from "./assistant-buchhaltung.mjs";
 import { migrateLegacyQuestions } from './assistant-legacy-questions.mjs';
+import { acceptIntake } from './assistant-intake-accept.mjs';
 import { closeRun, closeRunAfterCoreRead, invalidateClosure } from "./assistant-abschluss.mjs";
 
 export * from "./assistant-zeit.mjs";
@@ -48,6 +49,7 @@ const HANDLER = Object.freeze({
   setWaiting: B.setWaiting,
   transitionState: B.transitionState,
   registerIntake: B.registerIntake,
+  acceptIntake,
   askQuestion: B.askQuestion,
   migrateLegacyQuestions,
   recordAnswer: B.recordAnswer,
@@ -111,7 +113,7 @@ const KONFLIKT_CODES = new Set([
   "RUN_EXCEPTION_OPEN", "RUN_NOT_FINAL", "NOTE_ID_TAKEN", "QUESTION_IMMUTABLE", "ANSWER_IMMUTABLE",
   "QUESTION_NOT_OPEN", "ANSWER_ALREADY_CONSUMED", "EVIDENCE_IMMUTABLE", "DOCUMENT_IMMUTABLE",
   "DOCUMENT_ALREADY_HANDLED", "JOB_IMMUTABLE", "JOB_ALREADY_FINISHED", "JOB_ALREADY_REVIEWED", "JOB_NOT_ACTIVE",
-  "JOB_EXPIRED", "INTAKE_IMMUTABLE", "NOT_A_CONTRADICTION", "CLOSURE_BLOCKED",
+  "JOB_EXPIRED", "INTAKE_IMMUTABLE", "INTAKE_ACCEPT_CONFLICT", "NOT_A_CONTRADICTION", "CLOSURE_BLOCKED",
   "TASK_ID_TAKEN", "COMMENT_IMMUTABLE", "RUN_EVENT_IMMUTABLE", "CHECKPOINT_IMMUTABLE",
 ]);
 function reducerFehler(code, status, detail) {
