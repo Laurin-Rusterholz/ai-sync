@@ -162,3 +162,32 @@ variable "deletion_protection" {
   type        = bool
   default     = true
 }
+
+# Storage isolation for commissioning; this does not open live/provider gates.
+variable "shadow_binding" {
+  description = "Explicit shadow storage binding. Distinct source project/tenant/origin; no credentials and no automatic initialization."
+  type = object({
+    schemaVersion   = number
+    sourceProjectId = string
+    sourceTenant    = string
+    sourceC2Origin  = string
+    projectId       = string
+    tenant          = string
+    c2Origin        = string
+    databaseUrl     = string
+    ref             = string
+  })
+  default = null
+  validation {
+    condition = var.shadow_binding == null ? true : (
+      var.runtime_mode == "shadow" && var.shadow_binding.schemaVersion == 1 &&
+      var.shadow_binding.projectId == var.project_id && var.shadow_binding.sourceProjectId != var.project_id &&
+      var.shadow_binding.tenant == var.tenant && var.shadow_binding.sourceTenant != var.tenant &&
+      var.shadow_binding.c2Origin == var.runtime_settings["QUANTUS_V3_C2_BASE_URL"] &&
+      var.shadow_binding.sourceC2Origin != var.shadow_binding.c2Origin &&
+      var.shadow_binding.databaseUrl == var.runtime_settings["FIREBASE_DATABASE_URL"] &&
+      length(trimspace(var.shadow_binding.ref)) >= 4
+    )
+    error_message = "shadow_binding must identify this isolated shadow deployment and a distinct production project, tenant and C2 origin."
+  }
+}

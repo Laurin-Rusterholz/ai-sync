@@ -162,3 +162,44 @@ run "shared_secret_is_rejected" {
   variables { tool_credential_secret_id = "quantus-test-openai-api-key" }
   expect_failures = [var.runtime_secret_ids]
 }
+
+run "shadow_binding_reaches_each_runtime_without_opening_live_gates" {
+  command = plan
+  variables {
+    runtime_mode = "shadow"
+    shadow_binding = {
+      schemaVersion   = 1
+      sourceProjectId = "quantus-production-test"
+      sourceTenant    = "production"
+      sourceC2Origin  = "https://production.invalid"
+      projectId       = "quantus-test-project"
+      tenant          = "quantus"
+      c2Origin        = "https://quantus.test.invalid"
+      databaseUrl     = "https://quantus-test-project.firebaseio.com"
+      ref             = "synthetic-test-only-isolation"
+    }
+  }
+  assert {
+    condition     = alltrue([for service in [google_cloud_run_v2_service.worker, google_cloud_run_v2_service.monitor, google_cloud_run_v2_service.watchdog] : length([for env in service.template[0].containers[0].env : env if env.name == "QUANTUS_V4_SHADOW_BINDING"]) == 1]) && var.activation_gates.trial14Days.passed == false && var.allow_external_effects == false
+    error_message = "Every shadow role needs the same isolation binding without a fabricated live/trial approval."
+  }
+}
+
+run "shadow_cannot_reuse_the_production_project" {
+  command = plan
+  variables {
+    runtime_mode = "shadow"
+    shadow_binding = {
+      schemaVersion   = 1
+      sourceProjectId = "quantus-test-project"
+      sourceTenant    = "production"
+      sourceC2Origin  = "https://production.invalid"
+      projectId       = "quantus-test-project"
+      tenant          = "quantus"
+      c2Origin        = "https://quantus.test.invalid"
+      databaseUrl     = "https://quantus-test-project.firebaseio.com"
+      ref             = "synthetic-test-only-isolation"
+    }
+  }
+  expect_failures = [var.shadow_binding]
+}

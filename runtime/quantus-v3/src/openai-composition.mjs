@@ -2,7 +2,7 @@
  * different provider. External effects still require the existing live gates,
  * fresh cost policy, atomic monthly cap and current section/lease authority.
  */
-import { unavailablePort } from './ports.mjs';
+import { availablePort, unavailablePort } from './ports.mjs';
 import { HttpError } from './errors.mjs';
 import { createEnvCostPolicyPort } from './cost-policy-port.mjs';
 import { createCostAdapter } from './cost-adapter.mjs';
@@ -30,6 +30,7 @@ import { createAnswerPreparation } from './answer-preparation.mjs';
 import { createLegacyQuestionPreparation } from './legacy-question-preparation.mjs';
 import { createDailyFinalization } from './daily-finalization.mjs';
 import { domainFingerprint } from './domain-fingerprint.mjs';
+import { isIsolatedShadowCore } from './shadow-isolation.mjs';
 
 export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
   envRead = name => process.env[name], artifactStore, jobTokenIssuer,
@@ -38,6 +39,10 @@ export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
   const unavailable = reason => ({ sectionWork: unavailablePort('sectionWork', reason), costPolicy });
   if (corePort && Object.hasOwn(corePort, 'available')) corePort = corePort.available ? corePort.impl : null;
   if (!corePort?.read || !corePort?.mutate || !clockPort?.now) return unavailable('leadership_core_or_clock_missing');
+  if (config?.mode === 'shadow' && !isIsolatedShadowCore(corePort)) return unavailable('shadow_isolation_not_configured');
+  if (config?.mode === 'dry_run') return {costPolicy,sectionWork:availablePort('sectionWork',{
+    async next(){return {done:false,blocked:true,reason:'external_effects_not_allowed'};}
+  })};
   const apiKey = envRead('QUANTUS_V4_OPENAI_API_KEY');
   const model = envRead('QUANTUS_V4_OPENAI_MODEL');
   const promptVersion = envRead('QUANTUS_V4_PROMPT_VERSION');
