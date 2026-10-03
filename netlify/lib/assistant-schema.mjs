@@ -327,7 +327,7 @@ export const COMMAND_SCHEMAS = Object.freeze({
   syncRunInventory:     Object.freeze({ required: ["date"], optional: [], actors: ["system"] }),
   carryOverRefs:        Object.freeze({ required: ["fromDate", "toDate"], optional: [], actors: ["agent", "system"] }),
   observeSource:        Object.freeze({ required: ["sourceType", "sourceId"], optional: [], actors: ["agent", "system"] }),
-  setWaiting:           Object.freeze({ required: ["sourceType", "sourceId", "expectedVersion", "state", "counterparty", "nextAction", "followUpAt", "evidence"], optional: [], actors: ["agent"] }),
+  setWaiting:           Object.freeze({ required: ["sourceType", "sourceId", "expectedVersion", "state", "counterparty", "nextAction", "followUpAt", "evidence"], optional: [], actors: ["agent", "user"] }),
   transitionState:      Object.freeze({ required: ["sourceType", "sourceId", "state"], optional: ["expectedVersion", "reason", "evidence", "linkTo", "results"], actors: ["agent", "user"] }),
   registerIntake:       Object.freeze({ required: ["intakeId", "text", "channel"], optional: ["receivedAt", "sourceType", "sourceId", "capture"], actors: ["user", "adapter", "system"] }),
   acceptIntake:         Object.freeze({ required: ["intakeId", "date"], optional: ["leadId"], actors: ["user"] }),
