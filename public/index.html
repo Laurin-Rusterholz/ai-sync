@@ -14089,12 +14089,47 @@ function mergeData(local, remote) {
       else winner = localItem || remoteItem;
       if (!winner) { delete merged.entities[key][id]; continue; }
 
+      // Canonical state is a server-owned tuple, independent of the edit time
+      // of a title/comment. A legacy desktop state alone is not a migration.
+      const stateFields = ['operationalState', 'operationalStateSource', 'operationalStateVersion', 'operationalStateUnmapped', 'operationalRoles'];
+      const hasCanonicalState = (item) => item && stateFields.slice(1).some((field) => Object.prototype.hasOwnProperty.call(item, field));
+      const localCanonical = hasCanonicalState(localItem);
+      const remoteCanonical = hasCanonicalState(remoteItem);
+      const stateCollection = ['chatgptLeads', 'chatgptTasks', 'tasks'].includes(key);
+      if (stateCollection && (localCanonical || remoteCanonical)) {
+        const source = remoteItem && remoteItem.operationalStateSource;
+        const state = remoteItem && remoteItem.operationalState;
+        const validRemote = remoteCanonical && source && typeof source === 'object' && !Array.isArray(source)
+          && Number.isInteger(remoteItem.operationalStateVersion) && remoteItem.operationalStateVersion > 0
+          && (['doing', 'waiting_external', 'waiting_user', 'delegated', 'review', 'done', 'cancelled'].includes(state)
+            || (state === null && ['ambiguous', 'unknown'].includes(remoteItem.operationalStateUnmapped)));
+        if (!validRemote) {
+          // Missing/damaged server state is never repaired from a local claim.
+          // Existing write guards retain the entities snapshot and stop the write.
+          markV3ProtectedGap(merged, 'entities');
+        } else {
+          const tuple = (item) => Object.fromEntries(stateFields.filter((field) => item && Object.prototype.hasOwnProperty.call(item, field)).map((field) => [field, item[field]]));
+          const localTuple = tuple(localItem);
+          const remoteTuple = tuple(remoteItem);
+          if (localItem && Object.keys(localTuple).length && JSON.stringify(localTuple) !== JSON.stringify(remoteTuple)) {
+            markV3LocalDivergence(merged, 'entities.' + key + '.' + id, localItem);
+          }
+          winner = JSON.parse(JSON.stringify(winner));
+          for (const field of stateFields) delete winner[field];
+          Object.assign(winner, JSON.parse(JSON.stringify(remoteTuple)));
+        }
+      }
+
       // 2) Tombstone wirkt NUR, wenn ein gültiger Lösch-Zeitstempel ECHT NEUER
       //    ist als der (neueste) Item-Zeitstempel. Beides muss > 0 sein; fehlt
       //    der Item-Zeitstempel, wird im Zweifel BEHALTEN (kein Datenverlust).
       const tombTs = tombstones[id] || 0;
       const itemTs = entityTimestamp(winner);
-      if (tombTs > 0 && itemTs > 0 && tombTs > itemTs) {
+      if (stateCollection && (localCanonical || remoteCanonical) && tombTs > 0 && itemTs > 0 && tombTs > itemTs) {
+        // A stale whole-document client cannot delete a canonical entity.
+        markV3ProtectedGap(merged, 'entities');
+        merged.entities[key][id] = winner;
+      } else if (tombTs > 0 && itemTs > 0 && tombTs > itemTs) {
         delete merged.entities[key][id];   // echte, neuere Löschung gewinnt
       } else {
         merged.entities[key][id] = winner; // behalten (Union, neuere Version)
