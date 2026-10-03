@@ -490,6 +490,27 @@ test("Befund (25.09.2026): ein NIE migrierter Bestand (kein automation-Feld) wir
   }
 });
 
+test("legacy desktop UI states pass real CAS migration while unresolved questions remain explicit conflicts", async () => {
+  const gmail = await gmailServer({ ids: [] });
+  try {
+    const originalQuestion = { kind: 'decision', text: 'Original personal decision', options: ['Yes', 'No'] };
+    const raw = { entities: { chatgptLeads: {
+      question: { id: 'question', title: 'Decision', status: 'verstanden', operationalState: 'decision_required', pendingQuestion: originalQuestion },
+      work: { id: 'work', title: 'Work', status: 'in_arbeit', operationalState: 'doing' },
+    } }, _settings: { anthropicApiKey: '' } };
+    const store = createCasStore(raw), { mutateCore, readCore } = fakeCoreAccess(store);
+    const result = await runDailyBriefing({ now: T0, envRead: envReadFrom(baseEnv()), mutateCore, readCore,
+      gmailApiBase: gmail.base, getGmailToken: async () => ({ token: 'test-token' }), clock: () => T0 });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const persisted = store.snapshot();
+    assert.equal(persisted.entities.chatgptLeads.work.operationalState, 'doing');
+    assert.equal(persisted.entities.chatgptLeads.question.operationalState, null);
+    assert.deepEqual(persisted.entities.chatgptLeads.question.pendingQuestion, originalQuestion);
+    assert.ok(persisted.automation.migration.conflicts.some(c => c.sourceId === 'question' && c.kind === 'ambiguous'));
+    assert.ok(store.stats.puts > 0);
+  } finally { await gmail.close(); }
+});
+
 test("Befund (25.09.2026): auf einem bereits migrierten Bestand loest die Migrationspruefung KEINEN zusaetzlichen Schreibvorgang aus (taeglicher Regelfall)", async () => {
   const gmail = await gmailServer({ ids: [] });
   try {
