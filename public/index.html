@@ -24294,7 +24294,7 @@ function renderV3ChatgptCockpit(leads, { nowMs = Date.now() } = {}) {
     const pq = l.pendingQuestion || {};
     const optionenHtml = Array.isArray(pq.options) ? '<div class="db-link-row">' + pq.options.filter(o => typeof o === 'string' && o.trim()).map(o => '<button class="btn sm" data-action="cgl-select-answer" data-id="' + esc(l.id) + '" data-answer="' + esc(o) + '">' + esc(o) + '</button>').join('') + '</div>' : '';
     const empfehlungHtml = pq.recommendation ? '<div class="mini">Empfehlung: ' + esc(pq.recommendation) + '</div>' : "";
-    return '<div class="db-item" style="flex-direction:column;align-items:stretch;gap:6px">'
+    return '<div class="db-item" data-legacy-question-lead="' + esc(l.id) + '" data-legacy-question-original="' + esc(JSON.stringify(pq)) + '" style="flex-direction:column;align-items:stretch;gap:6px">'
       + '<span class="title" data-action="open-entity" data-kind="chatgptLead" data-id="' + l.id + '" style="cursor:pointer">' + esc(l.title || "(ohne Titel)") + '</span>'
       + '<div class="mini">' + esc(pq.text || "") + '</div>' + optionenHtml + empfehlungHtml
       + '<div style="display:flex;gap:6px;flex-wrap:wrap">'
@@ -24335,7 +24335,7 @@ function renderV3ChatgptCockpit(leads, { nowMs = Date.now() } = {}) {
       + '</div>';
   };
   const section = (icon, label, count, inner, emptyText) =>
-    '<div class="db-section"><h3>' + icon + ' ' + label + ' <span style="font-size:12px;color:var(--muted)">(' + count + ')</span></h3>'
+    '<div class="db-section" data-legacy-question-section><h3>' + icon + ' ' + label + ' <span data-legacy-question-count style="font-size:12px;color:var(--muted)">(' + count + ')</span></h3>'
     + (count ? inner : '<div class="mini" style="opacity:.5">' + emptyText + '</div>') + '</div>';
 
   return section("❓", "Entscheidungen gefragt", entscheidungen.length, entscheidungen.map(frageBlock).join(""), "Keine Entscheidungen offen.")
@@ -24601,7 +24601,7 @@ window.dbLoadServerQuestions = async function() {
       && host._answerLoadGeneration === generation;
     if (!isCurrent()) return;
     const questions = Object.values(APP.state.data.automation?.questionsById || {});
-    await mod.bindBriefingAnswers({ host, client, drafts, questions, isCurrent });
+    await mod.bindBriefingAnswers({ host, client, drafts, questions, isCurrent, legacyRoot: document });
   } catch (error) {
     if (document.getElementById('dbV3ServerQuestions') === host && host._answerLoadGeneration === generation)
       host.textContent = error?.code === 'sign_in_required' ? 'Bitte anmelden, um Fragen aus der automatischen Verarbeitung zu beantworten.'
@@ -51673,8 +51673,8 @@ function viewChatgptLeads() {
 // zwar in chatgptModuleHandleAction implementiert, aber ohne dieses Feld
 // nirgends im UI erreichbar (toter Code, per Computer-Use nicht bedienbar).
 function chatgptLeadOperationalBoxHtml(l) {
-  if (l.status === "abgeschlossen") return "";
   const state = v3LeadOperationalState(l);
+  if (["done", "cancelled"].includes(state)) return "";
   const pq = l.pendingQuestion;
   const offenePq = pq && !pq.answeredAt;
   return `
