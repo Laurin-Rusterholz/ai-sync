@@ -25,6 +25,7 @@ import { createJobTokenIssuer } from "./job-token-issuer.mjs";
 import { createClosureReviewPort } from './closure-review.mjs';
 import { externalEffectsAllowed } from "./config.mjs";
 import { createOpenAIWorkerPorts } from "./openai-composition.mjs";
+import { isolateShadowCorePort } from "./shadow-isolation.mjs";
 
 function structuredLog(entry) {
   process.stdout.write(`${JSON.stringify({ ...entry, service: "quantus-v3" })}\n`);
@@ -40,10 +41,13 @@ if (!resolved.ok) {
   // Der Kernport wird an den ECHTEN Umschlag verdrahtet. Liegt er nicht
   // vor, bleibt der Port leer und nennt den Grund — es wird nichts
   // nachgebaut und nichts vorgetaeuscht.
-  const corePort = await createIntegrationCorePort({
+  const integrationCore = await createIntegrationCorePort({
     tenantId: config.tenant,
     principalId: config.leaseHolder || `quantus-v3-${config.role}`,
   });
+  const corePort = config.mode === "shadow"
+    ? isolateShadowCorePort({corePort:integrationCore,config,envRead:name=>process.env[name]})
+    : integrationCore;
   /*
    * Cloud Tasks: Transport ueber die VORHANDENE Google-Identitaet
    * (`getIdentityAccessToken` aus firebase-admin, Scope cloud-platform).

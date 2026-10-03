@@ -47,13 +47,13 @@ locals {
     }
   })
 
-  common_env = [
+  common_env = concat([
     { name = "QUANTUS_V3_TENANT", value = var.tenant },
     { name = "QUANTUS_V3_POLICY_VERSION", value = var.policy_version },
     { name = "QUANTUS_V3_RUNTIME_MODE", value = var.runtime_mode },
     { name = "QUANTUS_V3_ALLOW_EXTERNAL_EFFECTS", value = tostring(var.allow_external_effects) },
     { name = "QUANTUS_V3_ACTIVATION_GATES", value = local.gates_json },
-  ]
+  ], var.shadow_binding == null ? [] : [{ name = "QUANTUS_V4_SHADOW_BINDING", value = jsonencode(var.shadow_binding) }])
 }
 
 resource "google_cloud_run_v2_service" "worker" {
