@@ -5,7 +5,7 @@
 import {createHash} from 'node:crypto';
 import {availablePort, unavailablePort} from './ports.mjs';
 import {HttpError} from './errors.mjs';
-const boundPorts = new WeakSet();
+const boundPorts = new WeakMap();
 const fields = ['schemaVersion','sourceProjectId','sourceTenant','sourceC2Origin','projectId','tenant','c2Origin','databaseUrl','ref'];
 const project = s => typeof s === 'string' && /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(s);
 const tenant = s => typeof s === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(s);
@@ -65,7 +65,11 @@ export function isolateShadowCorePort({corePort,config,envRead}) {
       }});
     },
   });
-  boundPorts.add(impl);
+  boundPorts.set(impl,{binding,role:config.role,c2BaseUrl:config.c2BaseUrl});
   return availablePort('core',impl);
 }
-export const isIsolatedShadowCore = impl => boundPorts.has(impl);
+export const isIsolatedShadowCore = (impl,config) => {
+  const bound=boundPorts.get(impl);
+  return !!bound && config?.mode==='shadow' && config.tenant===bound.binding.tenant
+    && config.role===bound.role && config.c2BaseUrl===bound.c2BaseUrl;
+};

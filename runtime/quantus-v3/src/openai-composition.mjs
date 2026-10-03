@@ -39,7 +39,7 @@ export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
   const unavailable = reason => ({ sectionWork: unavailablePort('sectionWork', reason), costPolicy });
   if (corePort && Object.hasOwn(corePort, 'available')) corePort = corePort.available ? corePort.impl : null;
   if (!corePort?.read || !corePort?.mutate || !clockPort?.now) return unavailable('leadership_core_or_clock_missing');
-  if (config?.mode === 'shadow' && !isIsolatedShadowCore(corePort)) return unavailable('shadow_isolation_not_configured');
+  if (config?.mode === 'shadow' && !isIsolatedShadowCore(corePort,config)) return unavailable('shadow_isolation_not_configured');
   if (config?.mode === 'dry_run') return {costPolicy,sectionWork:availablePort('sectionWork',{
     async next(){return {done:false,blocked:true,reason:'external_effects_not_allowed'};}
   })};

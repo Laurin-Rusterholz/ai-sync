@@ -44,7 +44,8 @@ test('isolated core checks durable marker on reads, before replay and inside eve
     const result=mutator(candidate);shadow=result.data;return result;
   }};
   const core=await createIntegrationCorePort({tenantId:'shadow',principalId:'shadow-worker',loadModules:async()=>({admin,idem})});
-  const isolated=isolateShadowCorePort({...f,corePort:core});assert.equal(isolated.available,true);assert.equal(isIsolatedShadowCore(isolated.impl),true);assert.equal(isIsolatedShadowCore(core.impl),false);
+  const isolated=isolateShadowCorePort({...f,corePort:core});assert.equal(isolated.available,true);assert.equal(isIsolatedShadowCore(isolated.impl,f.config),true);assert.equal(isIsolatedShadowCore(core.impl,f.config),false);
+  for(const change of [{tenant:'other'},{c2BaseUrl:binding.sourceC2Origin},{mode:'live'},{role:'monitor'}])assert.equal(isIsolatedShadowCore(isolated.impl,{...f.config,...change}),false);
   assert.deepEqual((await isolated.impl.read()).data.entities,source.entities);
   const args={commandKey:'shadow-step',requestId:'r1',now:Date.parse('2026-10-03T10:00:00Z'),mutate(data){data.entities.tasks.real.title='Shadow result';return {data,result:{changed:true}}}};
   const first=await isolated.impl.mutate(args);assert.equal(first.result.changed,true);assert.equal(shadow.entities.tasks.real.title,'Shadow result');assert.deepEqual(source,sourceBefore);
