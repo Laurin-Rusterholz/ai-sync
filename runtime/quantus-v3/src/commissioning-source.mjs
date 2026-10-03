@@ -15,8 +15,10 @@ export function bindCommissioningSourcePort({corePort,authority,envRead}){
     const database=envRead('FIREBASE_DATABASE_URL');
     if(typeof database!=='string'||!new RegExp('^https://(?:'+project+'\\.firebaseio\\.com|'+project+'-default-rtdb(?:\\.[a-z0-9-]+)?\\.firebasedatabase\\.app)$').test(database))fail();
     const credential=JSON.parse(envRead('FIREBASE_SERVICE_ACCOUNT_JSON')||'null');
+    const expectedAccount=envRead('QUANTUS_V4_COMMISSIONING_SOURCE_SERVICE_ACCOUNT');
     if(credential?.type!=='service_account'||credential.project_id!==project
       ||typeof credential.client_email!=='string'||!credential.client_email.endsWith('@'+project+'.iam.gserviceaccount.com')
+      ||(expectedAccount!==undefined&&(typeof expectedAccount!=='string'||!expectedAccount||credential.client_email!==expectedAccount))
       ||typeof credential.private_key!=='string'||!credential.private_key.trim())fail();
   }catch{fail();}
   const original=corePort.impl;

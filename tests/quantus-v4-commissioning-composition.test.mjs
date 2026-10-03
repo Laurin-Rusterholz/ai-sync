@@ -57,6 +57,17 @@ test('fresh policy withdrawal and fixture policy stay blocked in production comp
   const r=await app.handle(f.request());assert.notEqual(r.status,200);assert.equal(f.sends,0);assert.equal(f.store.snapshot().automation.activeLease,null);
  }
 });
+test('deployed source account pins the credential identity used for both CAS and artifacts',async()=>{
+ const f=await fixture();
+ f.env.QUANTUS_V4_COMMISSIONING_SOURCE_SERVICE_ACCOUNT='broker@source-invalid.iam.gserviceaccount.com';
+ await f.make();
+ const before=f.store.snapshot();
+ for(const value of ['', 'different@source-invalid.iam.gserviceaccount.com', 'broker@shadow-invalid.iam.gserviceaccount.com']){
+  f.env.QUANTUS_V4_COMMISSIONING_SOURCE_SERVICE_ACCOUNT=value;
+  await assert.rejects(f.make,{error:'commissioning_source_mismatch'});
+  assert.deepEqual(f.store.snapshot(),before);assert.equal(f.sends,0);assert.equal(f.artifacts.calls.length,0);
+ }
+});
 test('unconfigured service and standalone startup never reveal invalid configuration values',async()=>{
  const r=await unavailableCommissioningService().handle({});assert.equal(r.status,503);assert.equal(r.body,'{"error":"commissioning_not_configured"}');
  const child=spawnSync(process.execPath,['runtime/quantus-v3/src/commissioning-server.mjs'],{cwd:new URL('../',import.meta.url),env:{PATH:process.env.PATH,PORT:'invalid',QUANTUS_V4_COMMISSIONING_AUTHORITY_JSON:'NEVER-REAL-SECRET'},encoding:'utf8',timeout:10000});

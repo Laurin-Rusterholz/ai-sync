@@ -1,0 +1,58 @@
+{
+  "project_id": "source-invalid",
+  "region": "europe-west6",
+  "source_tenant": "quantus",
+  "database_url": "https://source-invalid.firebaseio.com",
+  "image": "registry.invalid/quantus/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "shadow": {
+    "project_id": "shadow-invalid",
+    "tenant": "shadow",
+    "worker_service_account": "worker@shadow-invalid.iam.gserviceaccount.com"
+  },
+  "commissioning": {
+    "binding_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "allocation_id": "synthetic-never-activated",
+    "model": "test-model",
+    "profiles": {
+      "lead-briefing04": {
+        "slot": "briefing04",
+        "hash": "e67c20dcaf0ed7a25d1c2306eb1b59059eca755dfd852658ee72754f63c2f687"
+      },
+      "lead-process09": {
+        "slot": "process09",
+        "hash": "3e32a97469d5c2fd989836c3c771066f7090641355b48afc101c300204d23d1c"
+      },
+      "lead-continue14": {
+        "slot": "continue14",
+        "hash": "6ddd91bc5471f4e1aa12df091491e2284192bcb67c72cc68343081f75f1a97e6"
+      },
+      "lead-close23": {
+        "slot": "close23",
+        "hash": "bec41e8c9705921457bfec66c7b2d4ae7624ad0c58824e7cd25b1158d46db168"
+      }
+    },
+    "allowed_runs": [
+      "shadow:2026-10-02:process09:4.0"
+    ],
+    "max_step_index": 10
+  },
+  "pricing": {
+    "input_micros_per_million": 1000000,
+    "output_micros_per_million": 1000000
+  },
+  "artifact_bucket_name": "quantus-test-artifacts",
+  "secrets": {
+    "firebase": {
+      "id": "test-broker-firebase",
+      "version": "1"
+    },
+    "openai": {
+      "id": "test-broker-openai",
+      "version": "2"
+    },
+    "cost_policy": {
+      "id": "test-broker-cost-policy",
+      "version": "3"
+    }
+  }
+}

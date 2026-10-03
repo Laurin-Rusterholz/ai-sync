@@ -30,6 +30,9 @@ on:
       - "scripts/check-quantus-runtime-image.mjs"
       - "runtime/quantus-v3/**"
       - "infra/quantus-v3/**"
+      - "infra/quantus-v4-broker/**"
+      - "scripts/check-quantus-broker-env.mjs"
+      - "scripts/check-quantus-commissioning-env.mjs"
       - "tests/tagesbriefing-v3-*.test.mjs"
       - "netlify/lib/date-invite-core.mjs"
       - "netlify/functions/date-invite.mjs"
@@ -120,3 +123,28 @@ jobs:
             exit 1
           fi
           node ../../scripts/check-quantus-commissioning-env.mjs "$RUNNER_TEMP/quantus-infrastructure-tests.jsonl"
+
+  broker-infrastructure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.3
+      - name: Install locked runtime dependencies for broker verification
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+      - name: Verify separate source deployment and actual application environment
+        working-directory: infra/quantus-v4-broker
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false -input=false -lockfile=readonly
+          terraform validate
+          if ! terraform test -var-file=tests/broker-fixture.json -json -verbose > "$RUNNER_TEMP/quantus-broker-tests.jsonl"; then
+            node ../../scripts/check-quantus-broker-env.mjs "$RUNNER_TEMP/quantus-broker-tests.jsonl" || true
+            exit 1
+          fi
+          node ../../scripts/check-quantus-broker-env.mjs "$RUNNER_TEMP/quantus-broker-tests.jsonl"
