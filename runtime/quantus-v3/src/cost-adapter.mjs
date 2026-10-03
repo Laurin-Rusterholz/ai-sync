@@ -45,6 +45,7 @@ import * as E1 from "../../../netlify/lib/quantus-v3-runtime-state.mjs";
 import { localDate as zurichLocalDate } from "../../../netlify/lib/quantus-v3-runtime-plan.mjs";
 import { HttpError, conflict } from "./errors.mjs";
 import { externalEffectsAllowed } from "./config.mjs";
+import {assertActiveRuntimeCapacity} from "./runtime-payload.mjs";
 import {assertCommissioningOperation} from "./commissioning-ingress.mjs";
 import {validCommissioningCallBinding, sameCommissioningCallBinding} from "../../../netlify/lib/quantus-v4-commissioning-allocation-schema.mjs";
 import { reserveCostWithMonthlyCap } from "./monthly-cost-cap.mjs";
@@ -204,6 +205,11 @@ function retainedCommissioning(binding) {
 export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseReserveMs = DISPATCH_LEASE_RESERVE_MS, monthlyCap = null, commissioningOperation = null } = {}) {
   ctx = {...ctx, commissioningOperation};
   const fixture = __allowFixturePolicy === true;
+  function reserveMutation(data,input) {
+    const out = monthlyCap ? reserveCostWithMonthlyCap(data,input,monthlyCap) : E1.reserveCost(data,input);
+    if (input.commissioning && out.result?.ok) assertActiveRuntimeCapacity(out.data);
+    return out;
+  }
 
   return {
     /* Reservierung vor dem Aufruf. Sendet nichts. Mit `monthlyCap` (additiv,
@@ -224,19 +230,10 @@ export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseRese
       pruefeTransportPreis(policy, provider, model, modelPricing);
       // NACH dem Laden: das Laden selbst kann gedauert haben.
       const now = clock.now();
-      const out = await mutiere(ctx, `cost-reserve:${callId}`, (data) => (monthlyCap
-        ? reserveCostWithMonthlyCap(data, {
-          callId, runKey, provider, model, contentHash,
-          inputTokens, outputTokens, commissioning: binding,
-          now, verifiedScope: ctx.verifiedScope, policy,
-          __allowFixturePolicy: fixture,
-        }, monthlyCap)
-        : E1.reserveCost(data, {
-          callId, runKey, provider, model, contentHash,
-          inputTokens, outputTokens, commissioning: binding,
-          now, verifiedScope: ctx.verifiedScope, policy,
-          __allowFixturePolicy: fixture,
-        })));
+      const out = await mutiere(ctx, `cost-reserve:${callId}`, data => reserveMutation(data, {
+        callId, runKey, provider, model, contentHash, inputTokens, outputTokens, commissioning: binding,
+        now, verifiedScope: ctx.verifiedScope, policy, __allowFixturePolicy: fixture,
+      }));
       if (!out.result.ok) throw conflict("cost_reserve_rejected", { code: out.result.code, detail: out.result.detail ?? null });
       return { callId, maxMicros: out.result.maxMicros, mode: out.result.mode, dispatchAllowed: false };
     },
@@ -271,10 +268,13 @@ export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseRese
         });
       }
 
-      const claim = await mutiere(ctx, `cost-claim:${callId}:${claimId}`, (data) => E1.claimCostDispatch(data, {
-        callId, claimId, commissioning: binding, now, verifiedScope: ctx.verifiedScope, policy,
-        __allowFixturePolicy: fixture,
-      }));
+      const claim = await mutiere(ctx, `cost-claim:${callId}:${claimId}`, data => {
+        if (binding) assertActiveRuntimeCapacity(data);
+        return E1.claimCostDispatch(data, {
+          callId, claimId, commissioning: binding, now, verifiedScope: ctx.verifiedScope, policy,
+          __allowFixturePolicy: fixture,
+        });
+      });
 
       // Der Port MUSS sagen, ob wirklich geschrieben wurde. Schweigen ist
       // kein Ja.
@@ -313,6 +313,7 @@ export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseRese
       // Ab hier bis zum `send` gibt es kein `await` mehr: Fuehrung,
       // Fence, Abrechnungstag und Preisstand koennen sich danach nicht
       // mehr unbemerkt geaendert haben.
+      if (binding) assertActiveRuntimeCapacity(finalData);
       const sendeZeit = clock.now();
       if (commissioningOperation) assertCommissioningOperation(commissioningOperation,
         {data:finalData,now:sendeZeit,core:ctx.ports.require("core")});

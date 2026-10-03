@@ -8,15 +8,8 @@ import { HttpError } from './errors.mjs';
 import { WORK_PAYLOAD_BYTES, JOURNAL_LIMITS } from './runtime-payload.mjs';
 const hash = text => createHash('sha256').update(text).digest('hex');
 const fail = (code, status = 502) => { throw new HttpError(status, code); };
-export const ARTIFACT_SCHEMA = 'quantus-work-artifact/1';
-export function validArtifactReference(v) {
-  return v && typeof v === 'object' && !Array.isArray(v)
-    && Object.keys(v).sort().join(',') === 'bucket,bytes,generation,hash,objectName,schema'
-    && v.schema === ARTIFACT_SCHEMA && typeof v.bucket === 'string' && typeof v.objectName === 'string'
-    && typeof v.hash === 'string' && /^[a-f0-9]{64}$/.test(v.hash)
-    && typeof v.generation === 'string' && /^[1-9][0-9]{0,30}$/.test(v.generation)
-    && Number.isSafeInteger(v.bytes) && v.bytes > 0 && v.bytes <= JOURNAL_LIMITS.responseBytes;
-}
+import {ARTIFACT_SCHEMA, validArtifactReference} from '../../../netlify/lib/quantus-v4-artifact-reference.mjs';
+export {ARTIFACT_SCHEMA, validArtifactReference};
 
 export function createWorkArtifactStore({ bucket, tenant, getAccessToken, fetchImpl = fetch, timeoutMs = 20000, maxPayloadBytes = WORK_PAYLOAD_BYTES } = {}) {
   if (typeof bucket !== 'string' || !/^[a-z0-9][a-z0-9.-]{1,220}[a-z0-9]$/.test(bucket)

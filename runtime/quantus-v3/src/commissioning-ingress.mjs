@@ -63,10 +63,32 @@ export function assertCommissioningOperation(operation,{data,now,core}){
   if(localDate(now).slice(0,7)!==auth.month)fail(409,'commissioning_month_mismatch');
   const known=cost.callsById[operation.callId];
   if(known&&(known.contentHash!==operation.prepared.contentHash
+    ||known.runKey!==operation.runKey||known.provider!==operation.provider||known.model!==operation.model
+    ||known.contract.inputTokens!==operation.prepared.inputTokens||known.contract.outputTokens!==operation.prepared.outputTokens
     ||known.commissioning?.allocationId!==operation.commissioning.allocationId
     ||known.commissioning?.bindingHash!==operation.commissioning.bindingHash
     ||known.commissioning?.operationId!==operation.commissioning.operationId))fail(409,'commissioning_operation_conflict');
   return true;
+}
+
+/** Recording an already claimed outcome is not new spending. The original
+ * in-process admission and an exact existing call are mandatory even after
+ * token/allocation expiry; the journal separately requires current source
+ * leadership. Recovery admission additionally requires a fresh principal. */
+export function assertCommissioningReceipt(operation,{data,now,core,freshPrincipal=false}) {
+  const cap=capabilities.get(operation), identity=commissioningSourceIdentity(core);
+  if(!cap||!Number.isSafeInteger(now)||now<=0)fail(403,'commissioning_capability_invalid');
+  if(identity?.projectId!==cap.authority.sourceProjectId||identity?.tenant!==cap.authority.sourceTenant)fail(503,'commissioning_source_mismatch');
+  if(freshPrincipal&&now>=cap.principal.expiresAtMs)fail(401,'unauthenticated');
+  const call=readRuntime(data).cost.callsById[operation.callId];
+  if(!call||!call.dispatch.claimed||!['reserved','unknown','settled'].includes(call.state)
+    ||call.contentHash!==operation.prepared.contentHash||call.runKey!==operation.runKey
+    ||call.provider!==operation.provider||call.model!==operation.model
+    ||call.contract.inputTokens!==operation.prepared.inputTokens||call.contract.outputTokens!==operation.prepared.outputTokens
+    ||call.commissioning?.allocationId!==operation.commissioning.allocationId
+    ||call.commissioning?.bindingHash!==operation.commissioning.bindingHash
+    ||call.commissioning?.operationId!==operation.commissioning.operationId)fail(409,'commissioning_receipt_binding_invalid');
+  return call;
 }
 
 export function createCommissioningIngress({authority,profiles,transport,ports,execute,logger=null}){
@@ -98,7 +120,13 @@ export function createCommissioningIngress({authority,profiles,transport,ports,e
         commissioning:freeze({allocationId:approved.allocationId,bindingHash:approved.bindingHash,operationId})});
       capabilities.set(operation,{authority:approved,principal:ctx.principal});
       const snapshot=await core.read();
-      assertCommissioningOperation(operation,{data:snapshot?.data,now:ports.require('clock').now(),core});
+      const checkedAt=ports.require('clock').now();
+      try { assertCommissioningOperation(operation,{data:snapshot?.data,now:checkedAt,core}); }
+      catch(error) {
+        if(!['commissioning_authorization_expired','commissioning_month_mismatch'].includes(error.error))throw error;
+        if(!readRuntime(snapshot.data).cost.callsById[operation.callId]?.dispatch.claimed)throw error;
+        assertCommissioningReceipt(operation,{data:snapshot?.data,now:checkedAt,core,freshPrincipal:true});
+      }
       if(typeof execute!=='function')fail(503,'commissioning_executor_unavailable');
       // Executor returns persisted results only. It must not treat admission as
       // a cost claim or export this local capability to the isolated database.

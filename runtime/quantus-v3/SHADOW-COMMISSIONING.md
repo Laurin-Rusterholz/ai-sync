@@ -151,3 +151,35 @@ and the narrowly scoped commissioning effect capability are still required.
 Admission tests use real signatures and existing reducers/adapter with
 synthetic credentials, prices and provider responses; they do not establish a
 running broker, successful production access or any day of the real trial.
+
+## Durable response recovery without productive conversation writes
+
+`createCommissioningResponseJournal` stores one immutable private-artifact
+reference on the exact source cost call. It reuses the existing artifact store,
+payload validation, CAS/idempotency port, lease fencing and cost reconciliation.
+It never initializes a productive run, maps a shadow run into a source run, or
+writes a productive leadership conversation. Original model output lives in
+private storage with generation/hash/byte and source bucket/tenant checks.
+
+Only an admitted, already claimed call with the exact run, model, provider,
+request hash and token contract may gain a response. Response recording requires
+current source leadership, including after artifact I/O and inside every CAS
+retry. An immutable recorded marker makes a missing pointer fail closed. A
+changed response cannot reuse a successful command receipt. Readback verifies
+the artifact and current pointer independently; a settled call must agree with
+its retained receipt. An unknown response never becomes a settled receipt.
+
+A response to an already claimed operation can still be recorded and reconciled
+after its original token or spending window expires. This grants no permission
+to dispatch. A new authenticated ingress request may recover that same claimed
+operation after allocation expiry; an unclaimed or new operation remains
+blocked. The cost adapter's dispatch checks are unchanged. Settlement uses only
+the retained response, including recovery of a cost previously marked unknown.
+
+Commissioning reservations now reserve core capacity for future response
+references in the same CAS before any send. Failed artifact storage/readback or
+failed reference persistence is visible and cannot be acknowledged as success.
+A lost commit acknowledgement is recovered by reading the retained reference.
+The broker coordinator must invoke this journal before returning results or
+settling the normal provider path; automatic dispatch and runtime activation
+remain unimplemented by this package.
