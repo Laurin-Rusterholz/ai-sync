@@ -710,6 +710,17 @@ export function transitionState(input, { sourceType, sourceId, state, expectedVe
     if (!String(reason || "").trim()) return fehler("REASON_MISSING");
     if (sourceType === "chatgptLead" && !(ctx.actor && ctx.actor.kind === "user")) return fehler("CANCEL_REQUIRES_USER");
   }
+  if (ABGESCHLOSSENE_ZUSTAENDE.includes(z.state)) {
+    const history = e.operationalStateHistory;
+    if (history !== undefined && (!Array.isArray(history) || history.some(h => !istKarte(h)
+      || !ABGESCHLOSSENE_ZUSTAENDE.includes(h.state) || !Number.isSafeInteger(h.version) || h.version < 1
+      || !istKarte(h.source) || !Number.isFinite(Date.parse(h.reopenedAt))
+      || typeof h.reason !== "string" || !h.reason.trim() || typeof h.reopenedBy !== "string" || !h.reopenedBy))) return fehler("STATE_HISTORY_INVALID");
+    e.operationalStateHistory = [...(history || []), {
+      state: z.state, version: z.version, source: klon(e.operationalStateSource),
+      reopenedAt: nowIso, reason: String(reason), reopenedBy: ctx.actor.id,
+    }];
+  }
   const version = setzeZustand(e, sourceType, state, ctx.now, reason || "transitionState");
   e.operationalStateSource.closure = state === "done" ? belegRef : state === "cancelled" ? { kind: "cancel", actorId: ctx.actor ? ctx.actor.id : null, reason: String(reason).slice(0, 200) } : null;
   delete data.automation.waitingById[key];

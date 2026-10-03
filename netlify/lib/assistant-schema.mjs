@@ -289,7 +289,7 @@ export function kernQuelleId(policy) {
 export const PROTECTED_FIELDS = Object.freeze([
   "finalAt", "closureRevision", "closureCutoff", "closureOutcomes", "finalEvaluation", "phase",
   "invalidatedAt", "archiveRef", "overallGreen", "userApproval", "approved", "approvedBy",
-  "operationalState", "operationalStateSource", "operationalStateVersion", "operationalStateUnmapped", "operationalRoles",
+  "operationalState", "operationalStateSource", "operationalStateVersion", "operationalStateUnmapped", "operationalRoles", "operationalStateHistory",
   "consumedAt", "consumption", "answerContext", "answeredAt", "deferrals", "reviewedAt", "handledAt", "verifiedAt", "verifiedBy",
   "dataRevision", "revision", "evaluatedRevision", "validUntil", "coverage", "operations", "waitingSince",
   "idempotencyByKey", "activeLease",

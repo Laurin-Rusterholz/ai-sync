@@ -17,10 +17,10 @@ function merge(local, remote, tombstones = {}) {
 const canonical = () => ({id:'lead', title:'Server', updatedAt:'2026-10-01T10:00:00Z', status:'in_arbeit', operationalState:'doing', operationalStateVersion:1,
   operationalStateSource:{model:1, legacyValue:'in_arbeit', mappedAt:'2026-10-03T03:17:10Z'}, operationalRoles:{accountable:'chatgpt',executor:'openai'}});
 const data = (item, key='chatgptLeads') => ({entities:{[key]:item ? {lead:item} : {}}});
-const fields = ['operationalState','operationalStateVersion','operationalStateSource','operationalRoles','operationalStateUnmapped'];
+const fields = ['operationalState','operationalStateVersion','operationalStateSource','operationalRoles','operationalStateUnmapped','operationalStateHistory'];
 for (const collection of ['chatgptLeads','chatgptTasks','tasks']) {
   test(collection + ': old UI edits cannot replace the canonical tuple or its closure proof', () => {
-    const remote = {...canonical(), operationalState:'done', operationalStateVersion:4};
+    const remote = {...canonical(), operationalState:'done', operationalStateVersion:4,operationalStateHistory:[{state:'done',source:{closure:{id:'older-proof'}}}]};
     remote.operationalStateSource.closure = {kind:'evidence',id:'receipt'};
     for (const timestamp of [remote.updatedAt, '2026-10-04T10:00:00Z']) {
       const local = {id:'lead',title:'Edited locally',updatedAt:timestamp,operationalState:'decision_required',comments:[{id:'new',text:'Keep my answer'}]};

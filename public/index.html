@@ -14091,7 +14091,7 @@ function mergeData(local, remote) {
 
       // Canonical state is a server-owned tuple, independent of the edit time
       // of a title/comment. A legacy desktop state alone is not a migration.
-      const stateFields = ['operationalState', 'operationalStateSource', 'operationalStateVersion', 'operationalStateUnmapped', 'operationalRoles'];
+      const stateFields = ['operationalState', 'operationalStateSource', 'operationalStateVersion', 'operationalStateUnmapped', 'operationalRoles', 'operationalStateHistory'];
       const hasCanonicalState = (item) => item && stateFields.slice(1).some((field) => Object.prototype.hasOwnProperty.call(item, field));
       const localCanonical = hasCanonicalState(localItem);
       const remoteCanonical = hasCanonicalState(remoteItem);
@@ -24156,6 +24156,17 @@ function v3DeriveLeadOperationalStateFromLegacy(l) {
 function v3LeadOperationalState(l) {
   if (l && typeof l.operationalState === "string" && V3_OPERATIONAL_STATES.includes(l.operationalState)) return l.operationalState;
   return v3DeriveLeadOperationalStateFromLegacy(l);
+}
+function chatgptLeadIsClosed(l) {
+  if (l && Object.prototype.hasOwnProperty.call(l, 'operationalStateSource')) return ['done','cancelled'].includes(l.operationalState);
+  return !!l && l.status === 'abgeschlossen';
+}
+function chatgptLeadDisplayStatus(l) {
+  if (l && Object.prototype.hasOwnProperty.call(l, 'operationalStateSource')) {
+    if (chatgptLeadIsClosed(l)) return 'abgeschlossen';
+    return ['waiting_external','waiting_user'].includes(l.operationalState) ? 'wartet' : 'in_arbeit';
+  }
+  return l?.status || 'neu';
 }
 function v3LeadResponsibleParty(l) {
   if (l && typeof l.responsibleParty === "string") return l.responsibleParty;
@@ -51851,9 +51862,9 @@ function chatgptLeadAssessmentSummary(l, opts) {
     </div>`;
 }
 function chatgptLeadCard(l) {
-  const meta = CGL_STATUS_META[l.status] || CGL_STATUS_META.neu;
+  const meta = CGL_STATUS_META[chatgptLeadDisplayStatus(l)] || CGL_STATUS_META.neu;
   const p = chatgptLeadProgress(l);
-  const unread = !l.readAt && l.status !== "abgeschlossen";
+  const unread = !l.readAt && !chatgptLeadIsClosed(l);
   const raw = String(l.rawInput || "");
   return `
     <div class="card mb-2 cgl-card${unread ? " unread" : ""}" data-action="cgl-open" data-id="${l.id}" style="cursor:pointer">
@@ -51864,17 +51875,17 @@ function chatgptLeadCard(l) {
       </div>
       <div class="mini mt-1" style="color:var(--muted);white-space:pre-wrap">${esc(raw.slice(0, 160))}${raw.length > 160 ? "…" : ""}</div>
       ${chatgptLeadAssessmentSummary(l, { compact: true })}
-      ${l.status !== "abgeschlossen" ? `<div class="progress mt-2" style="height:4px"><div class="bar ${p.done === p.total ? "ok" : "accent"}" style="width:${Math.round(p.done / p.total * 100)}%"></div></div>` : ""}
+      ${!chatgptLeadIsClosed(l) ? `<div class="progress mt-2" style="height:4px"><div class="bar ${p.done === p.total ? "ok" : "accent"}" style="width:${Math.round(p.done / p.total * 100)}%"></div></div>` : ""}
       ${l.status === "wartet" && l.blockedReason ? `<div class="mini mt-1" style="color:#C9A96E">⏸ ${esc(l.blockedReason)}</div>` : ""}
     </div>`;
 }
 function viewChatgptLeads() {
   const all = Object.values(APP.state.data.entities.chatgptLeads || {}).filter(l => l && typeof l === "object")
     .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
-  const unread = all.filter(l => !l.readAt && l.status !== "abgeschlossen");
-  const active = all.filter(l => l.readAt && ["neu", "verstanden", "in_arbeit"].includes(l.status));
-  const waiting = all.filter(l => l.readAt && l.status === "wartet");
-  const closed = all.filter(l => l.status === "abgeschlossen")
+  const unread = all.filter(l => !l.readAt && !chatgptLeadIsClosed(l));
+  const active = all.filter(l => l.readAt && !chatgptLeadIsClosed(l) && ["neu", "verstanden", "in_arbeit"].includes(chatgptLeadDisplayStatus(l)));
+  const waiting = all.filter(l => l.readAt && !chatgptLeadIsClosed(l) && chatgptLeadDisplayStatus(l) === "wartet");
+  const closed = all.filter(l => chatgptLeadIsClosed(l))
     .sort((a, b) => String(b.closedAt || "").localeCompare(String(a.closedAt || "")));
   const group = (title, list, color) => list.length
     ? `<h3 class="mt-3 mb-2" style="color:${color}">${title} (${list.length})</h3>${list.map(chatgptLeadCard).join("")}` : "";
@@ -51945,7 +51956,7 @@ function chatgptLeadOperationalBoxHtml(l) {
 }
 function chatgptLeadStatusBoxHtml(l) {
   const p = chatgptLeadProgress(l);
-  const closed = l.status === "abgeschlossen";
+  const closed = chatgptLeadIsClosed(l);
   const links = chatgptLeadLinkCount(l);
   const stepDone = s => !!String(l[s.field] || "").trim();
   return `
@@ -51993,7 +52004,15 @@ function chatgptLeadStatusBoxHtml(l) {
    dem Zeitpunkt und der Begruendung der Wiedereroeffnung. Nichts geht
    verloren, nichts geschieht von selbst. */
 function chatgptLeadCloseHistory(l) {
-  return Array.isArray(l && l.closeHistory) ? l.closeHistory : [];
+  const legacy = Array.isArray(l && l.closeHistory) ? l.closeHistory : [];
+  const canonical = Array.isArray(l && l.operationalStateHistory) ? l.operationalStateHistory : [];
+  return legacy.concat(canonical.filter(h => h && typeof h === "object").map(h => ({
+    closedAt: h.source?.changedAt || h.source?.mappedAt || null,
+    closedBy: ['cancel','user'].includes(h.source?.closure?.kind) ? 'user' : 'assistant',
+    closedByLabel: ['cancel','user'].includes(h.source?.closure?.kind) ? 'durch Benutzer' : 'durch Assistenz',
+    obsoleteReason: h.source?.closure?.reason || null,
+    reopenedAt: h.reopenedAt, reopenedTo:'in_arbeit', reason:h.reason,
+  })));
 }
 
 function chatgptLeadReopenBoxHtml(l) {
@@ -52014,7 +52033,7 @@ function chatgptLeadReopenBoxHtml(l) {
       <div class="mini mt-1" style="color:var(--muted)">Der Abschluss vom ${fmtDateTime(l.closedAt)}${l.closedBy === "laurin" ? " (hinfällig, durch Laurin)" : ""} bleibt als Historie erhalten — er wird nicht gelöscht.</div>
       <label class="mini mt-2" style="display:block">Neuer Status
         <select id="cglReopenStatus">
-          ${["neu", "verstanden", "in_arbeit", "wartet"].map(st => `<option value="${st}" ${offen.status === st ? "selected" : ""}>${CGL_STATUS_META[st].label}</option>`).join("")}
+          ${(l.operationalStateSource ? ["in_arbeit"] : ["neu", "verstanden", "in_arbeit", "wartet"]).map(st => `<option value="${st}" ${offen.status === st ? "selected" : ""}>${CGL_STATUS_META[st].label}</option>`).join("")}
         </select>
       </label>
       <label class="mini mt-2" style="display:block">Warum wieder geöffnet? <span style="color:#D96B5B">Pflicht</span>
@@ -52040,14 +52059,14 @@ function chatgptLeadCloseHistoryHtml(l) {
       <div class="sep"></div>
       ${hist.map(h => `
         <div class="mini" style="padding:6px 0;border-bottom:1px solid var(--border)">
-          Abgeschlossen ${fmtDateTime(h.closedAt)}${h.closedBy === "laurin" ? " (hinfällig, durch Laurin)" : (h.closedBy ? " (Assistent)" : "")}${h.obsoleteReason ? ` · hinfällig, weil: ${esc(h.obsoleteReason)}` : ""}<br />
+          Abgeschlossen ${fmtDateTime(h.closedAt)}${h.closedByLabel ? " (" + esc(h.closedByLabel) + ")" : h.closedBy === "laurin" ? " (hinfällig, durch Laurin)" : (h.closedBy ? " (Assistent)" : "")}${h.obsoleteReason ? ` · hinfällig, weil: ${esc(h.obsoleteReason)}` : ""}<br />
           Wieder geöffnet ${fmtDateTime(h.reopenedAt)} → ${esc((CGL_STATUS_META[h.reopenedTo] || {}).label || h.reopenedTo || "")}${h.reason ? ` · weil: ${esc(h.reason)}` : ""}
         </div>`).join("")}
     </div>`;
 }
 
 function chatgptLeadCloseBoxHtml(l) {
-  if (l.status === "abgeschlossen") return chatgptLeadReopenBoxHtml(l);
+  if (chatgptLeadIsClosed(l)) return chatgptLeadReopenBoxHtml(l);
   const missing = chatgptLeadMissing(l);
   const title = missing.length ? "Fehlt noch: " + missing.join(", ") : "Alle Schritte dokumentiert — Lead kann abgeschlossen werden";
   return `
@@ -52060,7 +52079,7 @@ function chatgptLeadCloseBoxHtml(l) {
 }
 // Bewertung & Zuweisung als eigener Schritt (nach Plan, vor Ausfuehrung).
 function chatgptLeadAssessmentBoxHtml(l) {
-  const closed = l.status === "abgeschlossen";
+  const closed = chatgptLeadIsClosed(l);
   const a = l.assessment && typeof l.assessment === "object" ? l.assessment : {};
   const tally = chatgptLeadAssessmentTally(a);
   const p = chatgptLeadNormalizePermissions(l.grantedPermissions);
@@ -52121,11 +52140,99 @@ function chatgptLeadAssessmentBoxHtml(l) {
       ${grid}
     </div>`;
 }
+const _v4CancellationClients = new Map();
+async function cglCancellationAccount() {
+  const gate = await coreAuthReady(), accountKey = gate?.user?.uid;
+  if (!accountKey) throw new Error('sign_in_required');
+  const mod = await import('/quantus-v4-lead-cancellation.mjs');
+  if (!_v4CancellationClients.has(accountKey)) {
+    const getAuth = async () => {
+      const user = coreAuthCurrentUser(); if (user?.uid !== accountKey) return null;
+      const idToken = await user.getIdToken();
+      return coreAuthCurrentUser()?.uid === accountKey ? { accountKey, idToken } : null;
+    };
+    const getRun = () => coreAuthCurrentUser()?.uid === accountKey ? APP.state.data.dailyBriefing?.assistantRuns?.[todayYmd()] : null;
+    _v4CancellationClients.set(accountKey, mod.openLeadCancellations({accountKey,getAuth,getRun,origin:location.origin})
+      .catch(error => { _v4CancellationClients.delete(accountKey); throw error; }));
+  }
+  return {accountKey,mod,client:await _v4CancellationClients.get(accountKey)};
+}
+async function cglFlushCancellations(client, accountKey) {
+  const before = new Set((await client.list()).filter(e => e.deliveryStatus === 'acknowledged').map(e => e.operationId));
+  await client.flush();
+  if (coreAuthCurrentUser()?.uid !== accountKey) return;
+  if (!(await client.list()).some(e => e.deliveryStatus === 'acknowledged' && !before.has(e.operationId))) return;
+  // Refresh even when the worker changed dataRevision without meta.updatedAt.
+  // No root upload: preserve the local snapshot before applying a read merge.
+  const remote = await remoteGetByKey('app-data.json', {force:true,preferProvider:'rtdb'});
+  if (!remote?.ok || !remote.data || coreAuthCurrentUser()?.uid !== accountKey) return;
+  if (!await idbBackup(APP.state.data, 'pre_cancellation_refresh')) return;
+  if (coreAuthCurrentUser()?.uid !== accountKey) return;
+  const merged = mergeData(APP.state.data, normalizeData(remote.data));
+  if (await guardV3ProtectedWrite(merged) || coreAuthCurrentUser()?.uid !== accountKey) return;
+  APP.state.data = merged; saveLocalData(); cglKeepStateDrafts(); render();
+}
+window.cglLoadCancellations = async function() {
+  const host = document.getElementById('cglCancellationQueue'); if (!host) return;
+  const generation = {}; host._generation = generation; clearTimeout(host._timer);
+  const current = uid => coreAuthCurrentUser()?.uid === uid && document.getElementById('cglCancellationQueue') === host && host._generation === generation;
+  try {
+    const {accountKey,mod,client} = await cglCancellationAccount();
+    const entries = (await client.list()).filter(e => e.legacyOperation.leadId === host.dataset.leadId);
+    if (!current(accountKey)) return;
+    host.innerHTML = entries.map(e => '<article class="card"><strong>' + esc(mod.cancellationStatusText(e.deliveryStatus,e.legacyOperation.toState))
+      + '</strong><p>' + esc(e.legacyOperation.reason) + '</p></article>').join('')
+      + (entries.length ? '<button class="btn sm" onclick="window.cglRetryCancellations()">Übertragung prüfen</button>' : '');
+    if (entries.some(e => ['run_pending','pending','retry_wait'].includes(e.deliveryStatus))) host._timer = setTimeout(async () => {
+      if (!current(accountKey)) return;
+      try { await cglFlushCancellations(client,accountKey); } catch (_) {}
+      if (current(accountKey)) await window.cglLoadCancellations();
+    }, Math.max(1000, Math.min(600000, (client.nextCheckAt() || Date.now()+30000)-Date.now())));
+  } catch (_) {
+    if (document.getElementById('cglCancellationQueue') === host && host._generation === generation)
+      host.textContent = 'Gesicherte Abschlussaufträge konnten nicht geladen werden. Bitte Anmeldung und lokalen Speicher prüfen.';
+  }
+};
+window.cglRetryCancellations = async function() {
+  try { const {client,accountKey} = await cglCancellationAccount(); await cglFlushCancellations(client,accountKey); }
+  catch (_) { toast('warn','Übertragung offen','Der gesicherte Auftrag bleibt auf diesem Gerät erhalten.'); }
+  await window.cglLoadCancellations();
+};
+function cglKeepStateDrafts() {
+  for (const [key, inputId] of [['_cglObsolete','cglObsoleteGrund'],['_cglReopen','cglReopenGrund']]) {
+    const input = document.getElementById(inputId);
+    if (window[key] && input) window[key].grund = input.value;
+  }
+}
+const _v4CancellationBusy = new Set();
+async function cglCancelLead(l, reason, toState = 'cancelled') {
+  if (_v4CancellationBusy.has(l.id)) return;
+  _v4CancellationBusy.add(l.id);
+  const expectedAccount = coreAuthCurrentUser()?.uid;
+  const originalLead = JSON.parse(JSON.stringify(l));
+  try {
+    const {client,accountKey} = await cglCancellationAccount();
+    if (!expectedAccount || accountKey !== expectedAccount || coreAuthCurrentUser()?.uid !== expectedAccount) throw new Error('sign_in_required');
+    await client.submit({lead:originalLead,reason,toState});
+    if (coreAuthCurrentUser()?.uid !== accountKey) return;
+    cglKeepStateDrafts();
+    const draftKey = toState === 'doing' ? '_cglReopen' : '_cglObsolete';
+    if (window[draftKey]?.id === l.id && String(window[draftKey].grund || '').trim() === reason.trim()) window[draftKey] = null;
+    render();
+    toast('info','Auftrag gesichert',toState === 'doing' ? 'Wiederöffnung angefragt; der Server prüft die aktuelle Lead-Version.' : 'Hinfälligkeit angefragt; der Lead gilt erst nach Serverbestätigung als geschlossen.');
+    await cglFlushCancellations(client,accountKey);
+    if (coreAuthCurrentUser()?.uid === accountKey) await window.cglLoadCancellations();
+  } catch (_) {
+    toast('warn','Abschluss nicht bestätigt','Die Begründung bleibt erhalten. Anmeldung, Lead-Version oder Übertragungsstatus prüfen.');
+  } finally { _v4CancellationBusy.delete(l.id); }
+}
+
 function viewChatgptLeadDetail(id) {
   const l = ownEntity(APP.state.data.entities.chatgptLeads || {}, id);
   if (!l) return `<div class="card">Lead nicht gefunden. <a href="#/chatgptnotes/leads">Zurück zum Eingang</a></div>`;
-  const meta = CGL_STATUS_META[l.status] || CGL_STATUS_META.neu;
-  const closed = l.status === "abgeschlossen";
+  if (typeof window.cglLoadCancellations === 'function') setTimeout(() => window.cglLoadCancellations(), 0);
+  const meta = CGL_STATUS_META[chatgptLeadDisplayStatus(l)] || CGL_STATUS_META.neu;
+  const closed = chatgptLeadIsClosed(l);
   const links = chatgptLeadLinkCount(l);
   const stepDone = s => !!String(l[s.field] || "").trim();
   const planIdx = CGL_STEPS.findIndex(s => s.field === "plan");
@@ -52170,6 +52277,7 @@ function viewChatgptLeadDetail(id) {
       <input type="text" placeholder="Kommentar eingeben, Enter zum Senden" data-action="add-comment-input" data-kind="chatgptLead" data-id="${id}" class="mt-2" style="width:100%" />
     </div>
     <div id="cglCloseBox">${chatgptLeadCloseBoxHtml(l)}</div>
+    <div id="cglCancellationQueue" data-lead-id="${esc(id)}" aria-live="polite"></div>
     ${!closed ? (window._cglObsolete && window._cglObsolete.id === id ? `
       <div class="card mb-3" role="alertdialog" aria-labelledby="cglObsoleteFrage" style="border:1px solid rgba(217,107,91,.5);background:rgba(217,107,91,.08)">
         <div id="cglObsoleteFrage"><strong>Lead ohne Denkstruktur schliessen?</strong></div>
@@ -52367,7 +52475,7 @@ function chatgptModuleHandleAction(action, el, e) {
     }
     case "cgl-reopen-ask": {
       stop();
-      const l = ownEntity(leads, id); if (!l || l.status !== "abgeschlossen") return;
+      const l = ownEntity(leads, id); if (!l || !chatgptLeadIsClosed(l)) return;
       window._cglReopen = { id: l.id, status: "in_arbeit", grund: "", blocked: l.blockedReason || "", fehler: "" };
       render();
       return;
@@ -52380,7 +52488,7 @@ function chatgptModuleHandleAction(action, el, e) {
     }
     case "cgl-reopen-do": {
       stop();
-      const l = ownEntity(leads, id); if (!l || l.status !== "abgeschlossen") return;
+      const l = ownEntity(leads, id); if (!l || !chatgptLeadIsClosed(l)) return;
       const status = (document.getElementById("cglReopenStatus") || {}).value || "";
       const grund = String(((document.getElementById("cglReopenGrund") || {}).value) || "").trim();
       const blocked = String(((document.getElementById("cglReopenBlocked") || {}).value) || "").trim();
@@ -52393,6 +52501,11 @@ function chatgptModuleHandleAction(action, el, e) {
       // Eine Wiedereroeffnung ohne Begruendung waere genau die Luecke, die
       // den falschen Abschluss erst unsichtbar gemacht hat.
       if (!grund) return zurueck("Bitte kurz begründen, warum der Lead wieder geöffnet wird.");
+      if (l.operationalStateSource) {
+        window._cglReopen = {id:l.id,status:'in_arbeit',grund,blocked,fehler:''};
+        void cglCancelLead(l, grund, 'doing');
+        return;
+      }
       if (status === "wartet" && !blocked) return zurueck("„Wartet“ verlangt, was fehlt.");
       // Der bisherige Abschluss wird nicht geloescht, sondern archiviert.
       const hist = chatgptLeadCloseHistory(l).slice();
@@ -52443,12 +52556,8 @@ function chatgptModuleHandleAction(action, el, e) {
         toast("warn", "Noch nicht geschlossen", "Ohne Begründung nicht — das ist der Sinn der Ausnahme.");
         return;
       }
-      l.status = "abgeschlossen"; l.closedAt = nowIso(); l.closedBy = "laurin"; l.obsoleteReason = reason; l.updatedAt = nowIso();
-      l.operationalState = "cancelled"; // Review-Fix: siehe cgl-close — sonst bleibt ein alter Zustand stehen
-      if (!l.readAt) l.readAt = l.closedAt;
-      window._cglObsolete = null;
-      scheduleSave(); render();
-      toast("ok", "Als hinfällig geschlossen", l.title || "");
+      window._cglObsolete = { id:l.id, grund:reason, fehler:'' };
+      void cglCancelLead(l, reason);
       return;
     }
     case "cgl-assess": {
