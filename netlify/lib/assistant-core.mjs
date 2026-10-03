@@ -26,6 +26,7 @@
 import { COMMAND_SCHEMAS, validateCommandShape, validateActor, validatePolicy } from "./assistant-schema.mjs";
 import { requireCore } from "./assistant-migration.mjs";
 import * as B from "./assistant-buchhaltung.mjs";
+import { migrateLegacyQuestions } from './assistant-legacy-questions.mjs';
 import { closeRun, closeRunAfterCoreRead, invalidateClosure } from "./assistant-abschluss.mjs";
 
 export * from "./assistant-zeit.mjs";
@@ -48,6 +49,7 @@ const HANDLER = Object.freeze({
   transitionState: B.transitionState,
   registerIntake: B.registerIntake,
   askQuestion: B.askQuestion,
+  migrateLegacyQuestions,
   recordAnswer: B.recordAnswer,
   consumeAnswer: B.consumeAnswer,
   consumeAnswerToIntake: B.consumeAnswerToIntake,

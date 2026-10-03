@@ -70,9 +70,11 @@ export function renderBriefingAnswers(questions, entries = [], drafts = {}) {
   return '<h3>Fragen aus der automatischen Verarbeitung</h3><p class="mini">Aus dem synchronisierten Fragenbestand. Antworten werden einzeln an den Server übertragen.</p>'
     + (shown.size ? Array.from(shown.values()).map(q => {
       const entry = byQuestion.get(q.id), addressable = dateValid(q.runDate) && q.status === 'open';
-      const text = entry?.command.payload.answer ?? drafts[q.id] ?? '';
+      const text = entry?.command.payload.answer ?? drafts[q.id] ?? q.legacyAnswerDraft ?? '';
       return '<div class="db-item" style="display:block" data-server-question="' + esc(q.id) + '">'
         + '<strong>' + esc(q.text) + '</strong>'
+        + (q.legacyAnswerDraft ? '<p class="mini">Antwort aus dem Altbestand – bitte prüfen und ausdrücklich bestätigen. Sie wurde noch nicht als neue Nutzerantwort verarbeitet.</p>' : '')
+        + (q.recommendation ? '<p class="mini">Empfehlung: ' + esc(q.recommendation) + '</p>' : '')
         + (q.sourceType === 'chatgptLead' && safeId(q.sourceId) ? '<div><button class="btn sm" data-action="cgl-open" data-id="' + esc(q.sourceId) + '">Zugehörigen Lead öffnen</button></div>' : '')
         + '<div class="db-link-row">' + (!entry && addressable && Array.isArray(q.options) ? q.options.filter(o => typeof o === 'string').slice(0, 8).map(o => '<button class="btn sm" data-answer-option="' + esc(o) + '">' + esc(o) + '</button>').join('') : '') + '</div>'
         + '<label>Deine Antwort<textarea rows="3" maxlength="8000" data-answer-text' + (entry || !addressable ? ' readonly' : '') + '>' + esc(text) + '</textarea></label>'
