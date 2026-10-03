@@ -323,3 +323,28 @@ credential. See [Google service-to-service authentication](https://docs.cloud.go
 Actual audience configuration, workload identity, IAM, artifact and isolated C2
 bindings still require deployed verification. No real trial is implied by the
 synthetic metadata, broker and worker tests.
+
+## Isolated continuation dispatch
+
+`QUANTUS_V4_COMMISSIONING_TASKS_JSON` grants only continuation enqueueing for
+a branded isolated worker or monitor. Its exact fields are `schemaVersion: 1`,
+`bindingHash`, `queue`, `targetUrl`, `oidcServiceAccount`, `audience`,
+`approvedAtMs` and `expiresAtMs`. The queue must belong to the isolated project;
+the caller identity must also belong to it. Queue, target, service account and
+audience must match the resolved runtime Tasks configuration, and the audience
+is the exact `/v3/run/continue` target. The time window is checked before and
+after asynchronous credential/core reads.
+
+The resulting in-process capability cannot be recreated from JSON. Each
+outgoing request must have the exact task envelope, canonical stable task name,
+reviewed destination and OIDC identity, and a valid schedule. The isolated core
+must retain the same pending continuation, bound to its run. Consumed/missing
+intents and completed runs cannot enqueue again. A monitor's persisted
+`slot_catchup` intent can schedule a never-started run. The immutable isolation
+marker is rechecked immediately before sending, including after token lookup.
+Caller-owned payloads are copied before asynchronous work.
+
+This is wired into the server's existing Cloud Tasks transport without setting
+generic live gates. It grants no provider, notification, productive queue or
+arbitrary HTTP action. Real IAM/queue deployment, monitor warning delivery and
+the observed four-slot trial remain separate required evidence.

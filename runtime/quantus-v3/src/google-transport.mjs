@@ -25,6 +25,7 @@
  * privater Schluessel. Nur Namen, Scopes und HTTP-Status.
  * ═════════════════════════════════════════════════════════════════════════ */
 import { HttpError } from "./errors.mjs";
+import { isCommissioningTasksPermission, authorizeCommissioningTask } from './commissioning-tasks.mjs';
 
 /* ── 1. JWKS ──────────────────────────────────────────────────────────── */
 
@@ -193,25 +194,32 @@ export async function createGoogleAccessTokenSource({ loadFirebaseAdmin = ladeFi
  * Inhalt — und er reiht nur ein, wenn die Aussenwirkung freigegeben ist.
  *
  * @param allowExternalEffects  `externalEffectsAllowed(config)` — ohne das
- *                              wird NICHTS abgesetzt (Trockenlauf/Schatten).
+ *                              wird ohne gesonderte, gebundene Commissioning-
+ *                              Berechtigung NICHTS abgesetzt.
  */
-export function createCloudTasksHttpTransport({ accessTokenSource, fetchImpl = globalThis.fetch, allowExternalEffects = false, timeoutMs = 15_000 } = {}) {
+export function createCloudTasksHttpTransport({ accessTokenSource, fetchImpl = globalThis.fetch, allowExternalEffects = false, commissioningPermission, timeoutMs = 15_000 } = {}) {
   if (!accessTokenSource || typeof accessTokenSource.get !== "function") {
     return { ok: false, reason: "google_access_token_not_available", transport: null };
   }
   if (typeof fetchImpl !== "function") return { ok: false, reason: "google_fetch_not_available", transport: null };
-  if (allowExternalEffects !== true) return { ok: false, reason: "external_effects_not_allowed", transport: null };
+  const commissioned = isCommissioningTasksPermission(commissioningPermission);
+  if (allowExternalEffects !== true && !commissioned) return { ok: false, reason: "external_effects_not_allowed", transport: null };
 
   return {
     ok: true,
     reason: null,
     transport: {
       async createTask({ url, method, payload }) {
+        if (commissioned) {
+          payload = structuredClone(payload);
+          await authorizeCommissioningTask(commissioningPermission,{url,method,payload});
+        }
         if (typeof url !== "string" || !url.startsWith("https://cloudtasks.googleapis.com/")) {
           throw new HttpError(500, "cloud_tasks_url_invalid");
         }
         if (method !== "POST") throw new HttpError(500, "cloud_tasks_method_invalid");
         const token = await accessTokenSource.get();
+        if (commissioned) await authorizeCommissioningTask(commissioningPermission,{url,method,payload});
         const abbruch = new AbortController();
         const frist = setTimeout(() => abbruch.abort(), Math.max(1, timeoutMs));
         let antwort;

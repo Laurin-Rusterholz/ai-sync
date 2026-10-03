@@ -26,6 +26,7 @@ import { createClosureReviewPort } from './closure-review.mjs';
 import { externalEffectsAllowed } from "./config.mjs";
 import { createOpenAIWorkerPorts } from "./openai-composition.mjs";
 import { isolateShadowCorePort } from "./shadow-isolation.mjs";
+import { createCommissioningTasksPermission } from './commissioning-tasks.mjs';
 
 function structuredLog(entry) {
   process.stdout.write(`${JSON.stringify({ ...entry, service: "quantus-v3" })}\n`);
@@ -59,6 +60,8 @@ if (!resolved.ok) {
     ? createCloudTasksHttpTransport({
       accessTokenSource: tokenQuelle,
       allowExternalEffects: externalEffectsAllowed(config),
+      commissioningPermission: createCommissioningTasksPermission({ config,
+        core: corePort.available ? corePort.impl : null, clock: {now:()=>Date.now()}, envRead:name=>process.env[name] }),
     })
     : { ok: false, reason: tokenQuelle.reason, transport: null };
   const tasksPort = tasksTransport.ok
