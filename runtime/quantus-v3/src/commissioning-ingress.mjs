@@ -62,6 +62,7 @@ export function assertCommissioningOperation(operation,{data,now,core}){
   if(now<auth.approvedAtMs||now>=auth.expiresAtMs)fail(409,'commissioning_authorization_expired');
   if(localDate(now).slice(0,7)!==auth.month)fail(409,'commissioning_month_mismatch');
   const known=cost.callsById[operation.callId];
+  if(operation.recoveryOnly===true&&!known?.dispatch?.claimed)fail(409,'commissioning_recovery_missing');
   if(known&&(known.contentHash!==operation.prepared.contentHash
     ||known.runKey!==operation.runKey||known.provider!==operation.provider||known.model!==operation.model
     ||known.contract.inputTokens!==operation.prepared.inputTokens||known.contract.outputTokens!==operation.prepared.outputTokens
@@ -107,7 +108,9 @@ export function createCommissioningIngress({authority,profiles,transport,ports,e
     audience:approved.audience,allowedServiceAccounts:[approved.serviceAccount]}}},ports,logger,
     routes:[{method:'POST',path:PATH,endpointKey:'commissioning.respond',handler:async ctx=>{
       const body=ctx.body;
-      if(Object.keys(body).length!==4||!['runKey','sectionId','stepIndex','inputJson'].every(k=>Object.hasOwn(body,k))
+      if(![4,5].includes(Object.keys(body).length)||!['runKey','sectionId','stepIndex','inputJson'].every(k=>Object.hasOwn(body,k))
+        ||Object.keys(body).some(k=>!['runKey','sectionId','stepIndex','inputJson','recoveryOnly'].includes(k))
+        ||(Object.hasOwn(body,'recoveryOnly')&&body.recoveryOnly!==true)
         ||typeof body.runKey!=='string'||typeof body.sectionId!=='string'
         ||!approved.allowedRuns.includes(body.runKey)||!Object.hasOwn(approved.profiles,body.sectionId)
         ||!Number.isSafeInteger(body.stepIndex)||body.stepIndex<0||body.stepIndex>approved.maxStepIndex
@@ -120,7 +123,7 @@ export function createCommissioningIngress({authority,profiles,transport,ports,e
       // job ids or restart counters. Changed content keeps the same identity.
       const operationId=hash([approved.allocationId,approved.bindingHash,body.runKey,body.sectionId,body.stepIndex]);
       const operation=Object.freeze({callId:'commission-'+operationId,runKey:body.runKey,sectionId:body.sectionId,
-        stepIndex:body.stepIndex,model:approved.model,provider:'openai',prepared,
+        stepIndex:body.stepIndex,recoveryOnly:body.recoveryOnly===true,model:approved.model,provider:'openai',prepared,
         commissioning:freeze({allocationId:approved.allocationId,bindingHash:approved.bindingHash,operationId})});
       capabilities.set(operation,{authority:approved,principal:ctx.principal,transport});
       const snapshot=await core.read();

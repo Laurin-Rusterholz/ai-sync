@@ -6,6 +6,8 @@ import {leadershipToolDefinitions} from '../runtime/quantus-v3/src/leadership-ga
 import {reserveCommissioningWithMonthlyCap} from '../runtime/quantus-v3/src/monthly-cost-cap.mjs';
 import {releaseLease} from '../netlify/lib/quantus-v3-runtime-state.mjs';
 import {casMutate} from './quantus-v3-runtime-cas-harness.mjs';
+import {createLeadershipJournal,JOURNAL_LIMITS} from '../runtime/quantus-v3/src/leadership-journal.mjs';
+import {createLeadershipLoop} from '../runtime/quantus-v3/src/leadership-loop.mjs';
 import {createHash} from 'node:crypto';
 import {createCommissioningClient} from '../runtime/quantus-v3/src/commissioning-client.mjs';
 import {createOpenAIRequestContract,createOpenAITransport} from '../runtime/quantus-v3/src/openai-transport.mjs';
@@ -98,4 +100,45 @@ test('unknown source outcome remains unknown and large or stalled bodies remain 
  let cancelled=false;
  const stalled=await fixture({timeoutMs:20,response:new Response(new ReadableStream({cancel(){cancelled=true;}}))});
  await assert.rejects(stalled.call(),e=>e.error==='commissioning_response_unconfirmed');assert.equal(cancelled,true);
+});
+
+
+test('commissioned leadership loop persists source output and resumes with recovery-only verification',async()=>{
+ const f=await fixture(),journal=()=>createLeadershipJournal({core:f.core,clock:f.clock,runKey:RUN,verifiedScope:f.scope,artifacts:f.artifacts.store,commissioningClient:f.client});
+ const gateway={definitions:()=>profile.tools,execute:async()=>{throw Error('no tool expected');}};
+ const make=()=>createLeadershipLoop({runKey:RUN,journal:journal(),openai:f.contract,gateway});
+ const first=await make().step({initialRequest:f.request});assert.equal(first.kind,'model_recorded');
+ const next=await make().step({initialRequest:f.request});assert.equal(next.kind,'model_complete');
+ assert.deepEqual(f.store.snapshot().automation.runtime.cost.callsById,{});
+ const bodies=f.wire.map(w=>JSON.parse(w.init.body));assert.equal(bodies[0].recoveryOnly,undefined);assert.equal(bodies[1].recoveryOnly,true);
+ const wrong=createOpenAIRequestContract({model:'test-model',modelPricing:f.contract.modelPricing,maxOutputTokens:512});
+ assert.throws(()=>createLeadershipLoop({runKey:RUN,journal:journal(),openai:wrong,gateway}),/commissioning_keyless_contract_required/);
+});
+
+test('commissioned journal archives only remotely verified settled history without fabricated local costs',async()=>{
+ let corrupt=false;
+ const f=await fixture({changeReceipt:r=>{if(corrupt)r.response.usageReceiptId='changed';}});
+ const journal=()=>createLeadershipJournal({core:f.core,clock:f.clock,runKey:RUN,verifiedScope:f.scope,artifacts:f.artifacts.store,commissioningClient:f.client});
+ const j=journal();
+ for(let n=0;n<JOURNAL_LIMITS.turns;n++){
+  const callId='lead-'+hash([RUN,n]);await j.begin({callId,requestHash:f.prepared.contentHash,request:f.request});
+  await j.dispatchCommissioning({callId,requestHash:f.prepared.contentHash});
+ }
+ assert.equal((await j.rolloverIfNeeded()).rolled,true);await journal().verifyArchives();
+ assert.deepEqual(f.store.snapshot().automation.runtime.cost.callsById,{});
+ assert.equal((await journal().read()).length,JOURNAL_LIMITS.turns);
+ corrupt=true;await assert.rejects(journal().verifyArchives(),e=>e.error==='journal_source_receipt_mismatch');
+});
+
+test('missing or changed source evidence prevents tool execution and no ordinary journal can opt into commissioning',async()=>{
+ let corrupt=false,executed=0;
+ const f=await fixture({changeReceipt:r=>{
+  r.response.result={usable:true,text:'',toolCalls:[{callId:'call-test',name:'quantus_context',arguments:{}}],
+    output:[{type:'function_call',call_id:'call-test',name:'quantus_context',arguments:'{}'}]};
+  if(corrupt)r.response.usageReceiptId='changed';
+ }});
+ const j=createLeadershipJournal({core:f.core,clock:f.clock,runKey:RUN,verifiedScope:f.scope,artifacts:f.artifacts.store,commissioningClient:f.client});
+ const loop=createLeadershipLoop({runKey:RUN,journal:j,openai:f.contract,gateway:{definitions:()=>profile.tools,execute:async()=>executed++}});
+ await loop.step({initialRequest:f.request});corrupt=true;await assert.rejects(loop.step({initialRequest:f.request}));assert.equal(executed,0);
+ assert.throws(()=>createLeadershipJournal({core:f.core,clock:f.clock,runKey:RUN,verifiedScope:f.scope,artifacts:f.artifacts.store,commissioningClient:{...f.client}}),/journal_commissioning_binding_invalid/);
 });

@@ -9,6 +9,9 @@ import {parseSlotRunKey} from '../../../netlify/lib/quantus-v3-runtime-plan.mjs'
 import {commissioningProfileHash} from './commissioning-ingress.mjs';
 import {isOpenAIRequestContract} from './openai-transport.mjs';
 import {verifyGoogleIdToken} from './oidc.mjs';
+const clients=new WeakMap();
+export const isCommissioningClientFor=(client,core)=>clients.get(client)?.core===core;
+export const commissioningClientContract=client=>clients.get(client)?.contract??null;
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const fail=(code,status=409)=>{throw new HttpError(status,code);};
 const id=v=>typeof v==='string'&&/^[A-Za-z0-9_.:-]{1,120}$/.test(v)&&!v.includes('__');
@@ -32,7 +35,7 @@ export function createCommissioningClient({config,core,clock,connection,contract
     if(run?.phase!=='active'||section?.closed!==false||section.holder!==scope.holder||section.fence!==scope.fence)
       fail('commissioning_shadow_section_mismatch');
   }
-  return Object.freeze({async respond({runKey,stepIndex,request,verifiedScope,signal}){
+  async function send({runKey,stepIndex,request,verifiedScope,signal},recoveryOnly){
     const parsed=parseSlotRunKey(runKey),profile=approved.profiles[parsed.slot];
     if(parsed.tenant!==binding.tenant||!profile||!Number.isSafeInteger(stepIndex)||stepIndex<0||stepIndex>4095
       ||commissioningProfileHash(request)!==profile.hash)fail('commissioning_client_request_invalid',400);
@@ -54,7 +57,7 @@ export function createCommissioningClient({config,core,clock,connection,contract
       // Recheck token lifetime after the final awaited source read.
       verifyGoogleIdToken(token,{audience:approved.audience,allowedServiceAccounts:[approved.serviceAccount],jwks:keys,now:clock.now()});
       const response=await fetchImpl(approved.audience,{method:'POST',redirect:'error',signal:controller.signal,
-        headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({runKey,sectionId:profile.id,stepIndex,inputJson})});
+        headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({runKey,sectionId:profile.id,stepIndex,inputJson,...(recoveryOnly?{recoveryOnly:true}:{})})});
       check();if(!response.ok){void response.body?.cancel().catch(()=>{});fail('commissioning_broker_rejected',response.status>=400&&response.status<=599?response.status:502);}
       reader=response.body?.getReader();if(!reader)fail('commissioning_response_unconfirmed',502);
       const chunks=[];let size=0;
@@ -72,5 +75,7 @@ export function createCommissioningClient({config,core,clock,connection,contract
       await active(runKey,verifiedScope);check();return receipt;
     })()]);}catch(error){if(error instanceof HttpError)throw error;fail('commissioning_response_unconfirmed',502);}
     finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);}
-  }});
+  }
+  const client=Object.freeze({respond:args=>send(args,false),recover:args=>send(args,true)});
+  clients.set(client,{core,contract});return client;
 }

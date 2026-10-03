@@ -5,7 +5,8 @@
  */
 import { createHash } from 'node:crypto';
 import { HttpError } from './errors.mjs';
-import { JOURNAL_LIMITS } from './leadership-journal.mjs';
+import {isOpenAIRequestContract} from './openai-transport.mjs';
+import { JOURNAL_LIMITS,isCommissioningJournal,commissioningJournalContract } from './leadership-journal.mjs';
 import { continueLeadershipInput } from './leadership-conversation.mjs';
 import { commandUnconfirmed } from './leadership-command-state.mjs';
 const hash = v => createHash('sha256').update(JSON.stringify(v)).digest('hex');
@@ -16,8 +17,10 @@ function contextOverCapacity(call, receipt) {
 }
 
 export function createLeadershipLoop({ runKey, journal, openai, gateway, costAdapter, completionCheck } = {}) {
+  const commissioned=isCommissioningJournal(journal);
+  if(commissioned&&(!isOpenAIRequestContract(openai)||commissioningJournalContract(journal)!==openai))throw new TypeError('commissioning_keyless_contract_required');
   if (typeof runKey !== 'string' || !journal?.begin || !journal?.settleResponse || !openai?.prepare
-    || !gateway?.execute || !costAdapter?.claimAndDispatch) throw new TypeError('leadership_loop_configuration_missing');
+    || !gateway?.execute || (!commissioned&&!costAdapter?.claimAndDispatch)) throw new TypeError('leadership_loop_configuration_missing');
   const callIdAt = index => 'lead-' + hash([runKey, index]);
   return Object.freeze({
     async step({ initialRequest, signal } = {}) {
@@ -94,6 +97,12 @@ export function createLeadershipLoop({ runKey, journal, openai, gateway, costAda
       }
       if (current.requestHash && current.requestHash !== prepared.contentHash) throw new HttpError(409, 'leadership_request_changed');
       await journal.begin({ callId: current.callId, requestHash: prepared.contentHash, request: current.request });
+      if(commissioned){
+        checkAbort();
+        const charged=await journal.dispatchCommissioning({callId:current.callId,requestHash:prepared.contentHash,signal});
+        return {kind:charged.outcome==='settled'?'model_recorded':'blocked',callId:current.callId,
+          ...(charged.outcome==='settled'?{}:{reason:'provider_outcome_unknown'})};
+      }
       await costAdapter.reserve({ callId: current.callId, runKey, provider: openai.provider, model: openai.model,
         contentHash: prepared.contentHash, inputTokens: prepared.inputTokens, outputTokens: prepared.outputTokens, modelPricing: openai.modelPricing });
       checkAbort();

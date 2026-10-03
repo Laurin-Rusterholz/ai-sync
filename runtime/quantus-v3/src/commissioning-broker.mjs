@@ -76,6 +76,7 @@ export function createCommissioningBroker({ports,transport,artifacts,artifactBuc
           outcome:response.outcome,response,replayed,dispatchAllowed:false};
       }
       const retained=await recover(true);if(retained)return retained;
+      if(operation.recoveryOnly===true)fail('commissioning_recovery_missing');
       const adapter=createCommissioningCostAdapter({ports,config,now:clock.now(),requestId:holder,verifiedScope},
         {operation,__allowFixturePolicy});
       await adapter.reserve({...operation,...operation.prepared,modelPricing:pricing});
