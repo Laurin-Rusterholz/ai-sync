@@ -84,3 +84,11 @@ test('unresolved real provider obligations block a new commissioning hold',()=>{
  const out=casMutate(store,allocation({...input,policy:{...input.policy,unresolvedBlockMicros:0}},grant()));
  assert.equal(out.result.code,'unresolved_cost_blocking');assert.equal(out.wrote,false);
 });
+
+test('invalid policy currency or approval metadata cannot poison the ledger',()=>{
+ const {store,input}=setup(),before=store.snapshot();
+ for(const patch of [{currency:'EUR'},{approval:{...input.policy.approval,approvedAtMs:now+1}},{approval:{...input.policy.approval,approvalRef:' '}},{approval:{...input.policy.approval,approvalRef:'x'.repeat(501)}}]){
+  assert.throws(()=>hold(before,{...input,policy:{...input.policy,...patch},authorization:grant()}),{code:'commissioning_policy_invalid'});
+ }
+ assert.deepEqual(store.snapshot(),before);
+});

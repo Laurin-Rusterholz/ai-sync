@@ -1376,6 +1376,10 @@ export function reserveCommissioningAllocation(data,input={}) {
   if(now<authorization.approvedAtMs||now>=authorization.expiresAtMs)fail("commissioning_authorization_expired",409);
   if(authorization.month!==zurichLocalDate(now).slice(0,7))fail("commissioning_month_mismatch",409);
   assertPaidCallAllowed(input.policy,{now,allowFixture:input.__allowFixturePolicy===true});
+  if(input.policy.currency!=="USD"||input.policy.approval.approvedAtMs>now)fail("commissioning_policy_invalid",503);
+  const entry={allocationId:authorization.allocationId,state:"held",authorization:structuredClone(authorization),
+    reservedAtMs:now,policyVersion:input.policy.version,policyApprovalRef:input.policy.approval.approvalRef};
+  if(!validateCommissioningAllocations({[authorization.allocationId]:entry}))fail("commissioning_policy_invalid",503);
   assertLeadership(data,verified,now);
   const cost=readRuntime(data).cost,known=cost?.commissioningAllocationsById?.[authorization.allocationId];
   if(known){
@@ -1388,8 +1392,7 @@ export function reserveCommissioningAllocation(data,input={}) {
   const {next,runtime}=begin(data,now);
   const area=costArea(runtime);
   area.commissioningAllocationsById??={};
-  area.commissioningAllocationsById[authorization.allocationId]={allocationId:authorization.allocationId,state:"held",
-    authorization:structuredClone(authorization),reservedAtMs:now,policyVersion:input.policy.version,policyApprovalRef:input.policy.approval.approvalRef};
+  area.commissioningAllocationsById[authorization.allocationId]=entry;
   return commit(next,{allocationId:authorization.allocationId,heldMicros:authorization.maxMicros,dispatchAllowed:false});
 }
 
