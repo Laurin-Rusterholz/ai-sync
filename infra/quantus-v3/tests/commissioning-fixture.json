@@ -1,0 +1,55 @@
+{
+  "runtime_mode": "shadow",
+  "shadow_binding": {
+    "schemaVersion": 1,
+    "sourceProjectId": "quantus-production-test",
+    "sourceTenant": "production",
+    "sourceC2Origin": "https://production.invalid",
+    "projectId": "quantus-test-project",
+    "tenant": "quantus",
+    "c2Origin": "https://quantus.test.invalid",
+    "databaseUrl": "https://quantus-test-project.firebaseio.com",
+    "ref": "synthetic-test-only-isolation"
+  },
+  "runtime_secret_ids": {
+    "firebase_worker": "quantus-test-firebase-worker",
+    "firebase_monitor": "quantus-test-firebase-monitor",
+    "firebase_watchdog": "quantus-test-firebase-watchdog",
+    "assistant_policy": "quantus-test-assistant-policy",
+    "worker_token_keys": "quantus-test-worker-token-keys",
+    "service_credentials": "quantus-test-service-credentials"
+  },
+  "commissioning_worker": {
+    "connection": {
+      "audience": "https://broker.invalid/v4/commissioning/respond",
+      "serviceAccount": "quantus-worker@quantus-test-project.iam.gserviceaccount.com",
+      "bindingHash": "0234a2462d2d0cc26a5e8bd1b016b0b3e413a60063cf520334161a7916e8b0fa",
+      "allocationId": "synthetic-never-activated",
+      "profiles": {
+        "briefing04": {
+          "id": "briefing04-test",
+          "hash": "e67c20dcaf0ed7a25d1c2306eb1b59059eca755dfd852658ee72754f63c2f687"
+        },
+        "process09": {
+          "id": "process09-test",
+          "hash": "3e32a97469d5c2fd989836c3c771066f7090641355b48afc101c300204d23d1c"
+        },
+        "continue14": {
+          "id": "continue14-test",
+          "hash": "6ddd91bc5471f4e1aa12df091491e2284192bcb67c72cc68343081f75f1a97e6"
+        },
+        "close23": {
+          "id": "close23-test",
+          "hash": "bec41e8c9705921457bfec66c7b2d4ae7624ad0c58824e7cd25b1158d46db168"
+        }
+      }
+    },
+    "isolatedDomain": true,
+    "sourceReadIds": []
+  },
+  "commissioning_tasks": {
+    "binding_hash": "0234a2462d2d0cc26a5e8bd1b016b0b3e413a60063cf520334161a7916e8b0fa",
+    "approved_at_ms": 1790924400000,
+    "expires_at_ms": 1791010800000
+  }
+}

@@ -203,3 +203,86 @@ run "shadow_cannot_reuse_the_production_project" {
   }
   expect_failures = [var.shadow_binding]
 }
+
+run "commissioned_shadow_runtime" {
+  command = apply
+  variables {
+    runtime_mode         = jsondecode(file("tests/commissioning-fixture.json")).runtime_mode
+    shadow_binding       = jsondecode(file("tests/commissioning-fixture.json")).shadow_binding
+    runtime_secret_ids   = jsondecode(file("tests/commissioning-fixture.json")).runtime_secret_ids
+    commissioning_worker = jsondecode(file("tests/commissioning-fixture.json")).commissioning_worker
+    commissioning_tasks  = jsondecode(file("tests/commissioning-fixture.json")).commissioning_tasks
+  }
+  assert {
+    condition     = !contains(keys(local.runtime_secrets.worker), "QUANTUS_V4_OPENAI_API_KEY") && !contains(keys(local.runtime_secret_ids), "openai_api_key") && alltrue([for binding in values(local.runtime_secret_bindings) : binding.key != "openai_api_key"])
+    error_message = "The isolated broker worker must not fetch, mount or gain access to a provider secret."
+  }
+  assert {
+    condition     = one([for e in google_cloud_run_v2_service.worker.template[0].containers[0].env : e.value if e.name == "QUANTUS_V4_COMMISSIONING_WORKER_JSON"]) == jsonencode(merge({ schemaVersion = 1 }, var.commissioning_worker)) && alltrue([for role in ["monitor", "watchdog"] : !contains(keys(local.runtime_public[role]), "QUANTUS_V4_COMMISSIONING_WORKER_JSON")])
+    error_message = "The reviewed worker permission must reach only its worker."
+  }
+  assert {
+    condition     = alltrue([for service in [google_cloud_run_v2_service.worker, google_cloud_run_v2_service.monitor] : jsondecode(one([for e in service.template[0].containers[0].env : e.value if e.name == "QUANTUS_V4_COMMISSIONING_TASKS_JSON"])).queue == output.tasks_queue]) && !contains(keys(local.runtime_public.watchdog), "QUANTUS_V4_COMMISSIONING_TASKS_JSON")
+    error_message = "Only worker and monitor may receive the exact isolated queue permission."
+  }
+  assert {
+    condition     = jsondecode(local.commissioning_tasks_env.QUANTUS_V4_COMMISSIONING_TASKS_JSON).targetUrl == "${local.worker_url}/v3/run/continue" && jsondecode(local.commissioning_tasks_env.QUANTUS_V4_COMMISSIONING_TASKS_JSON).oidcServiceAccount == google_service_account.tasks.email && output.scheduler_jobs_paused && !var.allow_external_effects && !var.activation_gates.trial14Days.passed
+    error_message = "Continuation target/account must match the deployment without activating schedulers or claiming a trial."
+  }
+}
+
+run "commissioning_requires_shadow" {
+  command = plan
+  variables {
+    runtime_mode         = "dry_run"
+    shadow_binding       = null
+    runtime_secret_ids   = jsondecode(file("tests/commissioning-fixture.json")).runtime_secret_ids
+    commissioning_worker = jsondecode(file("tests/commissioning-fixture.json")).commissioning_worker
+    commissioning_tasks  = jsondecode(file("tests/commissioning-fixture.json")).commissioning_tasks
+  }
+  expect_failures = [var.commissioning_worker]
+}
+
+run "commissioning_wrong_worker_identity" {
+  command = plan
+  variables {
+    runtime_mode         = jsondecode(file("tests/commissioning-fixture.json")).runtime_mode
+    shadow_binding       = jsondecode(file("tests/commissioning-fixture.json")).shadow_binding
+    runtime_secret_ids   = jsondecode(file("tests/commissioning-fixture.json")).runtime_secret_ids
+    commissioning_worker = merge(jsondecode(file("tests/commissioning-fixture.json")).commissioning_worker, { connection = merge(jsondecode(file("tests/commissioning-fixture.json")).commissioning_worker.connection, { serviceAccount = "other@quantus-test-project.iam.gserviceaccount.com" }) })
+    commissioning_tasks  = jsondecode(file("tests/commissioning-fixture.json")).commissioning_tasks
+  }
+  expect_failures = [google_cloud_run_v2_service.worker]
+}
+
+run "commissioning_mismatched_task_binding" {
+  command = plan
+  variables {
+    runtime_mode         = jsondecode(file("tests/commissioning-fixture.json")).runtime_mode
+    shadow_binding       = jsondecode(file("tests/commissioning-fixture.json")).shadow_binding
+    runtime_secret_ids   = jsondecode(file("tests/commissioning-fixture.json")).runtime_secret_ids
+    commissioning_worker = jsondecode(file("tests/commissioning-fixture.json")).commissioning_worker
+    commissioning_tasks  = merge(jsondecode(file("tests/commissioning-fixture.json")).commissioning_tasks, { binding_hash = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" })
+  }
+  expect_failures = [var.commissioning_tasks]
+}
+
+run "commissioning_cannot_keep_provider_secret" {
+  command = plan
+  variables {
+    runtime_mode         = jsondecode(file("tests/commissioning-fixture.json")).runtime_mode
+    shadow_binding       = jsondecode(file("tests/commissioning-fixture.json")).shadow_binding
+    runtime_secret_ids   = jsondecode(file("tests/runtime.auto.tfvars.json")).runtime_secret_ids
+    commissioning_worker = jsondecode(file("tests/commissioning-fixture.json")).commissioning_worker
+    commissioning_tasks  = jsondecode(file("tests/commissioning-fixture.json")).commissioning_tasks
+  }
+  expect_failures = [var.runtime_secret_ids]
+}
+
+run "commissioning_tasks_require_shadow" {
+  command = plan
+  variables {
+    commissioning_tasks = jsondecode(file("tests/commissioning-fixture.json")).commissioning_tasks
+  }
+  expect_failures = [var.commissioning_tasks]
+}

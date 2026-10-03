@@ -1080,3 +1080,9 @@ A default Google Cloud metadata identity source obtains and independently verifi
 ### Permit bounded isolated continuation dispatch
 
 The existing server can construct Cloud Tasks transport for a branded isolated worker/monitor using an explicit queue, target, account and time-window permission. Every request validates its stable task identity and persisted pending intent before and after credential acquisition, with fresh durable isolation and expiry checks. Completed or consumed work is refused; the monitor's retained catch-up intent can recover a missed slot with no existing run. The normal live gate is unchanged and the capability grants no other external effects. Tests use real checkpoint reducers and transport/port paths with synthetic Google responses; no queue, IAM or trial was activated.
+
+### Commissioning permissions reach the rendered deployment
+
+The existing Terraform module now has explicit optional isolated worker and continuation inputs. Worker identity is tied to the attached service account; Tasks target/queue/account derive from the deployment's own resources. The shadow worker no longer fetches, mounts or receives access to an OpenAI key. Worker permissions are excluded from monitor/watchdog, and task permission is excluded from watchdog. Scheduler pause and all live/trial gates remain unchanged.
+
+Offline tests render actual Cloud Run environments and exercise refusal of wrong mode, identity, binding and retained provider-secret configuration. A CI bridge loads those rendered environments into the real runtime, shadow isolation, keyless worker and task-permission constructors with synthetic credentials and no network. Actual source broker deployment, IAM/credential verification, notification delivery and the genuine trial remain outstanding.
