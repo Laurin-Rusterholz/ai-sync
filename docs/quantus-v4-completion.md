@@ -1060,3 +1060,7 @@ The legacy-question bridge now admits the specific initial state-model/3 migrati
 ### Dedicated source commissioning service
 
 A separate `commissioning-server.mjs` command wires the existing authenticated ingress and broker to real CAS, explicitly bound source credentials, Google identity verification, fresh cost policy, private response artifacts and OpenAI transport. The ordinary server command and runtime gates remain unchanged. Shared reviewed leadership instructions prevent prompt drift between the worker and source service; the service binds each profile to its actual run slot before lease acquisition. Startup performs no paid call, creates no budget allocation and leaks no invalid configuration values. Live deployment and the isolated worker client remain separate outstanding work.
+
+### Isolated broker client and exact source receipts
+
+The isolated caller now has a bounded, authenticated source-broker client and a genuinely keyless request preparer shared with the paid OpenAI transport. It verifies active shadow authority before and after asynchronous I/O, checks the exact Google identity, refuses redirects, validates source receipt identity/hash/model/token/usage fields, and makes no local cost claims. Tests connect this client to the real ingress/composition/CAS/artifact pipeline with synthetic network dependencies: repeated input recovers one stored provider result and leaves shadow state unchanged. The client still needs installation into the leadership loop and its history/settlement verification before a real trial can run.

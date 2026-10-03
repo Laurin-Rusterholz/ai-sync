@@ -73,3 +73,6 @@ export const isIsolatedShadowCore = (impl,config) => {
   return !!bound && config?.mode==='shadow' && config.tenant===bound.binding.tenant
     && config.role===bound.role && config.c2BaseUrl===bound.c2BaseUrl;
 };
+
+// Immutable reviewed binding only; no credential values are exposed.
+export const isolatedShadowBinding = impl => boundPorts.get(impl)?.binding ?? null;

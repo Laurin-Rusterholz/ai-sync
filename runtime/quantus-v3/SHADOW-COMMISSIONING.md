@@ -260,3 +260,28 @@ Deployment must still establish the reviewed source Cloud Run service, invoker
 IAM, isolated worker client, actual held allocation and source access. This
 source entrypoint does not activate shadow scheduling, Gmail, tools or the
 14-day trial. Request recovery remains through the existing source broker.
+
+## Isolated caller transport
+
+`createCommissioningClient` requires the branded isolated core and its immutable
+reviewed binding. It checks the actual shadow lease/active section before and
+after I/O, validates its Google-signed identity token for the exact approved
+broker audience/service account, and sends only run, reviewed profile ID, stable
+step ordinal and input JSON. The profile ID is chosen by slot, not by a changing
+HTTP continuation section. No token, caller lease or role is accepted in the
+body. Redirects are refused; request time and response bytes are bounded; errors
+expose neither broker bodies nor tokens. There is no automatic retry.
+
+The exported keyless `createOpenAIRequestContract` prepares the same immutable
+bytes as the paid transport, with no credential or dispatch method. A source
+receipt must match the allocation/binding, operation ID, run/profile/ordinal,
+request hash, token contract, model and settled usage before it is returned.
+Unknown outcomes stay unknown. The source broker returns these fields only from
+its admitted operation and independently read cost/response evidence. The
+caller creates no shadow cost reservation or copied spending authority.
+
+The client is not yet installed into the leadership loop. That integration must
+preserve the loop's run/index identity across sections, persist source receipts,
+and verify source settlement when archiving journal history. The current
+journal's local-cost verification cannot be satisfied with invented shadow cost
+rows. A real Google ID-token source, deployment and trial still remain open.
