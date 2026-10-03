@@ -18,7 +18,7 @@ function matchesCandidate(question, candidate) {
 }
 function migrationState(leadId, lead, questions, related = Object.values(questions).filter(q => q?.legacySource?.leadId === leadId)) {
   const state = lead ? effektiverZustand('chatgptLead', lead) : null;
-  return hash([lead?.status ?? null, state?.state ?? null, state?.version ?? null,
+  return hash([state?.state ?? null, state?.version ?? null,
     related.slice().sort((a, b) => a.id.localeCompare(b.id))]);
 }
 
@@ -27,7 +27,7 @@ export function inspectLegacyQuestion(leadId, lead) {
   if (original == null) return { absent: true };
   const state = effektiverZustand('chatgptLead', lead);
   // Historical answers on closed leads are history, never new instructions.
-  if (lead.status === 'abgeschlossen' || ABGESCHLOSSENE_ZUSTAENDE.includes(state.state)) return { closed: true };
+  if (ABGESCHLOSSENE_ZUSTAENDE.includes(state.state)) return { closed: true };
   const fingerprint = legacyQuestionFingerprint(leadId, original);
   const problem = reason => ({ leadId, fingerprint, reason });
   if (state.unmigrated || state.unmapped || state.versionInvalid) return problem('legacy_lead_state_unresolved');

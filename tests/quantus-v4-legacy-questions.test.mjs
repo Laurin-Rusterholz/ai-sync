@@ -66,13 +66,21 @@ test('changed legacy source rejects stale answer and withdraws the old open ques
 test('closed and deleted leads never become new questions; existing open migration questions are withdrawn', async () => {
   for (const mode of ['closed', 'deleted']) {
     const f = await fixture(); await f.make().next();
-    f.store.forceWrite(d => { if (mode === 'closed') d.entities.chatgptLeads.l0.status = 'abgeschlossen'; else delete d.entities.chatgptLeads.l0; return d; });
+    f.store.forceWrite(d => { if (mode === 'closed') { d.entities.chatgptLeads.l0.operationalState = 'done'; d.entities.chatgptLeads.l0.operationalStateVersion++; } else delete d.entities.chatgptLeads.l0; return d; });
     await f.make().next();
     assert.equal(Object.values(f.store.snapshot().automation.questionsById)[0].status, 'withdrawn');
     assert.equal((await f.make().next()).ready, true);
   }
-  const data = core(); data.entities.chatgptLeads.l0.status = 'abgeschlossen';
+  const data = core(); data.entities.chatgptLeads.l0.operationalState = 'done';
   assert.deepEqual(planLegacyQuestions(data).items, []);
+});
+
+test('canonical reopened state leads; a stale legacy closed flag cannot suppress its new question', async () => {
+  const data = core(); data.entities.chatgptLeads.l0.status = 'abgeschlossen';
+  assert.equal(data.entities.chatgptLeads.l0.operationalState, 'doing');
+  const f = await fixture(data); await f.make().next();
+  assert.equal(Object.values(f.store.snapshot().automation.questionsById)[0].status, 'open');
+  assert.equal(f.store.snapshot().entities.chatgptLeads.l0.status, 'abgeschlossen', 'historical field stays untouched');
 });
 
 test('ambiguous legacy values remain visible as unresolved and are never guessed', async () => {
