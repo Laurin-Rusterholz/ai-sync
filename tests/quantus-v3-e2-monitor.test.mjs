@@ -40,10 +40,11 @@ async function watchdogService(options = {}) {
   const key = F.createSigningKey();
   const clock = F.createClock(options.startMs ?? NOW);
   const core = options.core ?? F.createCorePort(F.createCasStore(F.baseCore()));
-  const alert = F.createAlertPort({ delivered: options.delivered !== false, throws: options.throws === true });
+  const alert = F.createAlertPort({ delivered: options.delivered !== false, throws: options.throws === true, now: () => clock.value });
   const service = await F.startService({
     role: "watchdog",
     ports: { clock: clock.port, jwks: F.jwksPort(key), core: core.port, alert: alert.port },
+    configOverrides: { QUANTUS_V3_RUNTIME_MODE: "live", QUANTUS_V3_ALLOW_EXTERNAL_EFFECTS: "true", QUANTUS_V3_ACTIVATION_GATES: F.allGatesPassed() },
   });
   const token = () => F.schedulerToken(key, { audience: F.AUD.watchdogCheck, email: F.SA.schedulerWatchdog, nowMs: clock.value });
   return { key, clock, core, alert, service, token };
@@ -242,6 +243,7 @@ test("ohne Warnweg gibt es 503, keinen stillen Erfolg", async (t) => {
   const service = await F.startService({
     role: "watchdog",
     ports: { clock: clock.port, jwks: F.jwksPort(key), core: m.core.port, alert: F.unavailablePort("alert", "alert_channel_not_wired") },
+    configOverrides: { QUANTUS_V3_RUNTIME_MODE: "live", QUANTUS_V3_ALLOW_EXTERNAL_EFFECTS: "true", QUANTUS_V3_ACTIVATION_GATES: F.allGatesPassed() },
   });
   t.after(() => service.close());
   const token = F.schedulerToken(key, { audience: F.AUD.watchdogCheck, email: F.SA.schedulerWatchdog, nowMs: clock.value });

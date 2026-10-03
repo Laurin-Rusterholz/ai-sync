@@ -869,3 +869,14 @@ Selbstreferenzen auf die erst zu erstellenden Dienstadressen sind entfernt. Dete
 Pruefstand: Terraform 1.13.3, gesperrter Google-Provider 6.50.0; echte Terraform-Validierung und fuenf simulierte Infrastrukturtests (vollstaendige Rollen, fehlende Angaben, Gmail-Isolation, geteilte Geheimnisse). Zehn Node-Vertragstests initialisieren die wirklichen Runtime-/Auth-/Policy-/Leitungs-Ports mit derselben Zuordnung und pruefen Identitaetsfehler ohne Geheimnisausgabe. CI fuehrt diese Infrastrukturtests sowie die Runtime-/v4-Regressionssuite aus. Geheimnisse und Cloud-Ressourcen werden dabei nicht produktiv verwendet.
 
 Weiter offen: konkrete produktive Werte und Secret-Versionen, C2-Gleichstand, Firebase-/IAM-Zugriff, erfolgreicher authentifizierter Aufruf durch die echte Cloud-Run-Schicht, Alarmkanal, alle Schreibclients, vollstaendige Quellen-/Spezialisten-/Archivierungsstrecken und echter 14-Tage-Probebetrieb. Kein Abnahmepunkt wird allein durch diese Offline-Konfiguration als produktiv bestanden markiert; alle Zeitplaene bleiben pausiert.
+
+
+## Warnfehler trotz wieder laufendem Monitor nachverfolgen (2026-10-03)
+
+Im Watchdog war ein frischer Heartbeat bisher ein bedingungsloser Erfolgspfad. Damit verschwanden fehlgeschlagene Warnzustellungen aus der weiteren Pruefung. Er wertet nun zusaetzlich offene Warnfehler aus. Ein separater Kanal-Belegabruf muss Warnkennung, Quittungskennung, Kanal und plausiblen Zustellzeitpunkt bestaetigen. Eine reine `delivered`-Behauptung aus `send` genuegt nicht. Zeit wird nach dem Kanalabruf frisch gelesen, damit echte Zustellungen nach Anfragebeginn nicht faelschlich abgewiesen werden.
+
+`recordWarningDelivery` speichert den Beleg und bestaetigt atomar nur den vorher beobachteten Fehlerzaehler. Neuere parallele Fehler bleiben offen; bestehende Belege sind unveraenderlich und werden unabhaengig zurueckgelesen. Neue fehlgeschlagene Eskalationen erzeugen keine unendliche Kette weiterer Fehlerzaehler. Ein stabiler Warnschluessel wird an den verpflichtend idempotenten Kanaladapter gegeben. Dry-run und Schattenbetrieb versenden und quittieren nichts.
+
+16 gezielte Tests pruefen den wirklichen authentifizierten HTTP-/CAS-Weg mit synthetischem Kanal: frischer Heartbeat mit Warnfehler, konkurrierender neuer Fehler, falsche/fehlende/verfruehte/zukuenftige Belege, verlorener Readback, zeitversetzte Zustellung, parallele Aufrufe, unveraenderlicher Replay und die Betriebsarten. Die bisherige Monitor-Suite wurde fuer den jetzt ausdruecklich erforderlichen Live-Testmodus und Belegabruf angepasst.
+
+Kein produktiver T39-Abschluss: Kanalwahl ist angefragt; der Server hat weiterhin keinen produktiven Warnadapter. Dauerhafte Provider-Idempotenz, reale Zustellung, separater technischer Pruefpfad ausserhalb des Kernblobs und Warnung bei Ausfall dieses Speichers muessen noch umgesetzt und nachgewiesen werden. Der Belegvertrag allein ist kein Nachweis dieser Eigenschaften.
