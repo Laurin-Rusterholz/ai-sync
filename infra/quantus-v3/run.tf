@@ -57,6 +57,12 @@ locals {
 }
 
 resource "google_cloud_run_v2_service" "worker" {
+  lifecycle {
+    precondition {
+      condition     = var.commissioning_worker == null ? true : var.commissioning_worker.connection.serviceAccount == google_service_account.worker.email
+      error_message = "The broker caller must be this isolated worker's attached service account."
+    }
+  }
   depends_on          = [google_secret_manager_secret_iam_member.runtime, google_storage_bucket_iam_member.artifact_worker]
   custom_audiences    = [for endpoint in values(jsondecode(local.endpoints_worker)) : endpoint.audience]
   name                = "${local.prefix}-worker"

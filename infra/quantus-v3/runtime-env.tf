@@ -10,12 +10,16 @@ locals {
       { for name in names : name => var.runtime_settings[name] },
       { QUANTUS_V3_EXPECTED_SERVICE_ACCOUNT = local.runtime_accounts[role] },
       role == "worker" ? { QUANTUS_V3_FIREBASE_TENANT = var.tenant, QUANTUS_V3_MODE = "enforce" } : {},
-      role == "worker" && var.gmail != null ? var.gmail.settings : {}
+      role == "worker" && var.gmail != null ? var.gmail.settings : {},
+      role == "worker" ? local.commissioning_worker_env : {},
+      contains(["worker", "monitor"], role) ? local.commissioning_tasks_env : {}
     )
   }
   runtime_secrets = {
-    for role, mapping in local.runtime_contract.secrets : role => merge(mapping,
-    role == "worker" && var.gmail != null ? local.runtime_contract.gmail.secrets : {})
+    for role, mapping in local.runtime_contract.secrets : role => {
+      for name, key in merge(mapping, role == "worker" && var.gmail != null ? local.runtime_contract.gmail.secrets : {}) :
+      name => key if !(role == "worker" && var.commissioning_worker != null && key == "openai_api_key")
+    }
   }
   runtime_secret_bindings = merge([
     for role, mapping in local.runtime_secrets : {
@@ -46,8 +50,8 @@ variable "runtime_secret_ids" {
   description = "Existing Secret Manager NAMES only, with role-specific Firebase service-account JSON; no secret values."
   type        = map(string)
   validation {
-    condition     = toset(keys(var.runtime_secret_ids)) == toset(["firebase_worker", "firebase_monitor", "firebase_watchdog", "assistant_policy", "worker_token_keys", "service_credentials", "openai_api_key"])
-    error_message = "runtime_secret_ids must provide exactly the seven required secret references."
+    condition     = toset(keys(var.runtime_secret_ids)) == toset(concat(["firebase_worker", "firebase_monitor", "firebase_watchdog", "assistant_policy", "worker_token_keys", "service_credentials"], var.commissioning_worker == null ? ["openai_api_key"] : []))
+    error_message = "runtime_secret_ids must match the mode: six references for commissioned shadow work, otherwise seven including the provider key."
   }
   validation {
     condition     = alltrue([for id in values(var.runtime_secret_ids) : can(regex("^[A-Za-z0-9_-]{1,255}$", id)) && !can(regex("(?i)REPLACE|TODO|CHANGEME", id))]) && length(distinct(concat(values(var.runtime_secret_ids), [var.tool_credential_secret_id, var.cost_policy_secret_id], var.gmail == null ? [] : values(var.gmail.secret_ids)))) == length(var.runtime_secret_ids) + 2 + (var.gmail == null ? 0 : length(var.gmail.secret_ids))

@@ -101,6 +101,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.13.3
@@ -110,4 +113,8 @@ jobs:
           terraform fmt -check -recursive
           terraform init -backend=false -input=false -lockfile=readonly
           terraform validate
-          terraform test -var-file=tests/runtime.auto.tfvars.json
+          if ! terraform test -var-file=tests/runtime.auto.tfvars.json -json -verbose > "$RUNNER_TEMP/quantus-infrastructure-tests.jsonl"; then
+            node ../../scripts/check-quantus-commissioning-env.mjs "$RUNNER_TEMP/quantus-infrastructure-tests.jsonl" || true
+            exit 1
+          fi
+          node ../../scripts/check-quantus-commissioning-env.mjs "$RUNNER_TEMP/quantus-infrastructure-tests.jsonl"

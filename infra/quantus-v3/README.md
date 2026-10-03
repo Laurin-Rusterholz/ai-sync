@@ -94,3 +94,29 @@ node --test tests/quantus-v4-runtime-deployment.test.mjs
 ```
 
 Die Testdatei verwendet `mock_provider "google"`; ihre `apply`-Abschnitte laufen vollstaendig gegen Attrappen, ohne Cloud-Zugriff. Die Werte unter `tests/` sind synthetisch und duerfen niemals fuer ein produktives Deployment benutzt werden. Die Node-Tests geben dieselben oeffentlichen Werte und die gemeinsame Namenszuordnung an die echten Runtime-/Auth-/Policy-/Leitungs-Konstruktoren. Geheimnisse entstehen nur temporaer im Testprozess. Der bestehende E2-Topologie-Validator bleibt eine zusaetzliche Pruefung.
+
+## Explicit shadow commissioning inputs
+
+The optional `commissioning_worker` input supplies the reviewed broker
+connection, `isolatedDomain = true` and exact `sourceReadIds`. It is accepted
+only with `runtime_mode = "shadow"` and an explicit `shadow_binding`. The broker
+caller must be the worker service's actual attached account. Its profile hashes
+must match the reviewed runtime prompts/tools; runtime validation remains
+authoritative. In this mode `runtime_secret_ids` contains the six normal
+non-provider references and omits `openai_api_key`. No provider secret is
+looked up, mounted or granted to the shadow worker. Ordinary deployments retain
+the seven-reference contract.
+
+Optional `commissioning_tasks` supplies `binding_hash`, `approved_at_ms` and
+`expires_at_ms`. The module derives the permission's exact queue, worker target
+and Tasks identity from its own resources, and emits it only for worker and
+monitor. Its binding must match the worker connection when both are configured.
+These inputs do not unpause Scheduler jobs, approve any activation gate, create
+a source cost allocation or deploy the source broker.
+
+The offline Terraform test renders all three service environments. CI feeds the
+actual rendered settings to the real runtime/isolation/commissioning constructors
+using synthetic secret values and prohibited network calls. This checks the
+configuration boundary; it does not prove actual IAM, credentials, C2 storage
+bindings or a live trial. See `runtime/quantus-v3/SHADOW-COMMISSIONING.md` in the
+repository root for runtime fields and remaining source deployment requirements.
