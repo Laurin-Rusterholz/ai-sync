@@ -9,6 +9,7 @@ import {parseSlotRunKey} from '../../../netlify/lib/quantus-v3-runtime-plan.mjs'
 import {commissioningProfileHash} from './commissioning-ingress.mjs';
 import {isOpenAIRequestContract} from './openai-transport.mjs';
 import {verifyGoogleIdToken} from './oidc.mjs';
+import {createGoogleIdTokenSource} from './google-id-token-source.mjs';
 const clients=new WeakMap();
 export const isCommissioningClientFor=(client,core)=>clients.get(client)?.core===core;
 export const commissioningClientContract=client=>clients.get(client)?.contract??null;
@@ -16,7 +17,7 @@ const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const fail=(code,status=409)=>{throw new HttpError(status,code);};
 const id=v=>typeof v==='string'&&/^[A-Za-z0-9_.:-]{1,120}$/.test(v)&&!v.includes('__');
 const record=v=>v&&typeof v==='object'&&!Array.isArray(v);
-export function createCommissioningClient({config,core,clock,connection,contract,getIdToken,jwks,fetchImpl=fetch,timeoutMs=80000}){
+export function createCommissioningClient({config,core,clock,connection,contract,getIdToken,jwks,fetchImpl=fetch,identityFetch=fetch,timeoutMs=80000}){
   const binding=isolatedShadowBinding(core);
   if(!isIsolatedShadowCore(core,config)||config.role!=='worker'||!clock?.now||!record(connection)
     ||!/^https:\/\/[a-z0-9.-]+(?::\d+)?\/v4\/commissioning\/respond$/.test(connection.audience)
@@ -24,9 +25,11 @@ export function createCommissioningClient({config,core,clock,connection,contract
     ||typeof connection.serviceAccount!=='string'||!connection.serviceAccount.endsWith('@'+binding.projectId+'.iam.gserviceaccount.com')
     ||!record(connection.profiles)||!Object.keys(connection.profiles).length
     ||!isOpenAIRequestContract(contract)||!contract?.prepare||contract.provider!=='openai'||typeof contract.dispatch==='function'
-    ||typeof getIdToken!=='function'||!jwks?.getKeys||typeof fetchImpl!=='function'
+    ||(getIdToken!==undefined&&typeof getIdToken!=='function')||!jwks?.getKeys||typeof fetchImpl!=='function'
     ||!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>85000)fail('commissioning_client_not_configured',503);
   const approved=structuredClone(connection),prepare=contract.prepare.bind(contract);
+  getIdToken??=createGoogleIdTokenSource({audience:approved.audience,serviceAccount:approved.serviceAccount,
+    clock,jwks,fetchImpl:identityFetch}).get;
   for(const [slot,p]of Object.entries(approved.profiles))if(!['briefing04','process09','continue14','close23'].includes(slot)
     ||!record(p)||!id(p.id)||!/^[a-f0-9]{64}$/.test(p.hash))fail('commissioning_client_not_configured',503);
   async function active(runKey,scope){
@@ -57,7 +60,10 @@ export function createCommissioningClient({config,core,clock,connection,contract
       // Recheck token lifetime after the final awaited source read.
       verifyGoogleIdToken(token,{audience:approved.audience,allowedServiceAccounts:[approved.serviceAccount],jwks:keys,now:clock.now()});
       const response=await fetchImpl(approved.audience,{method:'POST',redirect:'error',signal:controller.signal,
-        headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({runKey,sectionId:profile.id,stepIndex,inputJson,...(recoveryOnly?{recoveryOnly:true}:{})})});
+        // Cloud Run checks its dedicated header and preserves the application's
+        // signed Authorization token. Deployment must register this exact route
+        // audience as a custom audience; an application check alone is not IAM.
+        headers:{authorization:'Bearer '+token,'x-serverless-authorization':'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({runKey,sectionId:profile.id,stepIndex,inputJson,...(recoveryOnly?{recoveryOnly:true}:{})})});
       check();if(!response.ok){void response.body?.cancel().catch(()=>{});fail('commissioning_broker_rejected',response.status>=400&&response.status<=599?response.status:502);}
       reader=response.body?.getReader();if(!reader)fail('commissioning_response_unconfirmed',502);
       const chunks=[];let size=0;

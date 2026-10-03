@@ -1,6 +1,6 @@
 /** Production leadership composition. Missing configuration never selects a
- * different provider. External effects still require the existing live gates,
- * fresh cost policy, atomic monthly cap and current section/lease authority.
+ * different provider. Live effects retain their gates. Explicit isolated
+ * commissioning uses the source broker, shared cap and current lease authority.
  */
 import { availablePort, unavailablePort } from './ports.mjs';
 import { HttpError } from './errors.mjs';
@@ -9,14 +9,16 @@ import { createCostAdapter } from './cost-adapter.mjs';
 import { MONTHLY_CAP_MICROS } from './monthly-cost-cap.mjs';
 import { loadAssistantPolicy } from './section-work.mjs';
 import { createBriefingSectionWork } from './briefing-bootstrap.mjs';
-import { createOpenAITransport } from './openai-transport.mjs';
-import { createLeadershipGateway } from './leadership-gateway.mjs';
+import { createOpenAITransport, createOpenAIRequestContract } from './openai-transport.mjs';
+import { createLeadershipGateway, leadershipToolDefinitions } from './leadership-gateway.mjs';
 import { createLeadershipJournal, JOURNAL_LIMITS } from './leadership-journal.mjs';
-import { createV4LeadershipLoop } from './v4-leadership-loop.mjs';
+import { createV4LeadershipLoop, loadV4LeadershipInstructions } from './v4-leadership-loop.mjs';
 import { createC2HttpTransport } from './c2-transport.mjs';
 import { createJobTokenIssuer } from './job-token-issuer.mjs';
 import { createWorkArtifactStore } from './work-artifact-store.mjs';
-import { createGoogleAccessTokenSource } from './google-transport.mjs';
+import { createGoogleAccessTokenSource, createGoogleJwksPort } from './google-transport.mjs';
+import { createCommissioningClient } from './commissioning-client.mjs';
+import { commissioningProfileHash } from './commissioning-ingress.mjs';
 import { assertLeadership, readRuntime } from '../../../netlify/lib/quantus-v3-runtime-state.mjs';
 import { loadQuantusV4Prompts, MAIN_PROMPT_SLOTS } from '../../../netlify/lib/quantus-v4-prompts.mjs';
 import { createHash } from 'node:crypto';
@@ -34,7 +36,8 @@ import { isIsolatedShadowCore } from './shadow-isolation.mjs';
 
 export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
   envRead = name => process.env[name], artifactStore, jobTokenIssuer,
-  c2Transport, providerFetch = globalThis.fetch, gmailTokenSource, gmailFetch = globalThis.fetch } = {}) {
+  c2Transport, providerFetch = globalThis.fetch, gmailTokenSource, gmailFetch = globalThis.fetch,
+  commissioningFetch = globalThis.fetch, identityFetch = globalThis.fetch, commissioningJwks } = {}) {
   const costPolicy = createEnvCostPolicyPort(envRead);
   const unavailable = reason => ({ sectionWork: unavailablePort('sectionWork', reason), costPolicy });
   if (corePort && Object.hasOwn(corePort, 'available')) corePort = corePort.available ? corePort.impl : null;
@@ -51,7 +54,7 @@ export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
     || !Number.isSafeInteger(Number(compact)) || Number(compact) < 1000 || Number(compact) > 100000))
     return unavailable('openai_compaction_not_configured');
   const rates = ['QUANTUS_V4_OPENAI_INPUT_MICROS_PER_MTOK', 'QUANTUS_V4_OPENAI_OUTPUT_MICROS_PER_MTOK'].map(envRead);
-  if (typeof apiKey !== 'string' || !apiKey.trim() || typeof model !== 'string' || !model.trim()
+  if ((config?.mode !== 'shadow' && (typeof apiKey !== 'string' || !apiKey.trim())) || typeof model !== 'string' || !model.trim()
     || rates.some(v => typeof v !== 'string' || !/^\d+$/.test(v) || !Number.isSafeInteger(Number(v))))
     return unavailable('openai_provider_not_configured');
   const policyResult = loadAssistantPolicy(envRead);
@@ -59,6 +62,36 @@ export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
   try {
     for (const slot of MAIN_PROMPT_SLOTS) await loadQuantusV4Prompts({ slot, expectedVersion: promptVersion });
   } catch { return unavailable('v4_prompt_bundle_unavailable'); }
+  let commissioningClient = null, openai;
+  try {
+    const options = { model, compactionThreshold: compact === undefined ? null : Number(compact),
+      modelPricing: { inputMicrosPerMillionTokens: Number(rates[0]), outputMicrosPerMillionTokens: Number(rates[1]) } };
+    if (config?.mode === 'shadow') {
+      // Explicit permission for this isolated worker, never synthetic live gates.
+      // Source reads must be enumerated; Tasks and notifications retain their
+      // independent permissions. The source broker alone authorizes spending.
+      const permission = JSON.parse(envRead('QUANTUS_V4_COMMISSIONING_WORKER_JSON'));
+      const fields = ['schemaVersion', 'connection', 'isolatedDomain', 'sourceReadIds'];
+      if (!permission || Object.keys(permission).length !== fields.length || fields.some(k => !Object.hasOwn(permission,k))
+        || permission.schemaVersion !== 1 || permission.isolatedDomain !== true || !Array.isArray(permission.sourceReadIds)
+        || permission.sourceReadIds.some(id => typeof id !== 'string')
+        || new Set(permission.sourceReadIds).size !== permission.sourceReadIds.length)
+        return unavailable('commissioning_worker_not_configured');
+      const sources = policyResult.policy.requiredSources.filter(s => ['gmail','mail'].includes(s.kind));
+      if (sources.length !== permission.sourceReadIds.length || sources.some(s => !permission.sourceReadIds.includes(s.id)))
+        return unavailable('commissioning_source_permission_mismatch');
+      for (const [slot, profile] of Object.entries(permission.connection?.profiles || {})) {
+        const {instructions} = await loadV4LeadershipInstructions({slot,promptVersion});
+        if (profile.hash !== commissioningProfileHash({instructions,tools:leadershipToolDefinitions()}))
+          return unavailable('commissioning_profile_mismatch');
+      }
+      openai = createOpenAIRequestContract(options);
+      commissioningClient = createCommissioningClient({ config, core: corePort, clock: clockPort,
+        connection: permission.connection, contract: openai, fetchImpl: commissioningFetch, identityFetch,
+        jwks: commissioningJwks ?? createGoogleJwksPort({now:()=>clockPort.now()}).impl });
+    } else openai = createOpenAITransport({ ...options, apiKey, fetchImpl: providerFetch });
+  } catch { return unavailable(config?.mode === 'shadow' ? 'commissioning_worker_not_configured' : 'openai_worker_construction_failed'); }
+  const domainEffectsAllowed = externalEffectsAllowed(config) || commissioningClient !== null;
   if (!config?.c2BaseUrl) return unavailable('c2_base_url_not_configured');
   jobTokenIssuer ??= await createJobTokenIssuer({});
   if (jobTokenIssuer.available !== true || typeof jobTokenIssuer.mint !== 'function') return unavailable('leadership_job_token_unavailable');
@@ -85,13 +118,10 @@ export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
       if (gmailTokenSource?.available !== true || typeof gmailTokenSource.get !== 'function') return unavailable('gmail_credentials_not_configured');
       gmailReader = createGmailV4Reader({ account, getAccessToken: gmailTokenSource.get, fetchImpl: gmailFetch });
     }
-    const openai = createOpenAITransport({ apiKey, model, fetchImpl: providerFetch,
-      compactionThreshold: compact === undefined ? null : Number(compact),
-      modelPricing: { inputMicrosPerMillionTokens: Number(rates[0]), outputMicrosPerMillionTokens: Number(rates[1]) } });
     const inner = {
       resumeFinalized({ runKey, sectionId, verifiedScope, signal }) {
         return createDailyFinalization({ core: corePort, clock: clockPort, policy: policyResult.policy,
-          tenant: config.tenant, runKey, sectionId, verifiedScope, signal, enabled: externalEffectsAllowed(config) }).next();
+          tenant: config.tenant, runKey, sectionId, verifiedScope, signal, enabled: domainEffectsAllowed }).next();
       },
       async next({ runKey, sectionId, verifiedScope, signal, deadlineAtMs }) {
       const startedAt = clockPort.now();
@@ -110,32 +140,33 @@ export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
       }
       await activeLease();
       const finalization = createDailyFinalization({ core: corePort, clock: clockPort, policy: policyResult.policy,
-        tenant: config.tenant, runKey, sectionId, verifiedScope, signal, enabled: externalEffectsAllowed(config) });
+        tenant: config.tenant, runKey, sectionId, verifiedScope, signal, enabled: domainEffectsAllowed });
       if (readRuntime((await corePort.read()).data).runsByKey[runKey].dailyFinalization)
         return finalization.next();
       const legacyQuestions = await createLegacyQuestionPreparation({ core: corePort, clock: clockPort, policy: policyResult.policy,
-        tenant: config.tenant, runKey, sectionId, verifiedScope, signal, enabled: externalEffectsAllowed(config) }).next();
+        tenant: config.tenant, runKey, sectionId, verifiedScope, signal, enabled: domainEffectsAllowed }).next();
       if (!legacyQuestions.ready) return legacyQuestions.blocked ? { done: false, blocked: true, reason: legacyQuestions.reason }
         : { done: false, stepId: legacyQuestions.stepId, durationMs: legacyQuestions.durationMs, cursor: legacyQuestions.cursor };
       const answers = await createAnswerPreparation({ core: corePort, clock: clockPort, policy: policyResult.policy,
-        tenant: config.tenant, runKey, sectionId, verifiedScope, signal, enabled: externalEffectsAllowed(config) }).next();
+        tenant: config.tenant, runKey, sectionId, verifiedScope, signal, enabled: domainEffectsAllowed }).next();
       if (!answers.ready) return answers.blocked ? { done: false, blocked: true, reason: answers.reason }
         : { done: false, stepId: answers.stepId, durationMs: answers.durationMs, cursor: answers.cursor };
       if (gmailReader) {
-        if (!externalEffectsAllowed(config)) return { done: false, blocked: true, reason: 'external_effects_not_allowed' };
+        if (!domainEffectsAllowed) return { done: false, blocked: true, reason: 'external_effects_not_allowed' };
         const preparation = createGmailWorkerPreparation({ reader: gmailReader, core: corePort, clock: clockPort,
           artifacts: artifactStore, tenant: config.tenant, account: gmailReader.account, sourceId: gmailSources[0].id,
           runKey, sectionId, verifiedScope, signal, policy: policyResult.policy });
         const prepared = await preparation.next({ deadlineAtMs });
         if (!prepared.ready) return { done: false, stepId: prepared.stepId, durationMs: prepared.durationMs, cursor: prepared.cursor };
       }
-      const journal = createLeadershipJournal({ core: corePort, clock: clockPort, runKey, verifiedScope, artifacts: artifactStore, signal });
+      const journal = createLeadershipJournal({ core: corePort, clock: clockPort, runKey, verifiedScope, artifacts: artifactStore, signal,
+        commissioningClient });
       const gmailContext = createGmailContextHydrator({ core: corePort, clock: clockPort, artifacts: artifactStore,
         runKey, tenant: config.tenant, sectionId, verifiedScope, signal });
       const gateway = createLeadershipGateway({ transport: c2Transport, jobTokenIssuer, clock: clockPort,
         runKey, tenant: config.tenant, toolsEnabled: config.toolsEnabled, lease: activeLease, signal, artifacts: artifactStore,
         hydrateWorkset: gmailContext.hydrate });
-      const costAdapter = createCostAdapter({ config, now: startedAt, verifiedScope, requestId: `leadership:${sectionId}`,
+      const costAdapter = commissioningClient ? null : createCostAdapter({ config, now: startedAt, verifiedScope, requestId: `leadership:${sectionId}`,
         ports: { require(name) {
           if (name === 'core') return corePort;
           if (name === 'clock') return clockPort;

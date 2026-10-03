@@ -285,3 +285,41 @@ preserve the loop's run/index identity across sections, persist source receipts,
 and verify source settlement when archiving journal history. The current
 journal's local-cost verification cannot be satisfied with invented shadow cost
 rows. A real Google ID-token source, deployment and trial still remain open.
+
+## Isolated worker composition and workload identity
+
+`createOpenAIWorkerPorts` now accepts shadow commissioning only through the
+existing isolated core binding plus `QUANTUS_V4_COMMISSIONING_WORKER_JSON`. The
+JSON object has exactly four fields: `schemaVersion: 1`, `connection`,
+`isolatedDomain: true`, and `sourceReadIds`. `connection` is the reviewed broker
+client configuration (audience, service account, binding hash, allocation ID
+and slot/profile identities and hashes). `sourceReadIds` must exactly enumerate
+the configured Gmail/mail source IDs; use an empty array for core-only work.
+Unknown profiles and changed reviewed instructions/tool definitions are refused
+before any briefing bootstrap. Missing permission does not fall back to a direct
+provider transport.
+
+The worker uses a keyless OpenAI request contract and the source broker; its
+OpenAI API key and local cost claims are unnecessary. Preparation, genuine
+answer consumption and daily finalization use the existing domain code only
+inside the branded isolated core. Model tools retain the configured tool gates,
+job identities, per-object authorization and isolated C2 origin. This permission
+does not enable Tasks, monitor notifications or productive external actions.
+The original live and dry-run rules are unchanged.
+
+The default identity source obtains a Google-signed ID token from the fixed
+Google Cloud metadata identity endpoint for the attached service account. It
+checks metadata provenance, bounds time and body size, verifies signature,
+recipient, account and fresh expiry, propagates cancellation and never retries
+or falls back to an OAuth access token. Construction performs no network work.
+No metadata or credential request is made on the developer machine by tests.
+
+For private Cloud Run deployment, register the exact broker route audience as a
+custom audience and grant the reviewed caller invocation access. The client
+sends the same token in `X-Serverless-Authorization` for the Cloud Run front
+door and `Authorization` for the application's independent signature check.
+Google checks the dedicated header when both exist, preserving the application
+credential. See [Google service-to-service authentication](https://docs.cloud.google.com/run/docs/authenticating/service-to-service).
+Actual audience configuration, workload identity, IAM, artifact and isolated C2
+bindings still require deployed verification. No real trial is implied by the
+synthetic metadata, broker and worker tests.
