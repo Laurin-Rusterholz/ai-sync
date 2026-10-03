@@ -52065,16 +52065,50 @@ function chatgptLeadCloseHistoryHtml(l) {
     </div>`;
 }
 
+function chatgptLeadCompletionState(l) {
+  const missing = chatgptLeadMissing(l).slice();
+  const a = APP.state.data.automation || {};
+  const options = [];
+  const own = row => row && row.sourceType === 'chatgptLead' && row.sourceId === l.id;
+  const unique = id => ['evidenceById','jobsById','answersById','questionsById'].filter(key => a[key]?.[id]).length === 1;
+  for (const [id, row] of Object.entries(a.evidenceById || {})) {
+    if (own(row) && row.id === id && row.ref && row.fingerprint && unique(id))
+      options.push({id,label:'Nachweis: ' + row.kind + ' · ' + String(row.ref).slice(0,180)});
+  }
+  for (const [id, row] of Object.entries(a.jobsById || {})) {
+    if (!own(row)) continue;
+    if (['queued','running'].includes(row.state)) missing.push('laufender Auftrag');
+    if (row.state === 'returned' && !row.review) missing.push('ungeprüfte Rückgabe');
+    if (row.id === id && row.state === 'returned' && row.review?.verdict === 'accepted' && row.result
+      && row.review.resultHash === row.result.hash && row.review.resultRef === row.result.ref && unique(id))
+      options.push({id,label:'Geprüfte Rückgabe: ' + String(row.purpose || row.id).slice(0,180)});
+  }
+  for (const [id, row] of Object.entries(a.answersById || {})) {
+    if (row?.id === id && own(a.questionsById?.[row.questionId]) && row.consumedAt && row.consumption?.kind !== 'intake' && unique(id))
+      options.push({id,label:'Verarbeitete Antwort: ' + String(row.text || id).slice(0,180)});
+  }
+  if (Object.values(a.questionsById || {}).some(q => own(q) && q.status === 'open')) missing.push('offene Rückfrage');
+  if (!l.operationalStateSource || !Number.isSafeInteger(l.operationalStateVersion) || l.operationalStateVersion < 1) missing.push('Servermigration');
+  if (!['doing','review'].includes(l.operationalState)) missing.push('abschliessbarer Betriebszustand');
+  if (!['chatgpt','user'].includes(l.operationalRoles?.accountable)
+    || !['openai','claude','gemini','user','external'].includes(l.operationalRoles?.executor)) missing.push('bestätigte Zuständigkeit');
+  const self = l.operationalRoles?.accountable === 'user';
+  if (!self && !options.length) missing.push('zugeordneter Abschlussnachweis');
+  return {missing:[...new Set(missing)],options,self};
+}
 function chatgptLeadCloseBoxHtml(l) {
   if (chatgptLeadIsClosed(l)) return chatgptLeadReopenBoxHtml(l);
-  const missing = chatgptLeadMissing(l);
-  const title = missing.length ? "Fehlt noch: " + missing.join(", ") : "Alle Schritte dokumentiert — Lead kann abgeschlossen werden";
+  const {missing,options,self} = chatgptLeadCompletionState(l);
+  const title = missing.length ? "Fehlt noch: " + missing.join(", ") : "Angaben vorhanden — Server prüft den Abschluss";
   return `
     <div class="cgl-close-wrap" title="${esc(title)}">
+      ${self ? '<p class="mini">Mit dem Abschluss bestätigst du die Erledigung deiner eigenen Aufgabe.</p>' : options.length ? `<label class="mini">Abschlussnachweis auswählen
+        <select id="cglCompletionEvidence_${esc(l.id)}"><option value="">Bitte auswählen</option>${options.map(o => `<option value="${esc(o.id)}">${esc(o.label)}</option>`).join('')}</select>
+      </label>` : ''}
       <button class="btn primary${missing.length ? " is-disabled" : ""}" data-action="cgl-close" data-id="${l.id}" aria-disabled="${missing.length ? "true" : "false"}">✅ Lead abschliessen</button>
       ${missing.length
         ? `<div class="mini mt-1" style="color:#D96B5B">Fehlt noch: ${esc(missing.join(", "))}</div>`
-        : `<div class="mini mt-1" style="color:#2F8C80">Bereit zum Abschluss.</div>`}
+        : `<div class="mini mt-1" style="color:#2F8C80">Abschluss wird erst nach Serverbestätigung übernommen.</div>`}
     </div>`;
 }
 // Bewertung & Zuweisung als eigener Schritt (nach Plan, vor Ausfuehrung).
@@ -52152,7 +52186,12 @@ async function cglCancellationAccount() {
       return coreAuthCurrentUser()?.uid === accountKey ? { accountKey, idToken } : null;
     };
     const getRun = () => coreAuthCurrentUser()?.uid === accountKey ? APP.state.data.dailyBriefing?.assistantRuns?.[todayYmd()] : null;
-    _v4CancellationClients.set(accountKey, mod.openLeadCancellations({accountKey,getAuth,getRun,origin:location.origin})
+    const getLead = async id => {
+      if (coreAuthCurrentUser()?.uid !== accountKey) return null;
+      const remote = await remoteGetByKey('app-data.json', {force:true,preferProvider:'rtdb'});
+      return remote?.ok && coreAuthCurrentUser()?.uid === accountKey ? remote.data?.entities?.chatgptLeads?.[id] : null;
+    };
+    _v4CancellationClients.set(accountKey, mod.openLeadCancellations({accountKey,getAuth,getRun,getLead,origin:location.origin})
       .catch(error => { _v4CancellationClients.delete(accountKey); throw error; }));
   }
   return {accountKey,mod,client:await _v4CancellationClients.get(accountKey)};
@@ -52183,7 +52222,7 @@ window.cglLoadCancellations = async function() {
     host.innerHTML = entries.map(e => '<article class="card"><strong>' + esc(mod.cancellationStatusText(e.deliveryStatus,e.legacyOperation.toState))
       + '</strong><p>' + esc(e.legacyOperation.reason) + '</p></article>').join('')
       + (entries.length ? '<button class="btn sm" onclick="window.cglRetryCancellations()">Übertragung prüfen</button>' : '');
-    if (entries.some(e => ['run_pending','pending','retry_wait'].includes(e.deliveryStatus))) host._timer = setTimeout(async () => {
+    if (entries.some(e => ['completion_pending','run_pending','pending','retry_wait'].includes(e.deliveryStatus))) host._timer = setTimeout(async () => {
       if (!current(accountKey)) return;
       try { await cglFlushCancellations(client,accountKey); } catch (_) {}
       if (current(accountKey)) await window.cglLoadCancellations();
@@ -52205,7 +52244,7 @@ function cglKeepStateDrafts() {
   }
 }
 const _v4CancellationBusy = new Set();
-async function cglCancelLead(l, reason, toState = 'cancelled') {
+async function cglCancelLead(l, reason, toState = 'cancelled', evidenceRefs = []) {
   if (_v4CancellationBusy.has(l.id)) return;
   _v4CancellationBusy.add(l.id);
   const expectedAccount = coreAuthCurrentUser()?.uid;
@@ -52213,13 +52252,13 @@ async function cglCancelLead(l, reason, toState = 'cancelled') {
   try {
     const {client,accountKey} = await cglCancellationAccount();
     if (!expectedAccount || accountKey !== expectedAccount || coreAuthCurrentUser()?.uid !== expectedAccount) throw new Error('sign_in_required');
-    await client.submit({lead:originalLead,reason,toState});
+    await client.submit({lead:originalLead,reason,toState,evidenceRefs});
     if (coreAuthCurrentUser()?.uid !== accountKey) return;
     cglKeepStateDrafts();
     const draftKey = toState === 'doing' ? '_cglReopen' : '_cglObsolete';
-    if (window[draftKey]?.id === l.id && String(window[draftKey].grund || '').trim() === reason.trim()) window[draftKey] = null;
+    if (toState !== 'done' && window[draftKey]?.id === l.id && String(window[draftKey].grund || '').trim() === reason.trim()) window[draftKey] = null;
     render();
-    toast('info','Auftrag gesichert',toState === 'doing' ? 'Wiederöffnung angefragt; der Server prüft die aktuelle Lead-Version.' : 'Hinfälligkeit angefragt; der Lead gilt erst nach Serverbestätigung als geschlossen.');
+    toast('info','Auftrag gesichert',toState === 'doing' ? 'Wiederöffnung angefragt; der Server prüft die aktuelle Lead-Version.' : toState === 'done' ? 'Abschluss angefragt; Ergebnis und Nachweis werden serverseitig geprüft.' : 'Hinfälligkeit angefragt; der Lead gilt erst nach Serverbestätigung als geschlossen.');
     await cglFlushCancellations(client,accountKey);
     if (coreAuthCurrentUser()?.uid === accountKey) await window.cglLoadCancellations();
   } catch (_) {
@@ -52435,17 +52474,11 @@ function chatgptModuleHandleAction(action, el, e) {
     case "cgl-close": {
       stop();
       const l = ownEntity(leads, id); if (!l) return;
-      const missing = chatgptLeadMissing(l);
+      const {missing,options,self} = chatgptLeadCompletionState(l);
       if (missing.length) { toast("warn", "Noch nicht abschliessbar", "Fehlt noch: " + missing.join(", ")); return; }
-      l.status = "abgeschlossen"; l.closedAt = nowIso(); l.closedBy = "assistant"; l.updatedAt = nowIso();
-      // Review-Fix: operationalState ist fuehrend und wird NICHT mehr aus
-      // status abgeleitet, sobald es einmal explizit gesetzt wurde (siehe
-      // v3LeadOperationalState) — ohne diese Zeile bliebe ein zuvor gesetzter
-      // Zustand (z.B. "waiting_external") stehen, obwohl der Lead abgeschlossen ist.
-      l.operationalState = "done";
-      if (!l.readAt) l.readAt = l.closedAt;
-      scheduleSave(); render();
-      toast("ok", "Lead abgeschlossen", l.title || "");
+      const selected = document.getElementById('cglCompletionEvidence_' + l.id)?.value || '';
+      if (!self && !options.some(o => o.id === selected)) { toast('warn','Nachweis auswählen','Bitte den passenden, bereits zugeordneten Abschlussnachweis auswählen.'); return; }
+      void cglCancelLead(l, self ? 'Eigene Erledigung ausdrücklich bestätigt.' : 'Abschluss mit ausgewähltem Nachweis angefragt.', 'done', self ? [] : [selected]);
       return;
     }
     case "cgl-warten-cancel": {

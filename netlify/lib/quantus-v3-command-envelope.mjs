@@ -147,7 +147,7 @@ export const COMMAND_VERBS = Object.freeze({
   "lead.transition": {
     resource: { kind: "lead", idField: "leadId" },
     anchor: { self: true },
-    fields: { leadId: id(), toState: text(64), reason: text(1000, { optional: true }), evidenceRefs: ids(20, { optional: true }) },
+    fields: { leadId: id(), toState: text(64), reason: text(1000, { optional: true }), evidenceRefs: ids(20, { optional: true }), expectedResultHash: text(64, { optional: true }) },
   },
   "lead.schedule": {
     resource: { kind: "lead", idField: "leadId" },

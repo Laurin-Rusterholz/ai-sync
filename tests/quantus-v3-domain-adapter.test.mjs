@@ -907,3 +907,58 @@ test('desktop cancellation queue commits through real C2 exactly once and preser
   assert.equal(reopened.operationalStateHistory[0].reason,'Es sind neue Unterlagen eingetroffen.');
   assert.equal((await client.list()).filter(e=>e.deliveryStatus==='acknowledged').length,2);
 });
+
+test('desktop completion binds the shown result and selected proof through C2, recovering a lost receipt once',async t=>{
+  const {openLeadCancellations}=await import('../public/quantus-v4-lead-cancellation.mjs');
+  const d=deps();let time=JETZT,lost=true,requests=0;
+  const original=structuredClone(d._store.snapshot.entities.chatgptLeads.l1);
+  const client=await openLeadCancellations({accountKey:OWNER,origin:APP,indexedDB:new IDBFactory(),now:()=>time,
+    getRun:()=>d._store.snapshot.dailyBriefing.assistantRuns[DATE],
+    getLead:async id=>d._store.snapshot.entities.chatgptLeads[id],
+    getAuth:async()=>({accountKey:OWNER,idToken:nutzerToken()}),
+    fetchImpl:async(url,init)=>{requests++;const result=await S.handleCommandRequest(FC.makeRequest({url,headers:{...init.headers,origin:APP},body:JSON.parse(init.body)}),d);
+      assert.equal(result.status,200,JSON.stringify(result.body));
+      if(lost){lost=false;throw Error('lost completion receipt');}return new Response(JSON.stringify(result.body),{status:result.status});}});
+  t.after(()=>client.close());
+  await client.submit({lead:original,toState:'done',reason:'Ergebnis geprüft',evidenceRefs:['ev_l1']});await client.flush();
+  const committed=structuredClone(d._store.snapshot),actual=committed.entities.chatgptLeads.l1;
+  assert.equal(actual.operationalState,'done');assert.equal(actual.operationalStateSource.closure.evidenceId,'ev_l1');
+  assert.equal(actual.result,original.result);assert.equal(actual.operationalStateVersion,original.operationalStateVersion+1);
+  assert.equal((await client.list())[0].deliveryStatus,'retry_wait');
+  time+=30000;await client.flush();assert.equal(requests,2);
+  assert.equal((await client.list())[0].deliveryStatus,'acknowledged');assert.deepEqual(d._store.snapshot,committed);
+});
+
+test('C2 rejects a result change after desktop preflight; an explicit new result remains a separate intent',async t=>{
+  const {openLeadCancellations}=await import('../public/quantus-v4-lead-cancellation.mjs');
+  const d=deps(),original=structuredClone(d._store.snapshot.entities.chatgptLeads.l1);let raced=false;
+  const results=[];
+  const client=await openLeadCancellations({accountKey:OWNER,origin:APP,indexedDB:new IDBFactory(),now:()=>JETZT,
+    getRun:()=>d._store.snapshot.dailyBriefing.assistantRuns[DATE],
+    getLead:async id=>structuredClone(d._store.snapshot.entities.chatgptLeads[id]),
+    getAuth:async()=>({accountKey:OWNER,idToken:nutzerToken()}),
+    fetchImpl:async(url,init)=>{
+      if(!raced){raced=true;d._store.snapshot.entities.chatgptLeads.l1.result='Nachträglich geändertes Ergebnis';}
+      const result=await S.handleCommandRequest(FC.makeRequest({url,headers:{...init.headers,origin:APP},body:JSON.parse(init.body)}),d);
+      results.push(result);return new Response(JSON.stringify(result.body),{status:result.status});}});
+  t.after(()=>client.close());
+  await client.submit({lead:original,toState:'done',reason:'Ergebnis geprüft',evidenceRefs:['ev_l1']});await client.flush();
+  assert.equal(results[0].status,409);assert.equal(results[0].body.reason,'lead_result_changed');
+  assert.equal(d._store.snapshot.entities.chatgptLeads.l1.operationalState,original.operationalState);
+  assert.equal(d._store.snapshot.entities.chatgptLeads.l1.operationalStateVersion,original.operationalStateVersion);
+  const corrected=structuredClone(d._store.snapshot.entities.chatgptLeads.l1);
+  await client.submit({lead:corrected,toState:'done',reason:'Neues Ergebnis geprüft',evidenceRefs:['ev_l1']});await client.flush();
+  assert.equal(results.length,2);assert.equal(results[1].status,200,JSON.stringify(results[1].body));
+  const entries=await client.list();assert.equal(entries.length,2);
+  assert.equal(entries.find(e=>e.legacyOperation.result===original.result).deliveryStatus,'conflict');
+  assert.equal(entries.find(e=>e.legacyOperation.result===corrected.result).deliveryStatus,'acknowledged');
+});
+
+test('completion result hash cannot be malformed or reused for another transition',async()=>{
+  const {createHash}=await import('node:crypto');
+  for(const change of [{expectedResultHash:'not-a-hash'}, {expectedResultHash:createHash('sha256').update(BASIS.entities.chatgptLeads.l1.result).digest('hex'),toState:'review'}]){
+    const d=deps(),before=structuredClone(d._store.snapshot);
+    const r=await sende(d,{verb:'lead.transition',payload:{leadId:'l1',toState:'done',evidenceRefs:['ev_l1'],...change},expectedEntityVersion:ver(BASIS,'chatgptLead','l1')});
+    assert.equal(r.status,400);assert.equal(r.body.reason,'result_hash_invalid');assert.deepEqual(d._store.snapshot,before);
+  }
+});
