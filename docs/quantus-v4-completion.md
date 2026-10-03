@@ -1050,3 +1050,9 @@ The initial 122 targeted checks passed. Further focused checks cover fresh CAS t
 Read-only RTDB comparison confirmed the Silvia, Budget and Armin questions remain stored and unanswered. Their migration preserved the former desktop question states as evidence but marked the canonical operational state ambiguous. The cockpit incorrectly fell back to ordinary assistant work and hid all three questions.
 
 The cockpit now derives question visibility from the retained unanswered question independently of canonical work-state resolution. Original options and answer-delivery identity remain intact. It explicitly labels unresolved migration state and distinguishes the pending personal answer from a resolved work assignment. No source questions, answers, roles or state are rewritten. Closed and answered questions remain excluded. Focused regression covers these cases, including stale legacy closure and retained canonical conflict.
+
+### Preserved questions can receive authentic answers despite an open work-state conflict
+
+Live verification after PR327 reload: one decision (Silvia), two information questions (Budget and Armin), original options and explicit migration-conflict labels are visible. No answer was submitted.
+
+The legacy-question bridge now admits the specific initial state-model/3 migration conflict whose preserved desktop state is decision_required or information_required, with valid version/timestamp, unchanged legacy status and no subsequent state transition. It imports the original question with its full fingerprint, without repairing the canonical work state or changing roles. A real owner answer can then use the existing immutable answer and atomic answer-to-intake path. Unknown, drifted, damaged or unrelated migration conflicts remain blocked. Tests prove that question migration, authenticated answer recording and intake creation all preserve the unresolved source entity exactly.
