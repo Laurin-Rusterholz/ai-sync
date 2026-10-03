@@ -14760,7 +14760,17 @@ function applyEmbeddedSettings(emb) {
   } catch(e) {}
 }
 
-function loadLocalData() {
+let localDataRestorePromise = Promise.resolve();
+let localDataRestoreVersion = 0;
+
+async function loadInitialLocalData() {
+  APP.state.data = loadLocalData({ renderRestored: false });
+  let pending;
+  do { pending = localDataRestorePromise; await pending; } while (pending !== localDataRestorePromise);
+  return APP.state.data;
+}
+
+function loadLocalData({ renderRestored = true } = {}) {
   let loaded = null;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -14783,7 +14793,9 @@ function loadLocalData() {
   // bei „der Hälfte". Jetzt IMMER die Sicherungen prüfen und die beste übernehmen, wenn sie
   // NEUER — oder gleich alt, aber VOLLSTÄNDIGER — ist. Läuft asynchron; ersetzt APP.state.data
   // nur, wenn es echt besser ist (kein Überschreiben neuerer Daten, kein Datenverlust).
-  (async function(){
+  const restoreVersion = ++localDataRestoreVersion;
+  APP.state.storage.localHydration = "loading";
+  localDataRestorePromise = (async function(){
     try {
       const cands = [];
       for (const key of ['localStorage_overflow','periodic','before_close']) {
@@ -14793,13 +14805,16 @@ function loadLocalData() {
       const score = (d) => { let ts = 0, n = 0; try { ts = new Date((d && d.meta && d.meta.updatedAt) || 0).getTime() || 0; n = (getSyncStats(d) || {}).totalEntities || 0; } catch(e){} return { ts, n }; };
       cands.sort((a, b) => { const A = score(a), B = score(b); return (B.ts - A.ts) || (B.n - A.n); });
       const best = cands[0], b = score(best), cur = score(APP.state.data || loaded || {});
-      if (b.ts > cur.ts || (b.ts >= cur.ts && b.n > cur.n)) {
+      if (restoreVersion === localDataRestoreVersion && (b.ts > cur.ts || (b.ts >= cur.ts && b.n > cur.n))) {
         APP.state.data = normalizeData(best);
         try { applyEmbeddedSettings(best._settings); } catch(e) {}   // API-Keys aus der IDB-Fassung nachziehen
         console.log('[Load] Vollständigere Fassung aus IndexedDB wiederhergestellt (' + b.n + ' Objekte; localStorage hatte ' + cur.n + ').');
-        if (typeof render === 'function') render();
+        APP.state.storage.localHydration = "ready";
+        if (renderRestored && typeof render === 'function') render();
       }
-    } catch(e){}
+    } catch(e){} finally {
+      if (restoreVersion === localDataRestoreVersion) APP.state.storage.localHydration = "ready";
+    }
   })();
   return loaded || normalizeData(emptyData());
 }
@@ -23813,6 +23828,7 @@ function v3NextSlotInfo(nowMs) {
  * staetigung. "saved"/"idle"/"warning" duerfen deshalb nie als "Server
  * bestätigt" ausgegeben werden, nur als ehrlich unbestimmt. */
 function v3SpeicherStatusText() {
+  if (APP.state.storage?.localHydration === "loading") return "Lokale Sicherung wird geladen…";
   const s = APP.state.storage?.status;
   if (s === "offline") return "Offline gespeichert — nicht synchronisiert";
   if (s === "error" || s === "auth_required") return "Nicht synchronisiert";
@@ -69533,7 +69549,7 @@ async function init() {
     // Load settings and data from localStorage first (offline-first)
     APP.state.settings = loadSettings();
     try { if(window.applyThemeMode) window.applyThemeMode((APP.state.settings&&APP.state.settings.ui&&APP.state.settings.ui.themeMode)||"dark"); } catch(e){}
-    APP.state.data = loadLocalData();
+    await loadInitialLocalData();
     _initProtectionUntil = Date.now() + 10000; // Protect local data for 10s
     console.log('[Init] Local data loaded:', countEntities(APP.state.data), 'entities');
     
