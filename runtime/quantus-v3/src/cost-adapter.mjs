@@ -48,7 +48,9 @@ import { externalEffectsAllowed } from "./config.mjs";
 import {assertActiveRuntimeCapacity} from "./runtime-payload.mjs";
 import {assertCommissioningOperation} from "./commissioning-ingress.mjs";
 import {validCommissioningCallBinding, sameCommissioningCallBinding} from "../../../netlify/lib/quantus-v4-commissioning-allocation-schema.mjs";
-import { reserveCostWithMonthlyCap } from "./monthly-cost-cap.mjs";
+import { reserveCostWithMonthlyCap, MONTHLY_CAP_MICROS } from "./monthly-cost-cap.mjs";
+
+const commissioningContexts = new WeakSet();
 
 export const DISPATCH_OUTCOMES = Object.freeze(["settled", "unknown"]);
 /* So viel Fuehrung muss nach dem Anspruch noch uebrig sein, damit der
@@ -76,7 +78,7 @@ async function leseKern(ctx) {
  * nicht einmal beim Start. Eine als Beleg wiederholte Mutation fuehrt den
  * Mutator gar nicht aus; diese Pruefung laeuft trotzdem. */
 async function pruefeFrisch(ctx, schritt) {
-  if (!externalEffectsAllowed(ctx.config)) {
+  if (!externalEffectsAllowed(ctx.config) && !(commissioningContexts.has(ctx) && ctx.config?.mode === "commissioning" && ctx.commissioningOperation)) {
     throw new HttpError(409, "external_effects_not_allowed", { step: schritt, mode: ctx.config.mode });
   }
   const data = await leseKern(ctx);
@@ -202,8 +204,20 @@ function retainedCommissioning(binding) {
   return structuredClone(binding);
 }
 
-export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseReserveMs = DISPATCH_LEASE_RESERVE_MS, monthlyCap = null, commissioningOperation = null } = {}) {
+export function createCostAdapter(ctx, options = {}) { return buildCostAdapter(ctx, options, false); }
+
+/** Explicit provider-only admission path. It does not change runtime gates,
+ * manufacture a live config, or grant permission to Tasks/tools/mail. A valid
+ * in-process source admission is checked afresh at every spend step. */
+export function createCommissioningCostAdapter(ctx, {operation, __allowFixturePolicy = false} = {}) {
+  if (ctx.config?.mode !== "commissioning" || !operation) throw new HttpError(503,"commissioning_adapter_not_configured");
+  return buildCostAdapter(ctx, {commissioningOperation:operation, __allowFixturePolicy,
+    monthlyCap:{capMicros:MONTHLY_CAP_MICROS}}, true);
+}
+
+function buildCostAdapter(ctx, { __allowFixturePolicy = false, leaseReserveMs = DISPATCH_LEASE_RESERVE_MS, monthlyCap = null, commissioningOperation = null } = {}, commissioning = false) {
   ctx = {...ctx, commissioningOperation};
+  if (commissioning) commissioningContexts.add(ctx);
   const fixture = __allowFixturePolicy === true;
   function reserveMutation(data,input) {
     const out = monthlyCap ? reserveCostWithMonthlyCap(data,input,monthlyCap) : E1.reserveCost(data,input);
@@ -230,10 +244,14 @@ export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseRese
       pruefeTransportPreis(policy, provider, model, modelPricing);
       // NACH dem Laden: das Laden selbst kann gedauert haben.
       const now = clock.now();
-      const out = await mutiere(ctx, `cost-reserve:${callId}`, data => reserveMutation(data, {
-        callId, runKey, provider, model, contentHash, inputTokens, outputTokens, commissioning: binding,
-        now, verifiedScope: ctx.verifiedScope, policy, __allowFixturePolicy: fixture,
-      }));
+      const out = await mutiere(ctx, `cost-reserve:${callId}`, data => {
+        const attemptNow = binding ? clock.now() : now;
+        if (commissioningOperation) assertCommissioningOperation(commissioningOperation,{data,now:attemptNow,core:ctx.ports.require("core")});
+        return reserveMutation(data, {
+          callId, runKey, provider, model, contentHash, inputTokens, outputTokens, commissioning: binding,
+          now:attemptNow, verifiedScope: ctx.verifiedScope, policy, __allowFixturePolicy: fixture,
+        });
+      });
       if (!out.result.ok) throw conflict("cost_reserve_rejected", { code: out.result.code, detail: out.result.detail ?? null });
       return { callId, maxMicros: out.result.maxMicros, mode: out.result.mode, dispatchAllowed: false };
     },
@@ -269,11 +287,15 @@ export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseRese
       }
 
       const claim = await mutiere(ctx, `cost-claim:${callId}:${claimId}`, data => {
+        const attemptNow = binding ? clock.now() : now;
         if (binding) assertActiveRuntimeCapacity(data);
-        return E1.claimCostDispatch(data, {
-          callId, claimId, commissioning: binding, now, verifiedScope: ctx.verifiedScope, policy,
+        if (commissioningOperation) assertCommissioningOperation(commissioningOperation,{data,now:attemptNow,core:ctx.ports.require("core")});
+        const out = E1.claimCostDispatch(data, {
+          callId, claimId, commissioning: binding, now:attemptNow, verifiedScope: ctx.verifiedScope, policy,
           __allowFixturePolicy: fixture,
         });
+        return binding && out.result?.dispatchAllowed === true
+          ? {...out,result:{...out.result,claimedAtMs:attemptNow}} : out;
       });
 
       // Der Port MUSS sagen, ob wirklich geschrieben wurde. Schweigen ist
@@ -302,8 +324,9 @@ export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseRese
       // `replayed` oder `wrote` falsch berichtet.
       const finalData = await leseKern(ctx);
       const gate = gateAus(finalData, callId);
-      if (gate.callState !== "reserved" || gate.claimed !== true
-        || gate.claimId !== claimId || gate.claimedAtMs !== now) {
+      const claimedAt = binding ? claim.result.claimedAtMs : now;
+      if (!Number.isSafeInteger(claimedAt) || gate.callState !== "reserved" || gate.claimed !== true
+        || gate.claimId !== claimId || gate.claimedAtMs !== claimedAt) {
         throw conflict("dispatch_not_allowed", {
           callId, code: "claim_state_mismatch", state: gate.callState, blocksRetry: true,
         });

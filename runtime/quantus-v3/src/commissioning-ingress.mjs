@@ -91,6 +91,10 @@ export function assertCommissioningReceipt(operation,{data,now,core,freshPrincip
   return call;
 }
 
+export function assertCommissioningTransport(operation,transport){
+  if(!capabilities.has(operation)||capabilities.get(operation).transport!==transport)fail(403,'commissioning_transport_mismatch');
+}
+
 export function createCommissioningIngress({authority,profiles,transport,ports,execute,logger=null}){
   const core=ports.require('core');
   const sourceIdentity=commissioningSourceIdentity(core);
@@ -118,7 +122,7 @@ export function createCommissioningIngress({authority,profiles,transport,ports,e
       const operation=Object.freeze({callId:'commission-'+operationId,runKey:body.runKey,sectionId:body.sectionId,
         stepIndex:body.stepIndex,model:approved.model,provider:'openai',prepared,
         commissioning:freeze({allocationId:approved.allocationId,bindingHash:approved.bindingHash,operationId})});
-      capabilities.set(operation,{authority:approved,principal:ctx.principal});
+      capabilities.set(operation,{authority:approved,principal:ctx.principal,transport});
       const snapshot=await core.read();
       const checkedAt=ports.require('clock').now();
       try { assertCommissioningOperation(operation,{data:snapshot?.data,now:checkedAt,core}); }

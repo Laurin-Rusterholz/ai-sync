@@ -4,7 +4,7 @@
 import {createHash} from 'node:crypto';
 import {HttpError} from './errors.mjs';
 import {assertLeadership,readRuntime,settleCost,resolveUnknownCost} from '../../../netlify/lib/quantus-v3-runtime-state.mjs';
-import {assertCommissioningReceipt} from './commissioning-ingress.mjs';
+import {assertCommissioningReceipt,assertCommissioningOperation} from './commissioning-ingress.mjs';
 import {commissioningSourceIdentity} from './commissioning-source.mjs';
 import {JOURNAL_LIMITS,encodeRuntimePayload,assertActiveRuntimeCapacity} from './runtime-payload.mjs';
 import {validArtifactReference} from './work-artifact-store.mjs';
@@ -26,12 +26,18 @@ export function createCommissioningResponseJournal({operation,core,clock,verifie
   if(!identity||!core?.mutate||!clock?.now||!artifacts?.put||!artifacts?.read
     ||verifiedScope?.scope!==identity.tenant+':mainrun'||typeof artifactBucket!=='string'||!artifactBucket)fail('commissioning_journal_configuration_invalid',503);
   const scope=Object.freeze({...verifiedScope});
-  function authority(data){
+  function authority(data,pending=false){
     if(signal?.aborted)fail('commissioning_journal_interrupted');
     const now=clock.now();assertLeadership(data,scope,now);
+    if(pending){
+      assertCommissioningOperation(operation,{data,now,core});
+      const call=readRuntime(data).cost.callsById[operation.callId];
+      if(!call||call.state!=='reserved'||call.dispatch.claimed)fail('commissioning_preflight_state_invalid');
+      return call;
+    }
     return assertCommissioningReceipt(operation,{data,now,core});
   }
-  async function snapshot(){const data=(await core.read())?.data;const call=authority(data);return {data,call};}
+  async function snapshot(pending=false){const data=(await core.read())?.data;const call=authority(data,pending);return {data,call};}
   function reference(ref){
     if(!validArtifactReference(ref)||ref.bucket!==artifactBucket
       ||ref.objectName!==`quantus-v4/${identity.tenant}/work/${ref.hash}.json`)fail('commissioning_artifact_binding_invalid',503);
@@ -53,6 +59,19 @@ export function createCommissioningResponseJournal({operation,core,clock,verifie
     return response;
   }
   return Object.freeze({read,
+    async prepare(){
+      await snapshot(true);
+      const manifest={schemaVersion:1,callId:operation.callId,requestHash:operation.prepared.contentHash,
+        runKey:operation.runKey,provider:operation.provider,model:operation.model,
+        inputTokens:operation.prepared.inputTokens,outputTokens:operation.prepared.outputTokens,
+        commissioning:operation.commissioning};
+      const encoded=encodeRuntimePayload(manifest,JOURNAL_LIMITS.requestBytes);
+      const artifact=await artifacts.put({...encoded,signal});reference(artifact);
+      if(artifact.hash!==encoded.hash||artifact.bytes!==Buffer.byteLength(encoded.text)
+        ||await artifacts.read(artifact,{signal})!==encoded.text)fail('commissioning_preflight_readback_failed',502);
+      await snapshot(true);
+      return artifact;
+    },
     async record(response){
       responseShape(response);
       const encoded=encodeRuntimePayload(response,JOURNAL_LIMITS.responseBytes);
