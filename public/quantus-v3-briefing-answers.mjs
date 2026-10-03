@@ -123,6 +123,94 @@ const labels = Object.freeze({
 });
 export const answerDeliveryText = status => labels[status] || 'Übertragung ungeklärt';
 
+// Only the complete original, including unknown fields, identifies a migrated
+// question. Matching lead IDs or visible text alone would hide changed work.
+export async function findMigratedQuestion(leadId, original, questions, cryptoImpl = globalThis.crypto) {
+  if (!safeId(leadId) || !original || typeof original.text !== 'string') return null;
+  const fingerprint = await digest(canonicalIntentJson([leadId, original]), cryptoImpl);
+  return questions.find(q => q?.id === 'legacyq_' + fingerprint
+    && q.sourceType === 'chatgptLead' && q.sourceId === leadId
+    && q.legacySource?.leadId === leadId && q.legacySource.fingerprint === fingerprint
+    && ['open', 'answered', 'withdrawn'].includes(q.status) && dateValid(q.runDate)
+    && q.text === original.text && canonicalIntentJson(q.options) === canonicalIntentJson(original.options ?? [])
+    && q.recommendation === (original.recommendation ?? null)
+    && q.legacyAnswerDraft === (original.answer ?? null)
+    && canonicalIntentJson(q.legacyAnsweredAt) === canonicalIntentJson(original.answeredAt ?? null)) || null;
+}
+
+export async function reconcileLegacyQuestionRows({ root, host, questions, drafts, entries = [], isCurrent, cryptoImpl = globalThis.crypto }) {
+  if (!root?.querySelectorAll) return;
+  for (const row of root.querySelectorAll('[data-legacy-question-lead]')) {
+    if (row.hidden && row.dataset.legacyQuestionResolved === 'open') continue;
+    let question, retained;
+    try {
+      if (!isCurrent() || !host.isConnected) return;
+      const original = JSON.parse(row.dataset.legacyQuestionOriginal);
+      const key = 'legacy-draft:' + row.dataset.legacyQuestionLead + ':' + canonicalIntentJson(original);
+      retained = entries.find(e => !e.resolvedOperationId && e.legacyOperation?.kind === 'legacy_question_answer'
+        && e.legacyOperation.leadId === row.dataset.legacyQuestionLead
+        && canonicalIntentJson(e.legacyOperation.question) === canonicalIntentJson(original));
+      const input = row.querySelector('input');
+      if (input) {
+        if (!input.value && Object.hasOwn(drafts, key)) input.value = drafts[key];
+        else drafts[key] = input.value;
+        row.oninput = event => { if (event.target === input && isCurrent()) drafts[key] = input.value; };
+      }
+      question = await findMigratedQuestion(row.dataset.legacyQuestionLead, original, questions, cryptoImpl);
+    }
+    catch (_) { continue; } // Invalid original or mapping remains visible.
+    if (!isCurrent() || !host.isConnected) return;
+    if (!row.isConnected) continue;
+    const field = row.querySelector('input');
+    const text = field?.value || '';
+    if (retained && (!text || text.trim() === retained.legacyOperation.answer)
+      && safeId(retained.operationId) && host.querySelector('[data-retained-legacy="' + retained.operationId + '"]')) {
+      row.hidden = true; row.style.display = 'none'; continue;
+    }
+    if (!question) continue;
+    const target = host.querySelector('[data-server-question="' + question.id + '"]');
+    const answer = target?.querySelector('[data-answer-text]');
+    if (question.status === 'open' && answer) {
+      // Read the draft AFTER the asynchronous fingerprint check. Never replace
+      // an already queued answer or a different draft in the canonical view.
+      if (text && answer.value && text !== answer.value) {
+        let notice = row.querySelector('[data-legacy-draft-notice]');
+        if (!notice) { notice = row.ownerDocument.createElement('p'); notice.dataset.legacyDraftNotice = ''; row.append(notice); }
+        notice.textContent = 'Hier steht ein anderer Entwurf. Er bleibt erhalten; bitte mit der Antwort im gemeinsamen Fragenbereich vergleichen.';
+        continue;
+      }
+      if (text && !answer.readOnly) { drafts[question.id] = text; answer.value = text; }
+      // An active old input moves its focus with its exact text.
+      if (field && row.ownerDocument.activeElement === field) answer.focus();
+      row.hidden = true;
+      row.style.display = 'none';
+      row.dataset.legacyQuestionResolved = 'open';
+    } else if (question.status !== 'open' && !row.dataset.legacyQuestionResolved) {
+      const notice = row.ownerDocument.createElement('p');
+      notice.textContent = question.status === 'answered'
+        ? 'Diese Frage ist im synchronisierten Serverbestand bereits beantwortet.'
+        : 'Diese Frage wurde vom Server zurückgenommen. Eine neue Frage muss separat bestätigt werden.';
+      row.append(notice);
+      if (field) field.readOnly = true;
+      for (const button of row.querySelectorAll('button')) button.disabled = true;
+      // Preserve an unsent differing draft visibly, without another send action.
+      if (text) { const label = row.ownerDocument.createElement('p'); label.textContent = 'Dein noch nicht gesendeter Entwurf bleibt hier zum Vergleichen erhalten.'; row.append(label); }
+      else { row.hidden = true; row.style.display = 'none'; }
+      row.dataset.legacyQuestionResolved = question.status;
+    }
+  }
+  if (!isCurrent() || !host.isConnected) return;
+  for (const section of root.querySelectorAll('[data-legacy-question-section]')) {
+    const rows = [...section.querySelectorAll('[data-legacy-question-lead]')];
+    if (!rows.length) continue;
+    const visible = rows.filter(row => !row.hidden).length;
+    const counter = section.querySelector('[data-legacy-question-count]');
+    if (counter) counter.textContent = '(' + visible + ')';
+    section.hidden = visible === 0;
+    section.style.display = visible === 0 ? 'none' : '';
+  }
+}
+
 export function renderBriefingAnswers(questions, entries = [], drafts = {}) {
   const byQuestion = new Map(entries.filter(e => e.command?.verb === 'briefing.answer').map(e => [e.command.payload.questionId, e]));
   const shown = new Map(questions.filter(q => q && safeId(q.id) && q.status === 'open').map(q => [q.id, q]));
@@ -131,7 +219,7 @@ export function renderBriefingAnswers(questions, entries = [], drafts = {}) {
   for (const [id, entry] of byQuestion) if (entry.status !== 'acknowledged' && !shown.has(id)) shown.set(id, { id, text: 'Noch nicht bestätigte Antwort', status: 'unavailable' });
   const retained = entries.filter(e => e.legacyOperation?.kind === 'legacy_question_answer' && !e.resolvedOperationId);
   return '<h3>Fragen aus der automatischen Verarbeitung</h3><p class="mini">Aus dem synchronisierten Fragenbestand. Antworten werden einzeln an den Server übertragen.</p>'
-    + retained.map(e => '<div class="db-item" style="display:block"><strong>' + esc(e.legacyOperation.question.text) + '</strong>'
+    + retained.map(e => '<div class="db-item" data-retained-legacy="' + esc(e.operationId) + '" style="display:block"><strong>' + esc(e.legacyOperation.question.text) + '</strong>'
       + '<p>' + esc(e.legacyOperation.answer) + '</p><p class="mini" role="status">' + esc(answerDeliveryText(e.deliveryStatus)) + '</p>'
       + '<button class="btn sm" data-action="cgl-open" data-id="' + esc(e.legacyOperation.leadId) + '">Zugehörigen Lead öffnen</button></div>').join('')
     + (shown.size ? Array.from(shown.values()).map(q => {
@@ -152,7 +240,7 @@ export function renderBriefingAnswers(questions, entries = [], drafts = {}) {
 
 // The host can be replaced by the app's normal pull/merge/render cycle. Drafts
 // live in the controller, separately for each signed-in account, never in core.
-export function bindBriefingAnswers({ host, client, questions, drafts, isCurrent = () => true }) {
+export function bindBriefingAnswers({ host, client, questions, drafts, isCurrent = () => true, legacyRoot }) {
   let busy = false;
   clearTimeout(host._answerRetryTimer);
   const status = text => { if (isCurrent() && host.isConnected) host.querySelector('[data-answer-status]').textContent = text; };
@@ -160,6 +248,8 @@ export function bindBriefingAnswers({ host, client, questions, drafts, isCurrent
     const entries = await client.list();
     if (isCurrent() && host.isConnected) {
       host.innerHTML = renderBriefingAnswers(questions, entries, drafts);
+      await reconcileLegacyQuestionRows({ root: legacyRoot, host, questions, drafts, entries, isCurrent });
+      if (!isCurrent() || !host.isConnected) return;
       clearTimeout(host._answerRetryTimer);
       const pending = entries.filter(e => ['pending', 'retry_wait'].includes(e.status) || e.deliveryStatus === 'legacy_unmapped');
       if (pending.length) host._answerRetryTimer = setTimeout(async () => {

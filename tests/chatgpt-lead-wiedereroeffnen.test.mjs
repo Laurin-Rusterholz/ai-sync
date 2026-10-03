@@ -378,3 +378,15 @@ const BRIEFING = () => ({
 }
 
 console.log(`chatgpt lead wiedereroeffnen: ok (${checks} Pruefungen)`);
+
+// The operational answer view follows the canonical state even when an old
+// client's historical status field has not yet caught up.
+{
+  const question = { text: 'Neue Frage', options: ['Ja'], answeredAt: null };
+  const reopened = bauen({ ...BRIEFING(), operationalState: 'information_required', pendingQuestion: question });
+  ok(reopened.statusBox().includes('cgl-answer-question'), 'kanonisch wieder geoeffneter Lead zeigt seine Frage trotz altem Abschlussfeld');
+  for (const state of ['done', 'cancelled']) {
+    const closed = bauen({ ...BRIEFING(), status: 'in_arbeit', operationalState: state, pendingQuestion: question });
+    ok(!closed.statusBox().includes('cgl-answer-question'), 'kanonisch geschlossener Lead hat keinen Antwortknopf: ' + state);
+  }
+}
