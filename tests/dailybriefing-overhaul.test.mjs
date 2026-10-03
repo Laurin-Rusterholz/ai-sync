@@ -64,3 +64,26 @@ test('Cross-project context never includes unrelated work; unsafe content stays 
 test('Missing summary and source cannot look like a successful check',()=>{
   const f=fixture();const output=f.api.renderBriefingFocus('2026-10-02','',[]);assert.match(output,/fehlt noch eine Zusammenfassung/);assert.doesNotMatch(output,/erledigt|vollständig geprüft/);assert.match(f.api.renderBriefingLinks({}),/Noch keine Quelle/);
 });
+
+test('Migrated unanswered questions stay visible without resolving canonical conflicts',()=>{
+  const states=html.slice(html.indexOf('const V3_OPERATIONAL_STATES ='),html.indexOf('/* Konzept v2 A/B/E/F:'));
+  const questions=html.slice(html.indexOf('// Question visibility is independent'),html.indexOf('/* ══ Konzept v2 K:'));
+  const render=new Function('esc','fmtDateTime','renderBriefingLinks',states+'\n'+questions+'\nreturn renderV3ChatgptCockpit;')(escape,x=>x,()=> '');
+  const make=(id,hint,extra={})=>({id,title:id,status:'in_arbeit',operationalState:null,operationalStateVersion:1,
+    operationalStateSource:{legacyDesktopState:hint},operationalStateUnmapped:'ambiguous',
+    pendingQuestion:{text:'Original '+id,options:['Yes','No'],answeredAt:null},...extra});
+  const leads=[make('decision','decision_required'),make('information','information_required'),
+    make('unknown','doing'),make('answered','decision_required',{pendingQuestion:{text:'Already answered',answeredAt:'2026-10-03T07:00:00Z'}}),
+    make('closed','decision_required',{operationalState:'done',operationalStateUnmapped:undefined}),
+    make('stale-closed-status','information_required',{status:'abgeschlossen'}),
+    {id:'legacy-closed',status:'in_arbeit',operationalState:'done',pendingQuestion:{text:'Closed original'}}];
+  const before=structuredClone(leads),out=render(leads);
+  for(const id of ['decision','information','unknown','stale-closed-status']) assert.ok(out.includes('data-legacy-question-lead="'+id+'"'),id);
+  for(const id of ['answered','closed','legacy-closed']) assert.ok(!out.includes('data-legacy-question-lead="'+id+'"'),id);
+  assert.match(out,/Entscheidungen gefragt[\s\S]*?\(1\)/);
+  assert.match(out,/Fragen von ChatGPT[\s\S]*?\(3\)/);
+  assert.match(out,/Arbeitsstatus nach Migration ungeklärt/);
+  assert.match(out,/Laurin – offene Frage/);
+  assert.match(out,/Arbeitsstatus ungeklärt/);
+  assert.deepEqual(leads,before,'rendering cannot answer or repair a lead');
+});
