@@ -23769,10 +23769,14 @@ function renderV3AutomationStatus(selectedDate) {
   // da (den ersten/naechsten Lauf manuell anstossen). Deshalb VOR dem
   // fruehen Rueckgabezweig berechnet, nicht danach.
   const istHeute = selectedDate === todayYmd();
+  const emailWindow = typeof window === 'object' ? window : {};
+  let emailPending = Number(emailWindow._v3EmailPendingAt) > 0;
+  try { emailPending = emailPending || Number(emailWindow.sessionStorage?.getItem('quantus-v3-email-pending-start')) > 0; } catch (e) {}
   const buttonHtml = istHeute
     ? '<div style="margin:4px 0 10px">'
-      + '<button class="btn" id="dbV3EmailRunBtn" onclick="dbRunV3EmailBriefing()" style="background:var(--accent-soft);border-color:var(--accent-soft);color:var(--accent)">' + "\u{1F4E7}" + ' E-Mails auswerten</button>'
-      + '<div id="dbV3EmailRunStatus" class="mini" style="margin-top:6px"></div>'
+      + '<button class="btn" id="dbV3EmailRunBtn" onclick="dbRunV3EmailBriefing()" style="background:var(--accent-soft);border-color:var(--accent-soft);color:var(--accent)">' + (emailPending ? 'Serverergebnis prüfen' : '📧 E-Mails auswerten') + '</button>'
+      + '<button class="btn" id="dbV3EmailResetBtn" onclick="dbResetV3EmailPending()" style="margin-left:6px;' + (emailPending ? '' : 'display:none') + '">Neuen Versuch ermöglichen</button>'
+      + '<div id="dbV3EmailRunStatus" class="mini" style="margin-top:6px">' + (emailPending ? 'Der Ausgang des letzten Versuchs ist noch unbestätigt. Der Hauptknopf prüft nur den Serverstand.' : '') + '</div>'
       + '</div>'
     : '<div class="mini" style="opacity:.5;margin:4px 0 10px">E-Mail-Auswertung per Knopf ist nur für heute verfügbar (der Lauf wertet immer den aktuellen Tag aus).</div>';
   const runV3 = APP.state.data?.dailyBriefing?.assistantRuns?.[selectedDate];
@@ -24646,11 +24650,69 @@ async function dbRunV3EmailBriefing() {
   if (window._v3EmailRunInFlight) return;
   const btn = document.getElementById('dbV3EmailRunBtn');
   const statusEl = document.getElementById('dbV3EmailRunStatus');
+  const pendingKey = 'quantus-v3-email-pending-start';
+  let pendingAt = Number(window._v3EmailPendingAt) || 0;
+  try { pendingAt = pendingAt || Number(window.sessionStorage?.getItem(pendingKey)) || 0; } catch (e) {}
+  if (!Number.isFinite(pendingAt) || pendingAt < 0) pendingAt = 0;
+  const setPending = (at) => {
+    pendingAt = at;
+    window._v3EmailPendingAt = at;
+    const reset = document.getElementById('dbV3EmailResetBtn');
+    if (reset) reset.style.display = at ? '' : 'none';
+    try {
+      if (at) window.sessionStorage?.setItem(pendingKey, String(at));
+      else window.sessionStorage?.removeItem(pendingKey);
+    } catch (e) {} // the current tab still fences repeated clicks in memory
+  };
+  const showStatus = (text) => {
+    const current = document.getElementById('dbV3EmailRunStatus');
+    if (current) current.innerHTML = '<span style="color:var(--warn)">' + esc(text) + '</span>';
+  };
+  const reconcile = async () => {
+    showStatus('Antwort ausgeblieben. Prüfe den gespeicherten Serverstand …');
+    try {
+      const result = await window.remoteGetByKey('app-data.json', { force: true, preferProvider: 'rtdb' });
+      if (!result?.ok || !result.data) throw new Error('read_failed');
+      const data = result.data;
+      const runs = Object.values(data.dailyBriefing?.assistantRuns || {});
+      const matches = runs.filter(run => {
+        const checkedAt = Date.parse(run?.sourceChecks?.gmail?.checkedAt || '');
+        return Number.isFinite(checkedAt) && checkedAt >= pendingAt;
+      });
+      const draftRun = matches.find(run => (run.noteIds || []).some(id => {
+        if (typeof id !== 'string' || !id.startsWith('v3-draft:')) return false;
+        const note = data.entities?.chatgptNotes?.[id];
+        return note && Date.parse(note.createdAt || '') >= pendingAt
+          && typeof note.instruction === 'string' && note.instruction.trim();
+      }));
+      if (draftRun && !data.automation?.activeLease) {
+        const complete = draftRun.sourceChecks.gmail.outcome === 'ok';
+        showStatus('Serverstand bestätigt: Seit dem Start ist ein Gmail-Entwurf gespeichert. E-Mails ' + (complete ? 'geprüft' : 'nur teilweise geprüft') + '. Kein zweiter Lauf gestartet.');
+        setPending(0);
+      } else {
+        showStatus((matches.length ? 'Eine neue Gmail-Prüfung ist gespeichert; das Ergebnis ist noch nicht abschliessend bestätigt.' : 'Der Ausgang ist noch unbestätigt.') + ' Mit «Serverergebnis prüfen» nur erneut nachsehen; es wird kein zweiter Lauf gestartet.');
+      }
+    } catch (e) {
+      showStatus('Der Serverstand ist gerade nicht erreichbar. Der Lauf kann trotzdem verarbeitet worden sein. «Serverergebnis prüfen» startet keinen zweiten Lauf.');
+    }
+  };
+  if (pendingAt) {
+    window._v3EmailRunInFlight = true;
+    if (btn) btn.disabled = true;
+    try { await reconcile(); }
+    finally {
+      window._v3EmailRunInFlight = false;
+      const current = document.getElementById('dbV3EmailRunBtn');
+      if (current) { current.disabled = false; current.textContent = pendingAt ? 'Serverergebnis prüfen' : '📧 E-Mails auswerten'; }
+    }
+    return;
+  }
   const token = sanitizeApiKey(APP.state.settings?.v3EmailAuthToken);
   if (!token) {
     if (statusEl) statusEl.innerHTML = '<span style="color:var(--danger)">' + "⚠️" + ' Kein Zugangsschlüssel hinterlegt — unter Einstellungen → "Zugangsschlüssel E-Mail-Auswertung" eintragen (muss mit QUANTUS_EMAIL_AUTH_TOKEN in Netlify übereinstimmen).</span>';
     return;
   }
+  setPending(Date.now());
   window._v3EmailRunInFlight = true;
   if (btn) { btn.disabled = true; btn.textContent = "⏳ Läuft…"; }
   if (statusEl) statusEl.innerHTML = '<span style="opacity:.7">E-Mails werden ausgewertet…</span>';
@@ -24662,19 +24724,21 @@ async function dbRunV3EmailBriefing() {
         headers: { 'Authorization': 'Bearer ' + token },
       });
     } catch (netErr) {
-      if (statusEl) statusEl.innerHTML = '<span style="color:var(--danger)">' + "⚠️" + ' Netzwerkfehler: ' + esc(String(netErr && netErr.message || netErr)) + '</span>';
+      await reconcile();
       return;
     }
     let body = null;
     try { body = await res.json(); } catch (e) { /* Antwort war kein JSON */ }
     if (res.status === 401) {
+      setPending(0);
       if (statusEl) statusEl.innerHTML = '<span style="color:var(--danger)">' + "\u{1F512}" + ' Zugang verweigert — der Zugangsschlüssel stimmt nicht mit QUANTUS_EMAIL_AUTH_TOKEN (oder ersatzweise SYNC_AUTH_TOKEN) in Netlify überein.</span>';
       return;
     }
     if (!body || typeof body !== 'object') {
-      if (statusEl) statusEl.innerHTML = '<span style="color:var(--danger)">' + "⚠️" + ' Unlesbare Antwort vom Server (Status ' + esc(String(res.status)) + ').</span>';
+      await reconcile();
       return;
     }
+    setPending(0);
     if (body.blocked === 'missing_configuration') {
       if (statusEl) statusEl.innerHTML = '<span style="color:var(--danger)">' + "⚠️" + ' Serverseitig fehlt Konfiguration: ' + esc((Array.isArray(body.missing) ? body.missing : []).join(', ') || '?') + '</span>';
       return;
@@ -24714,10 +24778,23 @@ async function dbRunV3EmailBriefing() {
   } finally {
     window._v3EmailRunInFlight = false;
     const btnAgain = document.getElementById('dbV3EmailRunBtn');
-    if (btnAgain) { btnAgain.disabled = false; btnAgain.textContent = "\u{1F4E7} E-Mails auswerten"; }
+    if (btnAgain) { btnAgain.disabled = false; btnAgain.textContent = pendingAt ? 'Serverergebnis prüfen' : '📧 E-Mails auswerten'; }
   }
 }
 window.dbRunV3EmailBriefing = dbRunV3EmailBriefing;
+function dbResetV3EmailPending() {
+  if (window._v3EmailRunInFlight) return;
+  if (!window.confirm('Der letzte Lauf kann bereits verarbeitet worden sein. Ein neuer Versuch kann erneut Kosten verursachen. Trotzdem einen neuen Versuch ermöglichen?')) return;
+  try { window.sessionStorage?.removeItem('quantus-v3-email-pending-start'); } catch (e) { return; }
+  window._v3EmailPendingAt = 0;
+  const button = document.getElementById('dbV3EmailRunBtn');
+  if (button) button.textContent = '📧 E-Mails auswerten';
+  const reset = document.getElementById('dbV3EmailResetBtn');
+  if (reset) reset.style.display = 'none';
+  const status = document.getElementById('dbV3EmailRunStatus');
+  if (status) status.textContent = 'Neuer Versuch freigegeben. Es wurde noch kein Lauf gestartet.';
+}
+window.dbResetV3EmailPending = dbResetV3EmailPending;
 
 const _v3AnswerClients = new Map();
 async function dbV3AnswerAccount() {
