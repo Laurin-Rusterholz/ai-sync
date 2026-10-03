@@ -387,13 +387,14 @@ test("C3a-06 Nutzer: intake.create/accept, task.create, lead.comment, briefing.a
   const t = mussOk(await sende(d, { verb: "task.create", payload: { leadId: "l1", title: "Offerte nachfassen", dueAt: "2026-09-25T21:30:00Z", notes: "bis Freitag", taskId: "t_neu" }, idempotencyKey: "k-task" }), "task");
   const aufgabe = d._store.snapshot.entities.tasks.t_neu;
   assert.deepEqual([aufgabe.title, aufgabe.dueDate, aufgabe.linkedChatgptLeads, aufgabe.createdBy, K.effektiverZustand("task", aufgabe).state], ["Offerte nachfassen", "2026-09-25", ["l1"], OWNER, "doing"]);
-  assert.deepEqual(t.body.entityVersions, { t_neu: 1, l1: ver(BASIS, "chatgptLead", "l1") });
+  assert.deepEqual(t.body.entityVersions, { t_neu: 1, l1: acc.body.entityVersions.l1 });
+  assert.equal(acc.body.entityVersions.l1, ver(BASIS, "chatgptLead", "l1") + 1, "intake context invalidates the prior lead version");
   assert.equal((await sende(d, { verb: "task.create", payload: { leadId: "l_fremd", title: "x" } })).body.reason, "object_not_found", "der Anker-Lead muss existieren");
-  mussOk(await sende(d, { verb: "lead.comment", payload: { leadId: "l1", text: "Kunde hat angerufen", evidenceRefs: ["ev_l1"], commentId: "c4" }, expectedEntityVersion: ver(BASIS, "chatgptLead", "l1"), idempotencyKey: "k-com" }), "comment");
+  mussOk(await sende(d, { verb: "lead.comment", payload: { leadId: "l1", text: "Kunde hat angerufen", evidenceRefs: ["ev_l1"], commentId: "c4" }, expectedEntityVersion: ver(d._store.snapshot, "chatgptLead", "l1"), idempotencyKey: "k-com" }), "comment");
   assert.deepEqual(d._store.snapshot.entities.chatgptLeads.l1.comments.at(-1), { id: "c4", text: "Kunde hat angerufen", createdAt: new Date(JETZT).toISOString(), author: OWNER, authorKind: "user", evidenceRefs: ["ev_l1"] });
   assert.equal((await lese(d, { query: "notes.recent", scopeId: "l1" })).body.items[0].text, "Kunde hat angerufen");
-  assert.equal((await sende(d, { verb: "lead.comment", payload: { leadId: "l1", text: "x", evidenceRefs: ["ev_erfunden"] }, expectedEntityVersion: ver(BASIS, "chatgptLead", "l1") })).body.reason, "EVIDENCE_REF_UNKNOWN:ev_erfunden");
-  assert.equal((await sende(d, { verb: "lead.comment", payload: { leadId: "l1", text: "anders", commentId: "c4" }, expectedEntityVersion: ver(BASIS, "chatgptLead", "l1") })).body.reason, "COMMENT_IMMUTABLE:c4");
+  assert.equal((await sende(d, { verb: "lead.comment", payload: { leadId: "l1", text: "x", evidenceRefs: ["ev_erfunden"] }, expectedEntityVersion: ver(d._store.snapshot, "chatgptLead", "l1") })).body.reason, "EVIDENCE_REF_UNKNOWN:ev_erfunden");
+  assert.equal((await sende(d, { verb: "lead.comment", payload: { leadId: "l1", text: "anders", commentId: "c4" }, expectedEntityVersion: ver(d._store.snapshot, "chatgptLead", "l1") })).body.reason, "COMMENT_IMMUTABLE:c4");
   const ans = mussOk(await sende(d, { verb: "briefing.answer", payload: { briefingId: RUN_ID, questionId: "q_c1", answer: "Muster AG", answerId: "a_c1" }, idempotencyKey: "k-ans" }), "answer");
   assert.equal(d._store.snapshot.automation.answersById.a_c1.answeredBy, OWNER); assert.equal(d._store.snapshot.automation.questionsById.q_c1.status, "answered"); assert.ok("q_c1" in ans.body.entityVersions);
   assert.equal((await sende(d, { verb: "briefing.answer", payload: { briefingId: RUN_ID, questionId: "q_c1", answer: "anders" } })).body.reason, "QUESTION_NOT_OPEN:answered");
@@ -416,7 +417,7 @@ test("C3a-06 Nutzer: intake.create/accept, task.create, lead.comment, briefing.a
   assert.equal((await sende(d, { verb: "note.append", payload: { noteId: "note_u2", text: "x", noteScope: "lead" } })).body.reason, "lead_id_required_for_lead_scope");
   assert.equal((await sende(d, { verb: "note.append", payload: { noteId: "note_u1", text: "anders", noteScope: "run" } })).body.reason, "NOTE_ID_TAKEN:note_u1");
   assert.equal((await sende(d, { verb: "note.append", payload: { noteId: "note_p1", text: "Pruefer", noteScope: "run" }, token: d._env.secrets.service.checker })).status, 200);
-  assert.equal((await sende(d, { verb: "lead.schedule", payload: { leadId: "l1", waitUntil: new Date(JETZT + 2 * TAG).toISOString(), counterparty: "Bank", nextAction: "nachfragen", evidenceRefs: ["ev_l1"] }, expectedEntityVersion: ver(BASIS, "chatgptLead", "l1") })).body.reason, "ACTOR_REJECTED:ACTOR_NOT_ALLOWED:user", "B erlaubt setWaiting nur der Leitung");
+  assert.equal((await sende(d, { verb: "lead.schedule", payload: { leadId: "l1", waitUntil: new Date(JETZT + 2 * TAG).toISOString(), counterparty: "Bank", nextAction: "nachfragen", evidenceRefs: ["ev_l1"] }, expectedEntityVersion: ver(d._store.snapshot, "chatgptLead", "l1") })).body.reason, "ACTOR_REJECTED:ACTOR_NOT_ALLOWED:user", "B erlaubt setWaiting nur der Leitung");
 });
 
 /* ══ 5. Leitung: Lease MITGEFUEHRT, je Versuch geprueft ═════════════════ */
@@ -801,4 +802,63 @@ test('retained legacy click resolves after real migration and crosses authentica
   time += 30_000; await client.flush();
   assert.equal((await client.list()).find(e => e.legacyOperation).deliveryStatus, 'acknowledged');
   assert.equal(requests, 2); assert.deepEqual(d._store.snapshot, committed);
+});
+
+test('intake acceptance creates one source-bound lead through authenticated C2/CAS and replays after lost receipt', async () => {
+  const { acceptedIntakeLeadId } = await import('../netlify/lib/assistant-intake-accept.mjs');
+  const data = bCmd(BASIS, 'registerIntake', { intakeId: 'new_work', text: 'Auftrag\nUnverkuerzter Inhalt', channel: 'manual' }, JETZT, USER_B);
+  const store = FC.makeStore({ snapshot: data, conflictsBefore: 2 });
+  const d = deps({ store }), version = d.domain.loadObject(data, { kind: 'intake', id: 'new_work' }).entityVersion;
+  const args = { verb: 'intake.accept', payload: { intakeId: 'new_work' }, expectedEntityVersion: version, idempotencyKey: 'accept-new-work' };
+  const first = mussOk(await sende(d, args), 'create lead');
+  const id = acceptedIntakeLeadId(TENANT, 'new_work'), committed = structuredClone(store.snapshot);
+  assert.equal(first.body.effect.leadId, id); assert.equal(first.body.entityVersions[id], 1);
+  assert.equal(committed.automation.dataRevision, data.automation.dataRevision + 1);
+  assert.equal(committed.entities.chatgptLeads[id].rawInput, 'Auftrag\nUnverkuerzter Inhalt');
+  assert.equal(committed.automation.intakeById.new_work.linkedTo.sourceId, id);
+  assert.ok(store.spur.mutatorCalls >= 3);
+  const replay = mussOk(await sende(d, args), 'receipt recovery'); assert.equal(replay.body.replayed, true);
+  assert.deepEqual(store.snapshot, committed);
+  const fresh = await sende(d, { ...args, expectedEntityVersion: first.body.entityVersions.new_work, idempotencyKey: 'different-request-same-source' });
+  assert.equal(fresh.status, 200); assert.equal(fresh.body.effect.leadId, id);
+  assert.equal(Object.keys(store.snapshot.entities.chatgptLeads).length, Object.keys(data.entities.chatgptLeads).length + 1);
+  assert.equal(store.snapshot.automation.dataRevision, committed.automation.dataRevision + 1, "new request creates only another receipt");
+  assert.deepEqual(store.snapshot.entities, committed.entities);
+  assert.deepEqual(store.snapshot.automation.intakeById, committed.automation.intakeById);
+  const denied = await sende(d, { ...args, token: nutzerToken('foreign'), idempotencyKey: 'foreign-accept' });
+  assert.equal(denied.status, 403);
+});
+
+test('acceptance remains user-only; assigned lead agent can independently read the accepted intake and lead', async () => {
+  let data = bCmd(BASIS, 'registerIntake', { intakeId: 'agent_in', text: 'Auftrag fuer die Leitung', channel: 'manual' }, JETZT, USER_B);
+  data = bCmd(data, 'addItemRef', { date: DATE, sourceType: 'intake', sourceId: 'agent_in' }, JETZT);
+  const leased = mitLease(data), env = umgebung(), d = deps({ env, store: FC.makeStore({ snapshot: leased.data }) });
+  const token = await jobToken(env, { role: 'lead_agent', principalId: 'lead-agent-1', assignedJobIds: [RUN_ID] });
+  const version = d.domain.loadObject(data, { kind: 'intake', id: 'agent_in' }).entityVersion;
+  const forbidden = await sende(d, { verb: 'intake.accept', payload: { intakeId: 'agent_in', leadId: 'l2' }, expectedEntityVersion: version, token, lease: leased.lease, idempotencyKey: 'foreign-run-target' });
+  assert.equal(forbidden.status, 403); assert.equal(forbidden.body.reason, 'verb_not_allowed_for_role');
+  const result = mussOk(await sende(d, { verb: 'intake.accept', payload: { intakeId: 'agent_in' }, expectedEntityVersion: version, idempotencyKey: 'owner-accept' }), 'owner accept');
+  const targets = [['intake', 'agent_in'], ['lead', result.body.effect.leadId], ['run', RUN_ID]];
+  const refs = targets.map(([kind, id]) => d.domain.listPage(d._store.snapshot, { query: 'run.readback', scopeId: RUN_ID, pageSize: 1, principal: { role: 'lead_agent', jobId: RUN_ID }, targetKind: kind, targetId: id }).items[0]);
+  const readToken = await jobToken(env, { role: 'lead_agent', principalId: 'lead-agent-1', assignedJobIds: [RUN_ID], audience: 'quantus-read' });
+  for (const ref of refs) {
+    const read = await lese(d, { route: 'quantus-read', query: 'run.readback', scopeId: RUN_ID, token: readToken, targetKind: ref.originalKind, targetId: ref.originalId });
+    assert.equal(read.status, 200, JSON.stringify(read.body));
+    assert.equal(read.body.items[0].fingerprint, ref.fingerprint);
+  }
+});
+
+test('parallel intake acceptance cannot create two leads or replace an accepted target', async () => {
+  const data = bCmd(BASIS, 'registerIntake', { intakeId: 'race_in', text: 'Nur einmal annehmen', channel: 'manual' }, JETZT, USER_B);
+  const d = deps({ store: FC.makeStore({ snapshot: data }) });
+  const version = d.domain.loadObject(data, { kind: 'intake', id: 'race_in' }).entityVersion;
+  const results = await Promise.all([
+    sende(d, { verb: 'intake.accept', payload: { intakeId: 'race_in' }, expectedEntityVersion: version, idempotencyKey: 'race-create' }),
+    sende(d, { verb: 'intake.accept', payload: { intakeId: 'race_in', leadId: 'l1' }, expectedEntityVersion: version, idempotencyKey: 'race-link' }),
+  ]);
+  assert.deepEqual(results.map(r => r.status).sort(), [200, 409]);
+  const entry = d._store.snapshot.automation.intakeById.race_in;
+  assert.equal(entry.linkedTo.sourceId, entry.acceptance.leadId);
+  assert.ok(d._store.snapshot.entities.chatgptLeads[entry.linkedTo.sourceId].intakeRefs.includes('race_in'));
+  assert.equal(Object.keys(d._store.snapshot.entities.chatgptLeads).length, Object.keys(data.entities.chatgptLeads).length + 1);
 });

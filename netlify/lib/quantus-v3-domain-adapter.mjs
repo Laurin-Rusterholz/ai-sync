@@ -75,7 +75,7 @@ const SLOT_VON_C2 = Object.freeze({ "04:00": "briefing04", "09:00": "process09",
 /* Die 23 Verben und ihr Kern-/E1-Kommando. Keine Luecken. */
 export const VERB_BINDINGS = Object.freeze({
   "intake.create":          "registerIntake",
-  "intake.accept":          "transitionState",
+  "intake.accept":          "acceptIntake",
   "task.create":            "createTask",
   "lead.comment":           "addComment",
   "lead.transition":        "transitionState",
@@ -486,6 +486,7 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
       const type = object.sourceType;
       raw = { sourceType: type, source: B.quelleFinden(data, type, id), waiting: data.automation.waitingById[type + ':' + id] || null };
     } else if (kind === 'question') raw = data.automation.questionsById[id];
+    else if (kind === 'intake') raw = data.automation.intakeById[id];
     else if (kind === 'document') raw = data.automation.documentsById[id];
     else if (kind === 'assignment') raw = data.automation.jobsById[id];
     else if (kind === 'worker_result') raw = data.automation.jobsById[object.assignmentId];
@@ -721,9 +722,9 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
         ids = [["intake", resource.id]]; break;
       }
       case "intake.accept": {
-        const payload = { sourceType: "intake", sourceId: String(p.intakeId), state: "done" };
-        if (p.leadId) payload.linkTo = { sourceType: "chatgptLead", sourceId: String(p.leadId) }; else payload.reason = "intake.accept";
-        r = ausfuehren("transitionState", payload); ids = [["intake", String(p.intakeId)]]; break;
+        const run = lauf();
+        r = ausfuehren('acceptIntake', { intakeId: String(p.intakeId), date: run.date, ...(p.leadId ? { leadId: String(p.leadId) } : {}) });
+        ids = [['intake', String(p.intakeId)], ['lead', r.result.leadId], ['run', run.id]]; break;
       }
       case "task.create": {
         const payload = { taskId: resource.id, title: String(p.title), linkedLeadId: String(p.leadId) };
