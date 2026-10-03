@@ -218,8 +218,10 @@ const BRIEFING = () => ({
   // veralteter Zustand stehen, obwohl status sich laengst geaendert hat.
   t.lead.operationalState = "waiting_external"; // simuliert einen zuvor gesetzten Spezialzustand
   t.klick("cgl-close");
-  eq(t.lead.status, "abgeschlossen", "der wieder geöffnete Lead liess sich nicht erneut abschliessen");
-  eq(t.lead.operationalState, "done", "operationalState muss beim Abschliessen auf 'done' nachgezogen werden, sonst bleibt ein alter Zustand stehen");
+  eq(t.lead.status, "in_arbeit", "ein unmigrierter Lead darf nicht lokal abgeschlossen werden");
+  eq(t.lead.operationalState, "waiting_external", "ohne API-Beleg darf kein done entstehen");
+  // Der weitere Altbestand-Wiedereroeffnungstest startet mit bestaetigtem Abschluss.
+  Object.assign(t.lead, {status:'abgeschlossen',operationalState:'done'});
   t.klick("cgl-reopen-ask");
   t.klick("cgl-reopen-do", { cglReopenStatus: "wartet", cglReopenGrund: "Nochmals offen", cglReopenBlocked: "Antwort der Bank" });
   eq(t.lead.status, "wartet", "die zweite Wiedereröffnung schlug fehl");

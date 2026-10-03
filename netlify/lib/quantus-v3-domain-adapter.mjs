@@ -740,6 +740,12 @@ export function createQuantusV3DomainAdapter({ policyVersion, tenantId, mode, no
         r = ausfuehren("addComment", payload); ids = [["lead", String(p.leadId)], ["note", commentId]]; break;
       }
       case "lead.transition": {
+        if (p.expectedResultHash !== undefined) {
+          if (p.toState !== 'done' || !/^[a-f0-9]{64}$/.test(p.expectedResultHash)) throw fail('invalid_request','result_hash_invalid',400);
+          const current = data.entities?.chatgptLeads?.[String(p.leadId)];
+          const hash = createHash('sha256').update(String(current?.result || ''),'utf8').digest('hex');
+          if (hash !== p.expectedResultHash) throw fail('domain_conflict','lead_result_changed',409);
+        }
         if (!B.OPERATIONAL_STATES.includes(p.toState)) throw fail("invalid_request", "to_state_unknown", 400);
         if (B.WARTE_ZUSTAENDE.includes(p.toState)) throw fail("invalid_request", "use_lead_schedule_for_waiting", 400);
         const payload = { sourceType: "chatgptLead", sourceId: String(p.leadId), state: p.toState, expectedVersion: befehl.expectedEntityVersion };

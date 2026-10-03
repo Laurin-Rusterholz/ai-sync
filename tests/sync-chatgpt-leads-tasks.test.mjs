@@ -160,7 +160,8 @@ ok(chatgptLeadMissing(complete()).length === 0, `ein vollstaendiger Lead gilt al
 // Kein Umgehen: der Klick-Handler liest dieselbe Funktion, und es gibt keine Massenaktion.
 {
   const handler = index.slice(index.indexOf('case "cgl-close": {'), index.indexOf('case "cgl-obsolete": {'));
-  ok(/const missing = chatgptLeadMissing\(l\);\s*if \(missing\.length\) \{/.test(handler), "der Abschluss-Handler prueft nicht ueber chatgptLeadMissing()");
+  ok(/const \{missing,options,self\} = chatgptLeadCompletionState\(l\);\s*if \(missing\.length\) \{/.test(handler), "der Abschluss-Handler prueft nicht den bestaetigbaren Abschlusszustand");
+  ok(/const missing = chatgptLeadMissing\(l\)\.slice\(\)/.test(sliceFn("function chatgptLeadCompletionState(l) {")), "die Serverabschluss-Pruefung muss alle bisherigen Pflichtfelder erhalten");
   ok(!/cgl-close-all|cgl-bulk|cgl-force/.test(index), "es gibt eine Massen- oder Zwangs-Abschlussaktion");
   const statusSelect = index.slice(index.indexOf('<select data-action="cgl-status"'), index.indexOf('<select data-action="cgl-status"') + 400);
   ok(!/"abgeschlossen"/.test(statusSelect), "der Status-Wechsler bietet 'abgeschlossen' als Umweg an");
