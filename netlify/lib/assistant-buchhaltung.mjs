@@ -712,7 +712,10 @@ export function transitionState(input, { sourceType, sourceId, state, expectedVe
   }
   if (ABGESCHLOSSENE_ZUSTAENDE.includes(z.state)) {
     const history = e.operationalStateHistory;
-    if (history !== undefined && !Array.isArray(history)) return fehler("STATE_HISTORY_INVALID");
+    if (history !== undefined && (!Array.isArray(history) || history.some(h => !istKarte(h)
+      || !ABGESCHLOSSENE_ZUSTAENDE.includes(h.state) || !Number.isSafeInteger(h.version) || h.version < 1
+      || !istKarte(h.source) || !Number.isFinite(Date.parse(h.reopenedAt))
+      || typeof h.reason !== "string" || !h.reason.trim() || typeof h.reopenedBy !== "string" || !h.reopenedBy))) return fehler("STATE_HISTORY_INVALID");
     e.operationalStateHistory = [...(history || []), {
       state: z.state, version: z.version, source: klon(e.operationalStateSource),
       reopenedAt: nowIso, reason: String(reason), reopenedBy: ctx.actor.id,

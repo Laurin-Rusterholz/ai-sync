@@ -52006,7 +52006,7 @@ function chatgptLeadStatusBoxHtml(l) {
 function chatgptLeadCloseHistory(l) {
   const legacy = Array.isArray(l && l.closeHistory) ? l.closeHistory : [];
   const canonical = Array.isArray(l && l.operationalStateHistory) ? l.operationalStateHistory : [];
-  return legacy.concat(canonical.map(h => ({
+  return legacy.concat(canonical.filter(h => h && typeof h === "object").map(h => ({
     closedAt: h.source?.changedAt || h.source?.mappedAt || null,
     closedBy: h.source?.closure?.actorId || null,
     obsoleteReason: h.source?.closure?.reason || null,

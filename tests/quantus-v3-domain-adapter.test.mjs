@@ -895,6 +895,10 @@ test('desktop cancellation queue commits through real C2 exactly once and preser
   assert.equal(actual.status,original.status);assert.equal(actual.operationalStateVersion,original.operationalStateVersion+1);
   assert.equal((await client.list())[0].deliveryStatus,'retry_wait');time+=30000;await client.flush();
   assert.equal((await client.list())[0].deliveryStatus,'acknowledged');assert.equal(requests,2);assert.deepEqual(d._store.snapshot,committed);
+  const corrupt=structuredClone(committed);corrupt.entities.chatgptLeads.l1.operationalStateHistory=[null];
+  const denied=K.applyCommand(corrupt,{type:'transitionState',commandId:'history-invalid',now:time,
+    payload:{sourceType:'chatgptLead',sourceId:'l1',state:'doing',expectedVersion:actual.operationalStateVersion,reason:'reopen'}},{policy:POLICY,actor:USER_B});
+  assert.equal(denied.error,'STATE_HISTORY_INVALID');assert.equal(corrupt.entities.chatgptLeads.l1.operationalState,'cancelled');
   await client.submit({lead:actual,reason:'Es sind neue Unterlagen eingetroffen.',toState:'doing'});await client.flush();
   const reopened=d._store.snapshot.entities.chatgptLeads.l1;
   assert.equal(reopened.operationalState,'doing');assert.equal(reopened.operationalStateVersion,actual.operationalStateVersion+1);
