@@ -27,6 +27,7 @@ import { createGmailV4Reader } from './gmail-v4-reader.mjs';
 import { createNetlifyGoogleTokenSource } from './google-oauth-token-source.mjs';
 import { externalEffectsAllowed } from './config.mjs';
 import { createAnswerPreparation } from './answer-preparation.mjs';
+import { createLegacyQuestionPreparation } from './legacy-question-preparation.mjs';
 import { createDailyFinalization } from './daily-finalization.mjs';
 import { domainFingerprint } from './domain-fingerprint.mjs';
 
@@ -107,6 +108,10 @@ export async function createOpenAIWorkerPorts({ config, corePort, clockPort,
         tenant: config.tenant, runKey, sectionId, verifiedScope, signal, enabled: externalEffectsAllowed(config) });
       if (readRuntime((await corePort.read()).data).runsByKey[runKey].dailyFinalization)
         return finalization.next();
+      const legacyQuestions = await createLegacyQuestionPreparation({ core: corePort, clock: clockPort, policy: policyResult.policy,
+        tenant: config.tenant, runKey, sectionId, verifiedScope, signal, enabled: externalEffectsAllowed(config) }).next();
+      if (!legacyQuestions.ready) return legacyQuestions.blocked ? { done: false, blocked: true, reason: legacyQuestions.reason }
+        : { done: false, stepId: legacyQuestions.stepId, durationMs: legacyQuestions.durationMs, cursor: legacyQuestions.cursor };
       const answers = await createAnswerPreparation({ core: corePort, clock: clockPort, policy: policyResult.policy,
         tenant: config.tenant, runKey, sectionId, verifiedScope, signal, enabled: externalEffectsAllowed(config) }).next();
       if (!answers.ready) return answers.blocked ? { done: false, blocked: true, reason: answers.reason }

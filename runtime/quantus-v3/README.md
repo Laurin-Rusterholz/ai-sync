@@ -341,6 +341,18 @@ Bestände und Laufzeitnachweise im echten 90-Sekunden-Worker bleiben offen.
 
 ### Nutzerantworten als offene Aufträge
 
+Noch vor dem Antwortkonsum führt `legacy-question-preparation` die bisherigen
+Lead-Fragen in den kanonischen Fragenbestand über (maximal 32 Quellen je
+Schritt, aktuelle Lease und Aktivierungsriegel). Vollständiger Originalinhalt
+und relevanter Migrationszustand sind getrennt gebunden. Änderungen, gelöschte
+Fragen und geschlossene Leads nehmen frühere offene Migrationsfragen zurück;
+historische bestätigte Antworten werden nicht erneut erzeugt. Original-Leads
+und Löschmarkierungen bleiben erhalten. Alte Antworttexte ohne eigenen
+Antwortbeleg erscheinen nur als zu bestätigender Entwurf. Unklare Altwerte
+melden `legacy_questions_require_review`; der Worker behauptet dann keine
+vollständige Übernahme. Die bisherigen Client-Schreibaktionen sind damit noch
+nicht vollständig umgestellt.
+
 Vor Gmail und OpenAI übernimmt `answer-preparation` je Aufruf eine neue Antwort
 mit dem Backend-Befehl `consumeAnswerToIntake`. Verbrauch und neuer offener
 Eingang sind eine CAS-Transaktion und eine Domain-Revision. Der Eingang zeigt

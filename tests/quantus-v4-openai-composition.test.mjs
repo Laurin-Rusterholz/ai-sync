@@ -21,7 +21,7 @@ const costPolicy = { schema: 'quantus-v3-cost-policy/1', version: 'test-only', c
   dayLimitMicros: 1000000, runLimitMicros: 1000000, callLimitMicros: 100000, unresolvedBlockMicros: 1000000,
   featureFlags: { providers: 'live' }, models: { 'openai:test-model': {
     inputMicrosPerMillionTokens: 1000, outputMicrosPerMillionTokens: 1000, maxCallMicros: 100000 } } };
-async function build({ mode = 'live', providerFailure = false, compaction = false, large = false, gmail = false, acquire = false, reply = false, close = false } = {}) {
+async function build({ mode = 'live', providerFailure = false, compaction = false, large = false, gmail = false, acquire = false, reply = false, close = false, legacy = false } = {}) {
   const now = close ? Date.parse('2026-10-02T21:01:00Z') : T;
   const runKey = close ? 'quantus:2026-10-02:close23:4.0' : RUN;
   let initial = migrateCore({ entities: close ? { chatgptLeads: close === 'open'
@@ -31,6 +31,11 @@ async function build({ mode = 'live', providerFailure = false, compaction = fals
     const r = applyCommand(initial, { type: 'ensureRunSlot', commandId: 'prior-' + slot, now,
       payload: { date: '2026-10-02', slot, receiptId: 'prior-' + slot } }, { policy: assistantPolicy, actor: { kind: 'system', id: 'fixture' } });
     assert.equal(r.ok, true); initial = r.data;
+  }
+  if (legacy) {
+    initial.entities.chatgptLeads.legacy = { id: 'legacy', status: 'neu', title: 'Alter Auftrag', pendingQuestion: {
+      text: 'Welcher Termin?', options: ['Heute', 'Morgen'], answer: 'Morgen', answeredAt: '2026-10-01T10:00:00Z' } };
+    initial = migrateCore(initial, { now }).data;
   }
   const s = await setup(initial, { initialNow: now, runKey });
   const requests = [], tools = [], sourceRequests = [];
@@ -152,6 +157,19 @@ test('actual OpenAI worker closes an eligible day through backend checks, replay
       assert.equal(s.requests.length, calls); assert.equal(s.store.stats.puts, puts);
     }
   }
+});
+
+test('actual composition migrates legacy questions before provider work without inventing confirmation, and respects dry-run', async () => {
+  const s = await build({ legacy: true });
+  const result = await (await s.make()).sectionWork.impl.next(s.args);
+  assert.match(result.stepId, /^v4-legacy-questions-/);
+  assert.equal(s.requests.length, 0);
+  const data = s.store.snapshot(), [q] = Object.values(data.automation.questionsById);
+  assert.equal(q.status, 'open'); assert.equal(q.legacyAnswerDraft, 'Morgen');
+  assert.deepEqual(data.automation.answersById, {}); assert.deepEqual(data.automation.intakeById, {});
+  const dry = await build({ legacy: true, mode: 'dry_run' });
+  assert.equal((await (await dry.make()).sectionWork.impl.next(dry.args)).blocked, true);
+  assert.deepEqual(dry.store.snapshot().automation.questionsById, {}); assert.equal(dry.requests.length, 0);
 });
 
 test('actual worker consumes user replies into persistent open work before model delivery, with dry-run protection', async () => {

@@ -22,6 +22,7 @@ import {
 } from "./assistant-schema.mjs";
 import { klon, requireCore } from "./assistant-migration.mjs";
 import { classifyBlobKey } from "./blob-key-policy.mjs";
+import { verifyLegacyQuestionSource } from './assistant-legacy-questions.mjs';
 import {
   istLokalDatum, isoAus, msAus, slotBeginnMs, slotKey, slotDefinition, ZEIT,
 } from "./assistant-zeit.mjs";
@@ -773,6 +774,7 @@ export function recordAnswer(input, { answerId, questionId, text }, ctx) {
   pruefeId(answerId, "answerId");
   const q = data.automation.questionsById[questionId];
   if (!q) return fehler("QUESTION_NOT_FOUND", questionId);
+  if (!verifyLegacyQuestionSource(data, q)) return fehler('LEGACY_QUESTION_SOURCE_CHANGED', questionId);
   const t = String(text == null ? "" : text);
   if (!t.trim()) return fehler("ANSWER_TEXT_MISSING");
   const vorhanden = data.automation.answersById[answerId];
