@@ -29,8 +29,10 @@
  * Ausgangsstand; die zweite sieht immer die bereits geschriebene erste.
  * Gemeinsam koennen sie die Grenze deshalb nicht ueberschreiten.
  * ═════════════════════════════════════════════════════════════════════════ */
-import { reserveCost, readRuntime } from "../../../netlify/lib/quantus-v3-runtime-state.mjs";
+import { reserveCost, reserveCommissioningAllocation, readRuntime } from "../../../netlify/lib/quantus-v3-runtime-state.mjs";
 import { localDate as zurichLocalDate } from "../../../netlify/lib/quantus-v3-runtime-plan.mjs";
+
+import {commissioningHeldMicros} from '../../../netlify/lib/quantus-v4-commissioning-allocation-schema.mjs';
 
 // $50.00 — 1 USD = 1_000_000 Micros (dieselbe Einheit wie der gesamte
 // Kosten-Ledger, s. `dayLimitMicros`/`runLimitMicros`/`callLimitMicros`).
@@ -64,6 +66,9 @@ export function monthToDateMicros(data, nowMs) {
     }
     // "released" traegt bewusst nichts bei — nachweislich nicht abgerechnet.
   }
+  const held=commissioningHeldMicros(cost.commissioningAllocationsById,month);
+  totalMicros+=held;openMicros+=held;
+  if(!Number.isSafeInteger(totalMicros)||!Number.isSafeInteger(openMicros))throw Object.assign(new Error("monthly_cost_total_invalid"),{code:"monthly_cost_total_invalid",status:503});
   return { month, totalMicros, settledMicros, openMicros };
 }
 
@@ -93,5 +98,17 @@ export function reserveCostWithMonthlyCap(data, input, monthlyCap) {
     // — die soeben simulierte Reservierung wird NICHT geschrieben.
     return { data, result: { ok: false, code: "monthly_budget_exceeded", detail: { monthTotalMicros: totalMicros, capMicros: monthlyCap.capMicros, month } }, unchanged: true };
   }
+  return outcome;
+}
+
+/** One authoritative CAS reserves both productive calls and commissioning
+ * holds. A hold is never an alternate balance in the isolated database.
+ */
+export function reserveCommissioningWithMonthlyCap(data,input) {
+  const outcome=reserveCommissioningAllocation(data,input);
+  if(!outcome.result.ok||outcome.unchanged===true)return outcome;
+  const {totalMicros,month}=monthToDateMicros(outcome.data,input.now);
+  if(totalMicros>MONTHLY_CAP_MICROS)return {data,result:{ok:false,code:"monthly_budget_exceeded",
+    detail:{monthTotalMicros:totalMicros,capMicros:MONTHLY_CAP_MICROS,month}},unchanged:true};
   return outcome;
 }
