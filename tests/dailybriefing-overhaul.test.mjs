@@ -18,12 +18,37 @@ test('Week belongs to Monday even over year and DST boundaries',()=>{
   assert.deepEqual(api.dbWeekBounds('2027-01-01'),{start:'2026-12-28',end:'2027-01-03'});
   assert.deepEqual(api.dbWeekBounds('2026-10-25'),{start:'2026-10-19',end:'2026-10-25'});
 });
-test('Capture validates before creating and writes links on the original lead only',()=>{
-  const f=fixture(); f.fields.dbLeadText.value='Please investigate';f.fields.dbLeadSource.value='javascript:alert(1)';
-  f.window.dbCreateQuickLead();assert.equal(Object.keys(f.APP.state.data.entities.chatgptLeads).length,0);
-  f.fields.dbLeadSource.value='https://example.com/source';f.fields.dbLeadProject.value='p';f.fields.dbLeadNext.value='Read original';f.window.dbCreateQuickLead();
-  const l=f.APP.state.data.entities.chatgptLeads.l0;assert.deepEqual(l.linkedProjects,['p']);assert.equal(l.nextAction,'Read original');assert.equal(l.externalLinks[0].url,'https://example.com/source');assert.equal(l.assignee,'chatgpt');assert.match(f.fields.dbQuickLeadResult.innerHTML,/data-id="l0"/);
+test('Capture validates before durable intake and preserves links without local root writes', async t => {
+  const { IDBFactory } = await import('fake-indexeddb');
+  const mod = await import('../public/quantus-v4-quick-capture.mjs');
+  const client = await mod.openQuickCapture({ accountKey:'owner', getAuth:async()=>({accountKey:'owner',idToken:'valid'}),
+    getRun:()=>null, origin:'https://quantus.example', indexedDB:new IDBFactory(),
+    fetchImpl:async()=>{throw Error('No run: transport must not be called');} });
+  t.after(()=>client.close());
+  const f=fixture(), notices=[];
+  f.window._dbQuickLeadDraft={};
+  f.window.dbQuickLeadDraftForAccount=()=>f.window._dbQuickLeadDraft;
+  f.window.dbLoadQuickCaptures=async()=>{};
+  f.window.dbKeepLeadDraft=()=>{};
+  const start=html.indexOf('let _v4CaptureBusy = false;');
+  new Function('window','document','dbQuickCaptureAccount','coreAuthCurrentUser','toast','syncFreshness',
+    html.slice(start,html.indexOf('\nfunction renderV3ChatgptCockpit',start)))(
+    f.window,{getElementById:id=>f.fields[id]},async()=>({accountKey:'owner',mod,client}),()=>({uid:'owner'}),
+    (...args)=>notices.push(args),async()=>{throw Error('Unconfirmed input cannot refresh a lead');});
+  f.fields.dbLeadText.value='Please investigate';f.fields.dbLeadSource.value='javascript:alert(1)';
+  await f.window.dbCreateQuickLead();
+  assert.deepEqual(await client.list(),[]);
+  assert.equal(f.fields.dbLeadText.value,'Please investigate');
+  f.fields.dbLeadSource.value='https://example.com/source';f.fields.dbLeadProject.value='p';f.fields.dbLeadNext.value='Read original';
+  await f.window.dbCreateQuickLead();
+  const entries=await client.list();assert.equal(entries.length,1);
+  const request=entries[0].legacyOperation.payload;
+  assert.equal(request.projectId,'p');assert.equal(request.nextAction,'Read original');
+  assert.equal(request.sourceUrl,'https://example.com/source');assert.equal(request.text,'Please investigate');
+  assert.equal(entries[0].deliveryStatus,'run_pending');assert.equal(entries[0].leadId,null);
+  assert.deepEqual(f.APP.state.data.entities.chatgptLeads,{});assert.equal(f.saved(),0);
   assert.equal(f.APP.state.data.dailyBriefing,undefined);
+  assert.ok(!notices.some(n=>n[1]==='Lead vom Server bestätigt'));
 });
 test('Weekly report survives editing with original links and same identity',()=>{
   const f=fixture();f.fields.dbWeekReviewText.value='Results with gaps';f.window.dbSaveWeekReview();

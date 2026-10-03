@@ -126,7 +126,8 @@ export const COMMAND_VERBS = Object.freeze({
   "intake.create": {
     resource: { kind: "intake", idField: null , creates: true},
     anchor: { kind: "run", idField: null },
-    fields: { source: enumOf(["mail", "manual", "document", "system"]), title: text(200), text: text(8000, { optional: true }), intakeId: id({ optional: true }) },
+    fields: { source: enumOf(["mail", "manual", "document", "system"]), title: text(200), text: text(8000, { optional: true }), intakeId: id({ optional: true }),
+      projectId: id({ optional: true }), sourceUrl: text(2000, { optional: true }), nextAction: text(500, { optional: true }) },
   },
   "intake.accept": {
     resource: { kind: "intake", idField: "intakeId" },
