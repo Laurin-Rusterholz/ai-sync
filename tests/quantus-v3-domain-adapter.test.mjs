@@ -42,6 +42,8 @@ import { attSegEncode } from "../netlify/lib/blob-key-policy.mjs";
 import * as FA from "./fixtures/quantus-v3-auth-fixtures.mjs";
 import * as FC from "./fixtures/quantus-v3-c2-fixtures.mjs";
 import { createQuantusV3DomainAdapter, describeDomainPorts, VERB_BINDINGS, DOMAIN_PORT_VARS } from "../netlify/lib/quantus-v3-domain-adapter.mjs";
+import { IDBFactory } from 'fake-indexeddb';
+import { openBriefingAnswers } from '../public/quantus-v3-briefing-answers.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const { TENANT, POLICY_VERSION } = FA;
@@ -111,6 +113,35 @@ function kern() {
   return d;
 }
 const BASIS = kern();
+
+test('Desktop answer traverses Firebase auth, real C2/domain/CAS, then recovers a lost receipt exactly once', async t => {
+  const d = deps();
+  let time = JETZT, loseReceipt = true, requests = 0;
+  const client = await openBriefingAnswers({ accountKey: OWNER, origin: APP, indexedDB: new IDBFactory(), now: () => time,
+    getAuth: async () => ({ accountKey: OWNER, idToken: nutzerToken() }),
+    fetchImpl: async (url, init) => {
+      requests++;
+      const result = await S.handleCommandRequest(FC.makeRequest({ url, headers: { ...init.headers, origin: APP }, body: JSON.parse(init.body) }), d);
+      assert.equal(result.status, 200, JSON.stringify(result.body));
+      if (loseReceipt) { loseReceipt = false; throw new Error('response lost after commit'); }
+      return new Response(JSON.stringify(result.body), { status: result.status });
+    } });
+  t.after(() => client.close());
+  const original = structuredClone(d._store.snapshot);
+  await client.submit(d._store.snapshot.automation.questionsById.q_c1, 'Muster AG');
+  assert.deepEqual(d._store.snapshot, original, 'enqueue is local, not a core write');
+  await client.flush();
+  assert.equal((await client.list())[0].status, 'retry_wait');
+  const afterCommit = structuredClone(d._store.snapshot);
+  assert.equal(afterCommit.automation.questionsById.q_c1.status, 'answered');
+  assert.equal(Object.values(afterCommit.automation.answersById).filter(a => a.questionId === 'q_c1').length, 1);
+  time += 30_000;
+  await client.flush();
+  assert.equal((await client.list())[0].status, 'acknowledged');
+  assert.equal((await client.list())[0].receipt.replayed, true);
+  assert.equal(requests, 2);
+  assert.deepEqual(d._store.snapshot, afterCommit, 'retry does not create a second answer or revision');
+});
 
 /* ══ Verdrahtung ═════════════════════════════════════════════════════════ */
 const PORTS = Object.freeze({ policy: POLICY, ownerId: OWNER, read: () => undefined });

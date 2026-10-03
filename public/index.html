@@ -24566,7 +24566,41 @@ async function dbRunV3EmailBriefing() {
 }
 window.dbRunV3EmailBriefing = dbRunV3EmailBriefing;
 
+const _v3AnswerClients = new Map();
+window.dbLoadServerQuestions = async function() {
+  const host = document.getElementById('dbV3ServerQuestions');
+  if (!host) return;
+  try {
+    const gate = await coreAuthReady();
+    const accountKey = gate && gate.user && gate.user.uid;
+    if (!accountKey) { host.textContent = 'Bitte anmelden, um Fragen aus der automatischen Verarbeitung zu beantworten.'; return; }
+    const isCurrent = () => coreAuthCurrentUser()?.uid === accountKey && document.getElementById('dbV3ServerQuestions') === host;
+    const mod = await import('/quantus-v3-briefing-answers.mjs');
+    if (!_v3AnswerClients.has(accountKey)) {
+      const getAuth = async () => {
+        const user = coreAuthCurrentUser();
+        if (!user || user.uid !== accountKey) return null;
+        const idToken = await user.getIdToken();
+        if (coreAuthCurrentUser()?.uid !== accountKey) return null;
+        return { accountKey, idToken };
+      };
+      // Cache the promise too: two renders must not open competing controllers.
+      _v3AnswerClients.set(accountKey, mod.openBriefingAnswers({ accountKey, getAuth, origin: location.origin })
+        .then(client => ({ client, drafts: Object.create(null) }))
+        .catch(error => { _v3AnswerClients.delete(accountKey); throw error; }));
+    }
+    const { client, drafts } = await _v3AnswerClients.get(accountKey);
+    if (!isCurrent()) return;
+    const questions = Object.values(APP.state.data.automation?.questionsById || {});
+    await mod.bindBriefingAnswers({ host, client, drafts, questions, isCurrent });
+  } catch (_) {
+    if (document.getElementById('dbV3ServerQuestions') === host) host.textContent = 'Fragen konnten nicht geladen werden. Bitte Anmeldung und lokalen Speicher prüfen; vorhandene Antworten werden nicht gelöscht.';
+  }
+};
+
 function viewDailyBriefing() {
+  // Defer until the view is attached; loading this panel never writes core.
+  setTimeout(() => window.dbLoadServerQuestions(), 0);
   const db = APP.state.data.dailyBriefing || {};
   const mode = db.mode || "planning";
   const realToday = todayYmd();
@@ -24780,6 +24814,7 @@ function viewDailyBriefing() {
     <!-- Konzept v2 A/B/E/F: Entscheidungen/Fragen brauchen Laurins Antwort,
          deshalb sichtbar statt eingeklappt; Pendent-bei-ChatGPT/Cowork sind
          als <details> darunter kompakt zusammengefasst. -->
+    <section class="db-section" id="dbV3ServerQuestions" aria-live="polite">Fragen aus der automatischen Verarbeitung werden geladen …</section>
     <div id="dbV3ChatgptCockpit">
       ${renderV3ChatgptCockpit(Object.values(APP.state.data.entities.chatgptLeads || {}))}
     </div>
