@@ -30,7 +30,18 @@ export function inspectLegacyQuestion(leadId, lead) {
   if (ABGESCHLOSSENE_ZUSTAENDE.includes(state.state)) return { closed: true };
   const fingerprint = legacyQuestionFingerprint(leadId, original);
   const problem = reason => ({ leadId, fingerprint, reason });
-  if (state.unmigrated || state.unmapped || state.versionInvalid) return problem('legacy_lead_state_unresolved');
+  // A preserved desktop question is independent of its unresolved work state.
+  // Only the specific initial migration conflict qualifies; this never resolves
+  // state, assigns work, or turns a historical draft into a user answer.
+  const source = lead.operationalStateSource;
+  const preservedQuestion = state.unmapped && !state.drift && !state.versionInvalid
+    && lead.operationalState === null && lead.operationalStateUnmapped === 'ambiguous'
+    && source?.model === 'state-model/3' && !source.changedAt
+    && source.legacyField === 'status' && ['neu','verstanden','in_arbeit','wartet'].includes(source.legacyValue)
+    && ['decision_required','information_required'].includes(source.legacyDesktopState)
+    && typeof source.mappedAt === 'string' && Number.isFinite(Date.parse(source.mappedAt));
+  if (state.unmigrated || state.versionInvalid || (state.unmapped && !preservedQuestion))
+    return problem('legacy_lead_state_unresolved');
   if (!record(original) || typeof original.text !== 'string' || !original.text.trim() || original.text.length > 2000)
     return problem('legacy_question_text_invalid');
   const options = original.options ?? [];

@@ -152,3 +152,39 @@ test('damaged migration links stay unresolved rather than becoming an empty succ
     assert.equal((await f.make().next()).blocked, true);
   }
 });
+
+test('preserved desktop question accepts a real answer without resolving the work-state conflict', async () => {
+  for (const desktopState of ['decision_required','information_required']) {
+    const migrated = migrateCore({entities:{chatgptLeads:{l0:{id:'l0',title:'Unresolved original',status:'in_arbeit',
+      operationalState:desktopState,pendingQuestion:structuredClone(original)}}}},{now:T}).data;
+    const data=cmd(migrated,'ensureRunSlot',{date,slot:'process09',receiptId:'receipt'}).data;
+    const f=await fixture(data), before=f.store.snapshot();
+    assert.equal(planLegacyQuestions(before).unresolved.length,0);
+    await f.make().next();
+    const after=f.store.snapshot(),[q]=Object.values(after.automation.questionsById);
+    assert.equal(q.status,'open');assert.deepEqual(after.entities,before.entities);
+    const answered=cmd(after,'recordAnswer',{questionId:q.id,answerId:'explicit-owner-answer',text:'Morgen'},{kind:'user',id:'owner'});
+    assert.equal(answered.ok,true,JSON.stringify(answered));
+    assert.equal(answered.data.automation.answersById['explicit-owner-answer'].answeredBy,'owner');
+    assert.deepEqual(answered.data.entities,before.entities);
+    f.store.forceWrite(()=>answered.data);
+    await createAnswerPreparation(f.config).next();
+    const final=f.store.snapshot();
+    assert.equal(Object.keys(final.automation.intakeById).length,1);
+    assert.deepEqual(final.entities,before.entities);
+    assert.equal(final.entities.chatgptLeads.l0.operationalState,null);
+    assert.equal(final.entities.chatgptLeads.l0.operationalStateUnmapped,'ambiguous');
+  }
+});
+
+test('question exception rejects damaged, drifted, closed-hint and unrelated migration conflicts',()=>{
+  const base=migrateCore({entities:{chatgptLeads:{l0:{id:'l0',status:'in_arbeit',operationalState:'information_required',pendingQuestion:structuredClone(original)}}}},{now:T}).data;
+  for(const change of [l=>l.status='abgeschlossen',l=>l.operationalStateSource.legacyDesktopState='done',
+    l=>l.operationalStateSource.legacyDesktopState='doing',l=>l.operationalStateSource.changedAt=new Date(T).toISOString(),
+    l=>l.operationalStateVersion=0,l=>l.operationalStateSource.mappedAt='invalid',
+    l=>l.operationalStateSource.model='unknown',l=>l.operationalStateUnmapped='unknown']) {
+    const data=structuredClone(base);change(data.entities.chatgptLeads.l0);
+    const plan=planLegacyQuestions(data);assert.equal(plan.items.length,0);
+    assert.equal(plan.unresolved[0].reason,'legacy_lead_state_unresolved');
+  }
+});
