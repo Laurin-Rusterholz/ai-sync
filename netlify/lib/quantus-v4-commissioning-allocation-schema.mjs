@@ -1,3 +1,4 @@
+import {validArtifactReference} from './quantus-v4-artifact-reference.mjs';
 import {localDate} from './quantus-v3-runtime-plan.mjs';
 /** Immutable, held commissioning allocations in the authoritative cost ledger.
  * A hold is not a provider call or permission to dispatch. It never expires
@@ -56,7 +57,17 @@ export function sameCommissioningCallBinding(a, b) {
 export function validateCommissioningCallLinks(cost) {
   const totals = new Map(), operations = new Set();
   for (const call of Object.values(cost.callsById || {})) {
-    if (call?.commissioning === undefined) continue;
+    if (call?.commissioning === undefined) { if (call?.commissioningResponse !== undefined || call?.commissioningResponseRecorded !== undefined) return false; continue; }
+    if (call.commissioningResponseRecorded !== undefined && call.commissioningResponseRecorded !== true) return false;
+    if (call.commissioningResponseRecorded === true && !call.commissioningResponse) return false;
+    if (call.commissioningResponse !== undefined && call.commissioningResponse !== null) {
+      if (call.commissioningResponseRecorded !== true) return false;
+      const r = call.commissioningResponse;
+      if (!record(r) || Object.keys(r).length !== 4 || !['schemaVersion','requestHash','artifact','recordedAtMs'].every(k=>Object.hasOwn(r,k))
+        || r.schemaVersion !== 1 || r.requestHash !== call.contentHash || !validArtifactReference(r.artifact)
+        || !ms(r.recordedAtMs) || !call.dispatch?.claimed || r.recordedAtMs < call.dispatch.claimedAtMs
+        || call.state === 'released') return false;
+    }
     const binding = call.commissioning;
     if (!validCommissioningCallBinding(binding)) return false;
     const allocation = cost.commissioningAllocationsById?.[binding.allocationId];

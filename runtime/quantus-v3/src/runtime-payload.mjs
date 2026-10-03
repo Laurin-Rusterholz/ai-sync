@@ -1,8 +1,9 @@
+import {MAX_ARTIFACT_BYTES} from '../../../netlify/lib/quantus-v4-artifact-reference.mjs';
 import { createHash } from 'node:crypto';
 import { readRuntime } from '../../../netlify/lib/quantus-v3-runtime-state.mjs';
 import { HttpError } from './errors.mjs';
 
-export const JOURNAL_LIMITS = Object.freeze({ requestBytes: 512 * 1024, responseBytes: 3 * 1024 * 1024,
+export const JOURNAL_LIMITS = Object.freeze({ requestBytes: 512 * 1024, responseBytes: MAX_ARTIFACT_BYTES,
   toolBytes: 512 * 1024, coreBytes: 18 * 1024 * 1024, readBytes: 16 * 1024 * 1024,
   rolloverBytes: 8 * 1024 * 1024, turns: 30, segments: 1000 });
 export const WORK_PAYLOAD_BYTES = 512 * 1024;
@@ -40,6 +41,9 @@ export function encodeRuntimePayload(value, limit) {
 
 export function assertActiveRuntimeCapacity(data) {
   let reserved = 0;
+  for (const call of Object.values(readRuntime(data).cost.callsById)) {
+    if (call.commissioning && call.state !== "released" && !call.commissioningResponse) reserved += 4096;
+  }
   for (const run of Object.values(readRuntime(data).runsByKey)) {
     const steps = run.sectionWork?.steps;
     if (steps !== undefined) {
