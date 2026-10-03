@@ -61,7 +61,11 @@ export async function openQuickCapture({ accountKey, getAuth, getRun, origin, in
   }
   return Object.freeze({ close: () => queue.close(),
     nextCheckAt: () => nextCheckAt,
-    submit: fields => queue.retainLegacy(captureIntent({ accountKey, ...fields })),
+    async submit(fields) {
+      if ((await getAuth())?.accountKey !== accountKey) fail('sign_in_required');
+      const intent = captureIntent({ ...fields, accountKey });
+      return queue.retainLegacy(intent);
+    },
     async list() {
       const entries = await all(), byId = new Map(entries.map(e => [e.operationId,e]));
       return entries.filter(e => e.legacyOperation?.kind === 'quick_capture').map(e => {

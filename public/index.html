@@ -23439,6 +23439,7 @@ function renderMain() {
   // Danach Fokus und Cursor ins Feld zurueckgeben.
   const _cglFocus = (typeof chatgptLeadEditingField === "function") ? chatgptLeadEditingField() : null;
   if (typeof chatgptLeadCommitDom === "function") { try { chatgptLeadCommitDom(document.getElementById("main")); } catch (e) {} }
+  if (typeof window.dbKeepLeadDraft === "function") window.dbKeepLeadDraft();
   
   // Close full-screen overlays that don't match current route
   // Diese Abbauliste schliesst Overlays, wenn man WEGNAVIGIERT. Sie lief aber
@@ -24305,13 +24306,14 @@ function renderBriefingProjectContext(projects) {
 }
 function renderBriefingQuickLead(projects) {
   const draft = window.dbQuickLeadDraftForAccount ? window.dbQuickLeadDraftForAccount() : (window._dbQuickLeadDraft || {});
-  return '<section class="db-section" id="dbQuickLead"><h3>Neue Anfrage an ChatGPT</h3><p class="mini">Kurz beschreiben, optional Projekt und Quelle wählen. Die Anfrage bleibt bis zur Serverbestätigung als offen sichtbar.</p><div class="db-capture-grid">'
-    + '<label>Titel<input id="dbLeadTitle" value="' + esc(draft.title || '') + '" oninput="window.dbKeepLeadDraft()" placeholder="Was soll erledigt werden?" maxlength="180"></label>'
+  return '<section class="db-section" id="dbQuickLead" data-account-key="' + esc(coreAuthCurrentUser()?.uid || '') + '"><style>#dbQuickLead{padding:16px;border:1px solid var(--border);border-radius:12px;margin-bottom:16px}#dbQuickLead .db-capture-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}#dbQuickLead label{display:grid;gap:5px}#dbQuickLead input,#dbQuickLead textarea,#dbQuickLead select{width:100%;box-sizing:border-box}#dbQuickLead .db-wide{grid-column:1/-1}@media(max-width:640px){#dbQuickLead .db-capture-grid{grid-template-columns:1fr}}</style><h3>Neue Anfrage an ChatGPT</h3><p class="mini">Kurz beschreiben, optional Projekt und Quelle wählen. Die Anfrage bleibt bis zur Serverbestätigung als offen sichtbar.</p><div class="db-capture-grid">'
+    + '<label>Titel<input id="dbLeadTitle" data-action="cgl-quick-title" value="' + esc(draft.title || '') + '" oninput="window.dbKeepLeadDraft()" placeholder="Was soll erledigt werden?" maxlength="180"></label>'
     + '<label>Projekt<select id="dbLeadProject" onchange="window.dbKeepLeadDraft()"><option value="">Noch nicht zugeordnet</option>' + (projects || []).map(p => '<option value="' + esc(p.id) + '"' + (draft.projectId === p.id ? ' selected' : '') + '>' + esc(p.title || 'Projekt') + '</option>').join('') + '</select></label>'
-    + '<label class="db-wide">Auftrag / gewünschtes Ergebnis<textarea id="dbLeadText" rows="3" oninput="window.dbKeepLeadDraft()" placeholder="Text einfügen, eine Frage stellen oder das gewünschte Ergebnis beschreiben.">' + esc(draft.text || '') + '</textarea></label>'
+    + '<label class="db-wide">Auftrag / gewünschtes Ergebnis<textarea id="dbLeadText" data-action="cgl-quick-text" rows="3" oninput="window.dbKeepLeadDraft()" placeholder="Text einfügen, eine Frage stellen oder das gewünschte Ergebnis beschreiben.">' + esc(draft.text || '') + '</textarea></label>'
     + '<label>Quellenlink (optional)<input id="dbLeadSource" value="' + esc(draft.source || '') + '" oninput="window.dbKeepLeadDraft()" type="url" placeholder="https://…"></label><label>Nächster Schritt (optional)<input id="dbLeadNext" value="' + esc(draft.next || '') + '" oninput="window.dbKeepLeadDraft()" placeholder="Was soll ChatGPT zuerst prüfen?"></label>'
     + '</div><button class="btn primary" id="dbQuickLeadSubmit" onclick="window.dbCreateQuickLead()">Anfrage übernehmen</button><span class="mini" id="dbQuickLeadResult" role="status"></span><div id="dbQuickCaptureQueue"></div></section>';
 }
+window.renderBriefingQuickLead = renderBriefingQuickLead;
 function renderBriefingWeekReview(date) {
   const { start, end } = dbWeekBounds(date);
   const messages = Object.values(APP.state.data.entities.scheduledMessages || {});
@@ -24334,6 +24336,8 @@ window.dbQuickLeadDraftForAccount = function() {
   return accountKey && window._dbQuickLeadDraft?.accountKey === accountKey ? window._dbQuickLeadDraft : {};
 };
 window.dbKeepLeadDraft = function() {
+  const host = document.getElementById('dbQuickLead');
+  if (!host || !coreAuthCurrentUser()?.uid || host.getAttribute('data-account-key') !== coreAuthCurrentUser()?.uid) return;
   const value = id => String(document.getElementById(id)?.value || '');
   window._dbQuickLeadDraft = { ...window.dbQuickLeadDraftForAccount(), accountKey: coreAuthCurrentUser()?.uid,
     title: value('dbLeadTitle'), text: value('dbLeadText'), source: value('dbLeadSource'), projectId: value('dbLeadProject'), next: value('dbLeadNext') };
@@ -24381,11 +24385,21 @@ async function dbQuickCaptureAccount() {
   }
   return { accountKey, mod, client: await _v4CaptureClients.get(accountKey) };
 }
+async function dbRefreshCapturedLeads(accountKey) {
+  if (coreAuthCurrentUser()?.uid !== accountKey) return;
+  const remote = await remoteGetByKey('app-data.json', {force:true,preferProvider:'rtdb'});
+  if (!remote?.ok || !remote.data || coreAuthCurrentUser()?.uid !== accountKey) return;
+  if (!await idbBackup(APP.state.data, 'pre_capture_refresh')) return;
+  if (coreAuthCurrentUser()?.uid !== accountKey) return;
+  const merged = mergeData(APP.state.data, normalizeData(remote.data));
+  if (await guardV3ProtectedWrite(merged) || coreAuthCurrentUser()?.uid !== accountKey) return;
+  APP.state.data = merged; saveLocalData(); render();
+}
 async function dbFlushQuickCaptures(client, accountKey) {
   const before = new Set((await client.list()).filter(e => e.leadId).map(e => e.operationId));
   await client.flush();
   if (coreAuthCurrentUser()?.uid !== accountKey) return;
-  if ((await client.list()).some(e => e.leadId && !before.has(e.operationId))) await syncFreshness('v4-quick-capture-recovery');
+  if ((await client.list()).some(e => e.leadId && (!before.has(e.operationId) || !APP.state.data.entities.chatgptLeads?.[e.leadId]))) await dbRefreshCapturedLeads(accountKey);
 }
 window.dbLoadQuickCaptures = async function() {
   const host = document.getElementById('dbQuickCaptureQueue'); if (!host) return;
@@ -24424,10 +24438,13 @@ window.dbCreateQuickLead = async function() {
   const value = id => String(document.getElementById(id)?.value || '');
   const fields = { title: value('dbLeadTitle'), text: value('dbLeadText'), sourceUrl: value('dbLeadSource'), projectId: value('dbLeadProject'), nextAction: value('dbLeadNext') };
   const signature = JSON.stringify(fields);
+  const expectedAccount = coreAuthCurrentUser()?.uid;
+  const host = document.getElementById('dbQuickLead');
   let saved = false;
   try {
     const { accountKey, mod, client } = await dbQuickCaptureAccount();
-    if (coreAuthCurrentUser()?.uid !== accountKey) throw Object.assign(new Error('sign_in_required'), { code: 'sign_in_required' });
+    if (!expectedAccount || accountKey !== expectedAccount || coreAuthCurrentUser()?.uid !== expectedAccount
+      || host && host.getAttribute('data-account-key') !== expectedAccount) throw Object.assign(new Error('sign_in_required'), { code: 'sign_in_required' });
     const draft = window.dbQuickLeadDraftForAccount();
     const captureId = draft.captureId || crypto.randomUUID();
     window._dbQuickLeadDraft = { ...draft, accountKey, captureId };
@@ -24443,7 +24460,7 @@ window.dbCreateQuickLead = async function() {
     if (coreAuthCurrentUser()?.uid !== accountKey) return;
     const result = (await client.list()).find(e => e.operationId === entry.operationId);
     toast(result?.leadId ? 'ok' : 'warn', result?.leadId ? 'Lead vom Server bestätigt' : 'Anfrage noch nicht vollständig bestätigt', mod.captureStatusText(result?.deliveryStatus));
-    if (result?.leadId) await syncFreshness('v4-quick-capture');
+    if (result?.leadId) await dbRefreshCapturedLeads(accountKey);
     await window.dbLoadQuickCaptures();
   } catch (error) {
     toast('warn', saved ? 'Serverbestätigung noch offen' : 'Anfrage noch nicht gesichert',
@@ -51880,6 +51897,8 @@ function chatgptLeadCard(l) {
     </div>`;
 }
 function viewChatgptLeads() {
+  setTimeout(() => window.dbLoadQuickCaptures(), 0);
+  const captureProjects = Object.values(APP.state.data.entities.projects || {}).filter(p => p && !p.deleted);
   const all = Object.values(APP.state.data.entities.chatgptLeads || {}).filter(l => l && typeof l === "object")
     .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   const unread = all.filter(l => !l.readAt && !chatgptLeadIsClosed(l));
@@ -51896,12 +51915,7 @@ function viewChatgptLeads() {
         <p>${unread.length} ungelesen · ${active.length + waiting.length} offen · ${closed.length} abgeschlossen</p>
       </div>
     </div>
-    <div class="card mb-3">
-      <div class="mini mb-2" style="color:var(--muted)">Neuer Lead — Titel und Wortlaut, mehr nicht. Enter im Titel springt ins Textfeld, Strg/⌘+Enter legt an.</div>
-      <input type="text" id="cglQuickTitle" data-action="cgl-quick-title" placeholder="Titel" class="mb-2" style="width:100%" />
-      <textarea id="cglQuickText" data-action="cgl-quick-text" rows="3" placeholder="Wortlaut des Auftrags — genau so, wie du ihn meinst" style="width:100%"></textarea>
-      <div class="flex justify-end mt-2"><button class="btn primary" data-action="cgl-quick-create">📥 Lead anlegen</button></div>
-    </div>
+    ${window.renderBriefingQuickLead(captureProjects)}
     ${group("🔴 Ungelesen", unread, "#D96B5B")}
     ${group("🟢 Neu / In Arbeit", active, "#2F8C80")}
     ${group("🟡 Wartet", waiting, "#C9A96E")}
@@ -52456,12 +52470,7 @@ function chatgptModuleHandleAction(action, el, e) {
     case "cgl-open": stop(); navigate("chatgptnotes", id); return;
     case "cgl-quick-create": {
       stop();
-      const title = $("#cglQuickTitle")?.value || "", text = $("#cglQuickText")?.value || "";
-      const nid = createChatgptLead(title, text);
-      if (!nid) { toast("warn", "Lead", "Bitte Titel oder Wortlaut eingeben."); return; }
-      render();
-      toast("ok", "Lead erfasst", "Liegt ungelesen im Eingang.");
-      setTimeout(() => $("#cglQuickTitle")?.focus(), 30);
+      void window.dbCreateQuickLead();
       return;
     }
     case "cgl-mark-read": {
@@ -52853,7 +52862,7 @@ function chatgptModuleHandleKeydown(e, el, action) {
   }
   if (action === "cgl-quick-title" && e.key === "Enter") {
     e.preventDefault();
-    $("#cglQuickText")?.focus();
+    $("#dbLeadText")?.focus();
     return true;
   }
   if (action === "cgl-quick-text" && e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
