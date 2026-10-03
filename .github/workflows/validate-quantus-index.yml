@@ -107,6 +107,8 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.13.3
+      - name: Install locked runtime dependencies for rendered environment verification
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
       - name: Validate and exercise infrastructure with an offline Google mock
         working-directory: infra/quantus-v3
         run: |
