@@ -183,3 +183,39 @@ A lost commit acknowledgement is recovered by reading the retained reference.
 The broker coordinator must invoke this journal before returning results or
 settling the normal provider path; automatic dispatch and runtime activation
 remain unimplemented by this package.
+
+## Source provider coordination
+
+`createCommissioningBroker` connects opaque admission, a genuinely acquired
+source lease, the existing cost adapter, the reviewed OpenAI transport instance
+and response recovery. Each execution generates its own source holder and
+acquires `sourceTenant:mainrun` through the real CAS. A currently held productive
+lease returns busy; it is never stolen. Lost acquisition acknowledgement is
+resolved by reading the actual lease. Cleanup releases only that holder/fence
+and independently reads the resulting state, preserving replacement holders.
+
+The broker checks for a retained response before attempting new spending. A
+claimed call without a response remains unresolved and cannot be resent. A
+verified settled response reconciles its cost and is returned on later requests;
+a retained unknown outcome remains unknown. For new calls, reservation is
+followed by a private artifact write/read preflight using a deterministic request
+manifest. Provider output is persisted before the adapter settles or the HTTP
+caller receives acknowledgement. Lost persistence/settlement acknowledgements
+are recovered from the durable source evidence.
+
+`createCommissioningCostAdapter` is a separate provider-only factory with a
+private branded context, fixed shared monthly cap, opaque admitted operation
+and branded source core. Its private `commissioning` mode is not a new ordinary
+runtime mode and is not accepted by the generic configuration resolver. It does
+not set or bypass the normal runtime's live/Tasks/tool/mail activation gates.
+A plain mode string or constructed admission cannot invoke it. Real policy,
+lease, exact prepared bytes and admission expiry remain mandatory. Reservation
+and dispatch CAS retries use fresh time; dispatch verification binds the actual
+committed claim timestamp rather than an earlier request timestamp.
+
+This coordinator is not mounted or deployed by the existing server. A dedicated
+source entrypoint, reviewed environment/IAM and the isolated worker's broker
+client still need implementation/commissioning. No general effects, source
+synchronization, Tasks scheduling or real trial evidence follows from this
+module. Current tests use actual admission/CAS/artifact/cost machinery with
+synthetic Google signatures, provider responses and explicit fixture policies.
