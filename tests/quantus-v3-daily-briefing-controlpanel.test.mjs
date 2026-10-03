@@ -701,13 +701,14 @@ test("Originalcheckbox: das neue 'Meine Aufgaben'-Panel im DailyBriefing nutzt d
   assert.match(meineAufgabenSrc, /data-action="task-delegate-chatgpt"/, "muss den echten Delegations-Button anbieten");
 });
 
-test("Antwortreaktiviert: cgl-answer-question setzt operationalState zurueck auf 'doing' und markiert die Frage als beantwortet (einmalig)", () => {
+test("Antwortknopf nutzt die getrennte Server-Warteschlange ohne lokalen Abschluss oder Root-Speicherung", () => {
   const caseMatch = index.match(/case "cgl-answer-question": \{[\s\S]*?\n    \}/);
   assert.ok(caseMatch, "der Antwort-Handler muss existieren");
   const src = caseMatch[0];
-  assert.match(src, /l\.pendingQuestion\.answeredAt \|\| l\.status === "abgeschlossen"\)\s*return;/, "eine bereits beantwortete Frage ODER ein abgeschlossener Lead darf kein zweites Mal/gar nicht verarbeitet werden");
-  assert.match(src, /l\.pendingQuestion\.answer = antwort/, "die Antwort muss am ORIGINALLEAD gespeichert werden");
-  assert.match(src, /l\.operationalState = "doing"/, "nach der Antwort macht der Assistent weiter (doing), keine Endlosschlaufe in decision_required");
+  assert.match(src, /l\.pendingQuestion\.answeredAt/);
+  assert.match(src, /\["done", "cancelled"\]\.includes\(v3LeadOperationalState\(l\)\)/);
+  assert.match(src, /window\.dbSendLeadAnswer\(id, JSON\.parse\(JSON\.stringify\(l\.pendingQuestion\)\), antwort, el\)/);
+  assert.doesNotMatch(src, /scheduleSave\(|l\.pendingQuestion\.answer\s*=|l\.operationalState\s*=/);
   // Funktionaler Nachweis (kein reiner String-Check) in tests/chatgpt-lead-wiedereroeffnen.test.mjs
   // Abschnitt 8: fuehrt den echten Handler gegen einen abgeschlossenen Lead aus.
 });

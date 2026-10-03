@@ -24567,14 +24567,10 @@ async function dbRunV3EmailBriefing() {
 window.dbRunV3EmailBriefing = dbRunV3EmailBriefing;
 
 const _v3AnswerClients = new Map();
-window.dbLoadServerQuestions = async function() {
-  const host = document.getElementById('dbV3ServerQuestions');
-  if (!host) return;
-  try {
+async function dbV3AnswerAccount() {
     const gate = await coreAuthReady();
     const accountKey = gate && gate.user && gate.user.uid;
-    if (!accountKey) { host.textContent = 'Bitte anmelden, um Fragen aus der automatischen Verarbeitung zu beantworten.'; return; }
-    const isCurrent = () => coreAuthCurrentUser()?.uid === accountKey && document.getElementById('dbV3ServerQuestions') === host;
+    if (!accountKey) throw Object.assign(new Error('sign_in_required'), { code: 'sign_in_required' });
     const mod = await import('/quantus-v3-briefing-answers.mjs');
     if (!_v3AnswerClients.has(accountKey)) {
       const getAuth = async () => {
@@ -24585,16 +24581,62 @@ window.dbLoadServerQuestions = async function() {
         return { accountKey, idToken };
       };
       // Cache the promise too: two renders must not open competing controllers.
-      _v3AnswerClients.set(accountKey, mod.openBriefingAnswers({ accountKey, getAuth, origin: location.origin })
+      const getQuestions = () => coreAuthCurrentUser()?.uid === accountKey
+        ? Object.values(APP.state.data.automation?.questionsById || {}) : [];
+      _v3AnswerClients.set(accountKey, mod.openBriefingAnswers({ accountKey, getAuth, getQuestions, origin: location.origin })
         .then(client => ({ client, drafts: Object.create(null) }))
         .catch(error => { _v3AnswerClients.delete(accountKey); throw error; }));
     }
     const { client, drafts } = await _v3AnswerClients.get(accountKey);
+    return { accountKey, mod, client, drafts };
+}
+window.dbLoadServerQuestions = async function() {
+  const host = document.getElementById('dbV3ServerQuestions');
+  if (!host) return;
+  const generation = {};
+  host._answerLoadGeneration = generation;
+  try {
+    const { accountKey, mod, client, drafts } = await dbV3AnswerAccount();
+    const isCurrent = () => coreAuthCurrentUser()?.uid === accountKey && document.getElementById('dbV3ServerQuestions') === host
+      && host._answerLoadGeneration === generation;
     if (!isCurrent()) return;
     const questions = Object.values(APP.state.data.automation?.questionsById || {});
     await mod.bindBriefingAnswers({ host, client, drafts, questions, isCurrent });
-  } catch (_) {
-    if (document.getElementById('dbV3ServerQuestions') === host) host.textContent = 'Fragen konnten nicht geladen werden. Bitte Anmeldung und lokalen Speicher prüfen; vorhandene Antworten werden nicht gelöscht.';
+  } catch (error) {
+    if (document.getElementById('dbV3ServerQuestions') === host && host._answerLoadGeneration === generation)
+      host.textContent = error?.code === 'sign_in_required' ? 'Bitte anmelden, um Fragen aus der automatischen Verarbeitung zu beantworten.'
+        : 'Fragen konnten nicht geladen werden. Bitte Anmeldung und lokalen Speicher prüfen; vorhandene Antworten werden nicht gelöscht.';
+  }
+};
+
+const _v3LeadAnswersInFlight = new Set();
+window.dbSendLeadAnswer = async function(leadId, original, answer, button) {
+  if (_v3LeadAnswersInFlight.has(leadId)) return;
+  _v3LeadAnswersInFlight.add(leadId);
+  let saved = false;
+  if (button) button.disabled = true;
+  try {
+    const { accountKey, mod, client } = await dbV3AnswerAccount();
+    if (coreAuthCurrentUser()?.uid !== accountKey) throw Object.assign(new Error('sign_in_required'), { code: 'sign_in_required' });
+    const entry = await client.submitLegacy(leadId, original, answer);
+    saved = true;
+    toast('ok', 'Antwort auf diesem Gerät gesichert', 'Die Serverbestätigung steht noch aus.');
+    await window.dbLoadServerQuestions();
+    await client.flush();
+    if (coreAuthCurrentUser()?.uid !== accountKey) return;
+    const result = (await client.list()).find(item => item.operationId === entry.operationId);
+    const status = result?.deliveryStatus || 'legacy_unmapped';
+    toast(status === 'acknowledged' ? 'ok' : 'warn', status === 'acknowledged' ? 'Antwort vom Server bestätigt' : 'Antwort noch nicht bestätigt', mod.answerDeliveryText(status));
+    if (status === 'acknowledged') await syncFreshness('v3-lead-answer');
+    await window.dbLoadServerQuestions();
+  } catch (error) {
+    if (error?.code === 'operation_id_conflict') toast('warn', 'Andere Antwort bereits gesichert', 'Der bisherige Text wurde nicht überschrieben. Bitte im Briefing die Übertragungen prüfen.');
+    else toast('warn', saved ? 'Serverbestätigung noch offen' : 'Antwort noch nicht gesichert',
+      saved ? 'Deine Antwort bleibt auf diesem Gerät erhalten. Übertragungen im Briefing prüfen.'
+        : error?.code === 'sign_in_required' ? 'Bitte anmelden. Der eingegebene Text wurde nicht als Antwort übertragen.' : 'Bitte Eingabe und lokalen Speicher prüfen. Der Text wurde nicht als gespeichert bestätigt.');
+  } finally {
+    _v3LeadAnswersInFlight.delete(leadId);
+    if (button) button.disabled = false;
   }
 };
 
@@ -52306,7 +52348,7 @@ function chatgptModuleHandleAction(action, el, e) {
     case "cgl-select-answer": {
       stop();
       const l = ownEntity(leads, id);
-      if (!l || !l.pendingQuestion || l.pendingQuestion.answeredAt || l.status === "abgeschlossen") return;
+      if (!l || !l.pendingQuestion || l.pendingQuestion.answeredAt || ["done", "cancelled"].includes(v3LeadOperationalState(l))) return;
       const answer = el.dataset.answer;
       if (!Array.isArray(l.pendingQuestion.options) || !l.pendingQuestion.options.includes(answer)) return;
       const field = document.getElementById("cglAnswerText_" + id);
@@ -52317,17 +52359,12 @@ function chatgptModuleHandleAction(action, el, e) {
       stop();
       // Review-Fix (einheitlich auf allen Clients): ein abgeschlossener Lead
       // wird durch eine Antwort nicht reaktiviert.
-      const l = ownEntity(leads, id); if (!l || !l.pendingQuestion || l.pendingQuestion.answeredAt || l.status === "abgeschlossen") return; // einmalig
+      const l = ownEntity(leads, id); if (!l || !l.pendingQuestion || l.pendingQuestion.answeredAt || ["done", "cancelled"].includes(v3LeadOperationalState(l))) return;
       const antwort = String((document.getElementById("cglAnswerText_" + id) || {}).value || "").trim();
       if (!antwort) { toast("warn", "Antwort fehlt", "Ohne Text keine Antwort."); return; }
-      l.pendingQuestion.answer = antwort;
-      l.pendingQuestion.answeredAt = nowIso();
-      l.operationalState = "doing";
-      l.lastAction = "Antwort erhalten: " + antwort.slice(0, 140);
-      l.questionForBriefingAt = null;
-      l.updatedAt = nowIso();
-      scheduleSave(); render();
-      toast("ok", "Antwort gespeichert", l.title || "");
+      // Capture the exact clicked question. This path never writes a root
+      // snapshot or changes a lead's state based on a local button click.
+      void window.dbSendLeadAnswer(id, JSON.parse(JSON.stringify(l.pendingQuestion)), antwort, el);
       return;
     }
     // ── ChatGPT-Aufgaben ──
