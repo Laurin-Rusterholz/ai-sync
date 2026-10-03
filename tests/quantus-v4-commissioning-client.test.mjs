@@ -8,6 +8,10 @@ import {releaseLease} from '../netlify/lib/quantus-v3-runtime-state.mjs';
 import {casMutate} from './quantus-v3-runtime-cas-harness.mjs';
 import {createLeadershipJournal,JOURNAL_LIMITS} from '../runtime/quantus-v3/src/leadership-journal.mjs';
 import {createLeadershipLoop} from '../runtime/quantus-v3/src/leadership-loop.mjs';
+import {createOpenAIWorkerPorts} from '../runtime/quantus-v3/src/openai-composition.mjs';
+import {POLICY_TEMPLATE} from '../netlify/lib/assistant-schema.mjs';
+import {DOMAIN_PORT_VARS} from '../netlify/lib/quantus-v3-domain-adapter.mjs';
+import {migrateCore} from '../netlify/lib/assistant-migration.mjs';
 import {createHash} from 'node:crypto';
 import {createCommissioningClient} from '../runtime/quantus-v3/src/commissioning-client.mjs';
 import {createOpenAIRequestContract,createOpenAITransport} from '../runtime/quantus-v3/src/openai-transport.mjs';
@@ -20,7 +24,7 @@ const hash=x=>createHash('sha256').update(JSON.stringify(x)).digest('hex'),key=F
 const profile={instructions:'Reviewed',tools:[{name:'quantus_context',description:'Scoped read',parameters:{type:'object',properties:{},required:[],additionalProperties:false}}]};
 async function fixture(options={}){
  const selectedProfile=options.profile??profile;
- const f=await setup(),binding={schemaVersion:1,sourceProjectId:'source-invalid',sourceTenant:'source',sourceC2Origin:'https://source.invalid',projectId:'shadow-invalid',tenant:'quantus',c2Origin:'https://shadow.invalid',databaseUrl:'https://shadow-invalid.firebaseio.com',ref:'isolated-test-only'};
+ const f=await setup(options.initialData),binding={schemaVersion:1,sourceProjectId:'source-invalid',sourceTenant:'source',sourceC2Origin:'https://source.invalid',projectId:'shadow-invalid',tenant:'quantus',c2Origin:'https://shadow.invalid',databaseUrl:'https://shadow-invalid.firebaseio.com',ref:'isolated-test-only'};
  const config={mode:'shadow',role:'worker',tenant:'quantus',c2BaseUrl:binding.c2Origin};
  const env={QUANTUS_V4_SHADOW_BINDING:JSON.stringify(binding),FIREBASE_PROJECT_ID:binding.projectId,FIREBASE_DATABASE_URL:binding.databaseUrl,QUANTUS_V3_FIREBASE_PROJECT_ID:binding.projectId,FIREBASE_SERVICE_ACCOUNT_JSON:JSON.stringify({type:'service_account',project_id:binding.projectId,client_email:'worker@shadow-invalid.iam.gserviceaccount.com',private_key:'SYNTHETIC'})};
  const args={config,envRead:n=>env[n]},resolved=resolveShadowBinding(args);
@@ -44,11 +48,23 @@ test('keyless request contract uses identical bytes but cannot dispatch or cross
  assert.deepEqual(paid.prepare(f.request),f.prepared);
  await assert.rejects(paid.dispatch({prepared:f.prepared,requestId:'test'}),/prepared_request_required/);
 });
+test('client defaults to attached Google workload identity before the broker request',async()=>{
+ const f=await fixture();let identities=0;
+ const client=createCommissioningClient({...f.configClient,getIdToken:undefined,identityFetch:async(url,init)=>{
+  identities++;assert.equal(f.wire.length,0);assert.equal(new URL(url).hostname,'metadata.google.internal');
+  assert.equal(init.headers['Metadata-Flavor'],'Google');
+  return new Response(F.schedulerToken(key,{audience:f.connection.audience,email:f.connection.serviceAccount,nowMs:T}),{headers:{'Metadata-Flavor':'Google'}});
+ }});
+ assert.equal(identities,0);
+ const result=await client.respond({runKey:RUN,stepIndex:0,request:f.request,verifiedScope:f.scope});
+ assert.equal(result.outcome,'settled');assert.equal(identities,1);assert.equal(f.wire.length,1);
+});
 test('isolated client uses stable reviewed profile identity and never mutates a local cost ledger',async()=>{
  const f=await fixture(),before=f.store.snapshot();const a=await f.call(),b=await f.call();assert.equal(a.callId,b.callId);assert.equal(b.replayed,true);
  const payloads=f.wire.map(w=>JSON.parse(w.init.body));assert.deepEqual(payloads[0],payloads[1]);assert.equal(payloads[0].sectionId,'process-profile');
  assert.deepEqual(Object.keys(payloads[0]).sort(),['inputJson','runKey','sectionId','stepIndex']);
  assert.equal(f.wire[0].init.redirect,'error');assert.deepEqual(f.store.snapshot(),before);
+ assert.equal(f.wire[0].init.headers['x-serverless-authorization'],f.wire[0].init.headers.authorization);
 });
 test('unbound cores, altered binding and paid transports are rejected before HTTP',async()=>{
  const f=await fixture();for(const over of [{core:f.configClient.core?{...f.core}:{}},{connection:{...f.connection,bindingHash:'f'.repeat(64)}},{contract:{...f.contract}},{config:{...f.configClient.config,mode:'live'}}])assert.throws(()=>createCommissioningClient({...f.configClient,...over}));
@@ -141,4 +157,63 @@ test('missing or changed source evidence prevents tool execution and no ordinary
  const loop=createLeadershipLoop({runKey:RUN,journal:j,openai:f.contract,gateway:{definitions:()=>profile.tools,execute:async()=>executed++}});
  await loop.step({initialRequest:f.request});corrupt=true;await assert.rejects(loop.step({initialRequest:f.request}));assert.equal(executed,0);
  assert.throws(()=>createLeadershipJournal({core:f.core,clock:f.clock,runKey:RUN,verifiedScope:f.scope,artifacts:f.artifacts.store,commissioningClient:{...f.client}}),/journal_commissioning_binding_invalid/);
+});
+
+async function commissionedWorker(){
+ const {instructions}=await loadV4LeadershipInstructions({slot:'process09',promptVersion:'4.0.0'});
+ const f=await fixture({profile:{instructions,tools:leadershipToolDefinitions()},initialData:migrateCore({entities:{}}, {now:T}).data});
+ const config={...f.configClient.config,policyVersion:'4.0',leaseScope:'quantus:mainrun',toolsEnabled:{quantus_context:true}};
+ const permission={schemaVersion:1,connection:f.connection,isolatedDomain:true,sourceReadIds:[]};
+ const policy={...POLICY_TEMPLATE,tenant:'quantus',version:'4.0',requiredSources:[{id:'quantus-core',kind:'quantus-core'}],noExternalSources:true};
+ const env={QUANTUS_V4_OPENAI_MODEL:'test-model',QUANTUS_V4_OPENAI_INPUT_MICROS_PER_MTOK:'1000000',QUANTUS_V4_OPENAI_OUTPUT_MICROS_PER_MTOK:'1000000',QUANTUS_V4_PROMPT_VERSION:'4.0.0',QUANTUS_V4_COMMISSIONING_WORKER_JSON:JSON.stringify(permission),[DOMAIN_PORT_VARS.policyJson]:JSON.stringify(policy)};
+ const brokerRequests=[],tools=[];
+ const make=over=>createOpenAIWorkerPorts({config,corePort:f.core,clockPort:f.clock,envRead:n=>env[n],artifactStore:f.artifacts.store,
+  jobTokenIssuer:{available:true,async mint(){return 'synthetic-job-token';}},
+  c2Transport:{async send(request){tools.push(request);return {status:503,body:{error:'synthetic-source-unavailable'}};}},
+  providerFetch:async()=>{throw Error('shadow must never contact provider directly');},
+  commissioningJwks:F.jwksPort(key).impl,
+  identityFetch:async()=>new Response(F.schedulerToken(key,{audience:f.connection.audience,email:f.connection.serviceAccount,nowMs:T}),{headers:{'Metadata-Flavor':'Google'}}),
+  commissioningFetch:async(_url,init)=>{
+   const body=JSON.parse(init.body);brokerRequests.push(body);
+   const prepared=f.contract.prepare({instructions,tools:leadershipToolDefinitions(),input:JSON.parse(body.inputJson)});
+   const operationId=hash([f.connection.allocationId,f.connection.bindingHash,body.runKey,body.sectionId,body.stepIndex]);
+   const call={callId:'policy-read',name:'quantus_context',arguments:{query:'policy.current',scopeId:'policy_current',cursor:''}};
+   return Response.json({schemaVersion:1,callId:'commission-'+operationId,requestHash:prepared.contentHash,runKey:body.runKey,sectionId:body.sectionId,stepIndex:body.stepIndex,provider:'openai',model:'test-model',commissioning:{allocationId:f.connection.allocationId,bindingHash:f.connection.bindingHash,operationId},contract:{inputTokens:prepared.inputTokens,outputTokens:prepared.outputTokens},settledMicros:60,overrunMicros:0,outcome:'settled',response:{outcome:'settled',actualMicros:60,usageReceiptId:'synthetic-receipt',result:{usable:true,text:'',toolCalls:[call],output:[{type:'function_call',call_id:call.callId,name:call.name,arguments:JSON.stringify(call.arguments)}]}},replayed:body.recoveryOnly===true,dispatchAllowed:false});
+  },...over});
+ return {...f,config,permission,policy,env,make,brokerRequests,tools,args:{runKey:RUN,sectionId:'section-1',verifiedScope:f.scope}};
+}
+
+test('existing worker runs through metadata identity and broker without an API key or shadow cost claims',async()=>{
+ const f=await commissionedWorker(),before=structuredClone(f.config);
+ const ports=await f.make();assert.equal(ports.sectionWork.available,true,ports.sectionWork.reason);
+ const result=await ports.sectionWork.impl.next(f.args);assert.equal(result.cursor.phase,'model_recorded');
+ assert.ok(f.store.snapshot().dailyBriefing.assistantRuns['2026-10-02'].startNoteId);
+ assert.equal(f.brokerRequests.length,1);assert.equal(f.brokerRequests[0].recoveryOnly,undefined);
+ const resumed=await (await f.make()).sectionWork.impl.next(f.args);assert.equal(resumed.cursor.phase,'tool_recorded');
+ assert.equal(f.brokerRequests[1].recoveryOnly,true);assert.equal(f.tools.length,1);
+ assert.deepEqual(f.store.snapshot().automation.runtime.cost.callsById,{});assert.deepEqual(f.config,before);
+ assert.equal(f.config.mode,'shadow');assert.equal(f.config.allowExternalEffects,undefined);
+});
+
+test('worker rejects missing permission, extra source reads and changed profiles before any bootstrap or HTTP',async()=>{
+ for(const change of [p=>delete p.isolatedDomain,p=>p.isolatedDomain=false,p=>p.sourceReadIds=['unapproved-mail'],p=>p.connection.profiles.process09.hash='f'.repeat(64)]){
+  const f=await commissionedWorker(),p=structuredClone(f.permission);change(p);
+  f.env.QUANTUS_V4_COMMISSIONING_WORKER_JSON=JSON.stringify(p);const before=f.store.snapshot();
+  assert.equal((await f.make()).sectionWork.available,false);assert.deepEqual(f.store.snapshot(),before);assert.equal(f.brokerRequests.length,0);
+ }
+});
+
+test('configured required mail cannot be acquired without its explicit commissioning read permission',async()=>{
+ const f=await commissionedWorker();
+ f.env[DOMAIN_PORT_VARS.policyJson]=JSON.stringify({...f.policy,noExternalSources:false,requiredSources:[...f.policy.requiredSources,{id:'required-mail',kind:'gmail'}]});
+ const before=f.store.snapshot(),ports=await f.make();
+ assert.equal(ports.sectionWork.available,false);assert.equal(ports.sectionWork.reason,'commissioning_source_permission_mismatch');
+ assert.deepEqual(f.store.snapshot(),before);assert.equal(f.brokerRequests.length,0);
+});
+
+test('lost isolated storage marker after worker construction prevents bootstrap and broker dispatch',async()=>{
+ const f=await commissionedWorker(),ports=await f.make();assert.equal(ports.sectionWork.available,true);
+ f.store.forceWrite(d=>{delete d.automation.shadowIsolation;return d;});const before=f.store.snapshot();
+ await assert.rejects(ports.sectionWork.impl.next(f.args),e=>e.error==='shadow_isolation_mismatch');
+ assert.deepEqual(f.store.snapshot(),before);assert.equal(f.brokerRequests.length,0);
 });
