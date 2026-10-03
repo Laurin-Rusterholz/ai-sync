@@ -193,3 +193,67 @@ test("violations (sichere Feldpfade) werden bei CORE_PARTIAL_V3 sichtbar angezei
 });
 
 console.log("quantus-v3-email-briefing-button: alle Pruefungen bestanden");
+
+function memorySession() {
+  const values=new Map();
+  return {getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)};
+}
+function completedCore(at, {outcome='partial',linked=true,active=false,noteAt=at}={}) {
+  const id='v3-draft:test';
+  return {ok:true,data:{automation:{activeLease:active?{holder:'netlify-scheduled'}:null},dailyBriefing:{assistantRuns:{today:{sourceChecks:{gmail:{checkedAt:new Date(at).toISOString(),outcome}},noteIds:linked?[id]:[]}}},entities:{chatgptNotes:{[id]:{createdAt:new Date(noteAt).toISOString(),instruction:'Actual saved draft'}}}}};
+}
+test('504 reconciles a new persisted partial draft without a second POST', async()=>{
+  const {document,els}=stubDom();let posts=0,reads=0;
+  const win={sessionStorage:memorySession(),remoteGetByKey:async(key,opts)=>{
+    reads++;assert.equal(key,'app-data.json');assert.equal(opts.force,true);return completedCore(Date.now()+10);
+  }};
+  await loadHandler({window:win,document,APP:{state:{settings:{v3EmailAuthToken:'tok'}}},fetch:async()=>{posts++;return {status:504,json:async()=>{throw Error('html')}};}})();
+  assert.equal(posts,1);assert.equal(reads,1);
+  assert.match(els.dbV3EmailRunStatus.innerHTML,/Serverstand bestätigt/);
+  assert.match(els.dbV3EmailRunStatus.innerHTML,/nur teilweise geprüft/);
+  assert.equal(win.sessionStorage.getItem('quantus-v3-email-pending-start'),null);
+  assert.equal(els.dbV3EmailRunBtn.disabled,false);
+});
+test('ambiguous network outcome survives reload; subsequent clicks read only',async()=>{
+  const sessionStorage=memorySession();let posts=0,reads=0;
+  const read=async()=>{reads++;return {ok:true,data:{}};};
+  const APP={state:{settings:{v3EmailAuthToken:'tok'}}};
+  const first=stubDom();
+  const handler=loadHandler({window:{sessionStorage,remoteGetByKey:read},document:first.document,APP,fetch:async()=>{posts++;throw Error('SECRET must not appear');}});
+  await handler();await handler();
+  const second=stubDom();const reloaded={sessionStorage,remoteGetByKey:read};
+  await loadHandler({window:reloaded,document:second.document,APP,fetch:async()=>{posts++;throw Error('No second POST');}})();
+  assert.equal(posts,1);assert.equal(reads,3);
+  assert.equal(second.els.dbV3EmailRunBtn.textContent,'Serverergebnis prüfen');
+  assert.doesNotMatch(first.els.dbV3EmailRunStatus.innerHTML,/SECRET/);
+  const today=new Date().toISOString().slice(0,10);
+  assert.match(loadRenderer()(appWith({}),reloaded)(today),/Serverergebnis prüfen/);
+});
+for(const [label,options,checkedOffset] of [['old check',{},-1000],['old note',{noteAt:1000},10],['orphan note',{linked:false},10],['active lease',{active:true},10]]) {
+  test('does not claim success from '+label,async()=>{
+    const at=Date.now();const {document,els}=stubDom();let posts=0;
+    const win={_v3EmailPendingAt:at,remoteGetByKey:async()=>completedCore(at+checkedOffset,options)};
+    await loadHandler({window:win,document,APP:{state:{}},fetch:async()=>{posts++;}})();
+    assert.equal(posts,0);assert.equal(win._v3EmailPendingAt,at);
+    assert.doesNotMatch(els.dbV3EmailRunStatus.innerHTML,/Serverstand bestätigt/);
+    assert.equal(els.dbV3EmailRunBtn.textContent,'Serverergebnis prüfen');
+  });
+}
+test('failed read preserves pending outcome and does not leak exception details',async()=>{
+  const {document,els}=stubDom();const win={_v3EmailPendingAt:Date.now(),remoteGetByKey:async()=>{throw Error('SECRET');}};
+  await loadHandler({window:win,document,APP:{state:{}},fetch:async()=>assert.fail('POST')})();
+  assert.match(els.dbV3EmailRunStatus.innerHTML,/nicht erreichbar/);
+  assert.doesNotMatch(els.dbV3EmailRunStatus.innerHTML,/SECRET/);
+  assert.ok(win._v3EmailPendingAt);
+});
+test('explicit reset cancels on refusal and never launches work by itself',()=>{
+  const source=extract('function dbResetV3EmailPending() {','\n}\n');
+  const {document,els}=stubDom();let allow=false;
+  const win={_v3EmailPendingAt:1,sessionStorage:memorySession(),confirm:()=>allow};
+  win.sessionStorage.setItem('quantus-v3-email-pending-start','1');
+  const reset=new Function('window','document',source+'\nreturn dbResetV3EmailPending;')(win,document);
+  reset();assert.equal(win._v3EmailPendingAt,1);
+  allow=true;reset();assert.equal(win._v3EmailPendingAt,0);
+  assert.equal(win.sessionStorage.getItem('quantus-v3-email-pending-start'),null);
+  assert.match(els.dbV3EmailRunStatus.textContent,/noch kein Lauf gestartet/);
+});
