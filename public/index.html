@@ -13038,43 +13038,87 @@ for (const u of Object.values(e.updates)) {
 // ── IndexedDB backup (no size limit, survives localStorage clear) ──
 const _IDB_NAME = 'app_backups';
 const _IDB_STORE = 'snapshots';
+const snapshotBackups = (() => {
+// Existing app_backups v1 format. Keys end in the creation time; the label
+// prefix is not an age. Read keys first so startup never clones every backup.
+const DB = 'app_backups', STORE = 'snapshots';
+const RECOVERY_LABELS = new Set(['localStorage_overflow', 'periodic', 'before_close']);
+const request = req => new Promise((resolve, reject) => {
+  req.onsuccess = () => resolve(req.result);
+  req.onerror = () => reject(req.error || new Error('backup_request_failed'));
+});
+function complete(tx) {
+  const done = new Promise((resolve, reject) => {
+    tx.oncomplete = resolve;
+    tx.onabort = () => reject(tx.error || new Error('backup_transaction_aborted'));
+    tx.onerror = () => reject(tx.error || new Error('backup_transaction_failed'));
+  });
+  // The request may fail before its transaction abort event arrives.
+  done.catch(() => {});
+  return done;
+}
+async function open(indexedDB) {
+  const req = indexedDB.open(DB, 1);
+  req.onupgradeneeded = () => req.result.createObjectStore(STORE, { keyPath: 'id' });
+  return request(req);
+}
+function keyInfo(key) {
+  if (typeof key !== 'string') return null;
+  const match = /^(.*)_([0-9]{13})$/.exec(key);
+  return match && match[1] ? { key, label: match[1], ts: Number(match[2]) } : null;
+}
+function backupKeysToPrune(keys, limit = 25) {
+  const known = keys.map(keyInfo).filter(Boolean).sort((a,b) => b.ts-a.ts || b.key.localeCompare(a.key));
+  const keep = new Set();
+  for (const label of RECOVERY_LABELS) {
+    const latest = known.find(row => row.label === label);
+    if (latest) keep.add(latest.key);
+  }
+  for (const row of known) { if (keep.size >= limit) break; keep.add(row.key); }
+  // Unknown/imported key formats are preserved, never guessed to be oldest.
+  return known.filter(row => !keep.has(row.key)).map(row => row.key);
+}
+async function writeSnapshotBackup(data, label, { indexedDB = globalThis.indexedDB, now = Date.now } = {}) {
+  const ts = now();
+  if (typeof label !== 'string' || !label || !Number.isSafeInteger(ts) || String(ts).length !== 13) throw new Error('backup_identity_invalid');
+  const row = { id: label + '_' + ts, ts, label, data: JSON.stringify(data) };
+  const db = await open(indexedDB);
+  try {
+    const tx = db.transaction(STORE, 'readwrite'), done = complete(tx), store = tx.objectStore(STORE);
+    await request(store.put(row));
+    const keys = await request(store.getAllKeys());
+    for (const key of backupKeysToPrune(keys)) store.delete(key);
+    await done;
+    return { id: row.id, committed: true };
+  } finally { db.close(); }
+}
+async function readSnapshotBackup(label, { indexedDB = globalThis.indexedDB, exactKey = false } = {}) {
+  const db = await open(indexedDB);
+  try {
+    const tx = db.transaction(STORE, 'readonly'), done = complete(tx), store = tx.objectStore(STORE);
+    let row = exactKey ? await request(store.get(label)) : null;
+    if (!row) {
+      const keys = await request(store.getAllKeys());
+      const latest = keys.map(keyInfo).filter(k => k?.label === label).sort((a,b) => b.ts-a.ts)[0];
+      if (latest) row = await request(store.get(latest.key));
+    }
+    await done;
+    return row ? JSON.parse(row.data) : null;
+  } finally { db.close(); }
+}
+
+return { backupKeysToPrune, writeSnapshotBackup, readSnapshotBackup };
+})();
 async function idbBackup(data, label) {
   try {
-    const db = await new Promise((res, rej) => {
-      const r = indexedDB.open(_IDB_NAME, 1);
-      r.onupgradeneeded = () => r.result.createObjectStore(_IDB_STORE, { keyPath: 'id' });
-      r.onsuccess = () => res(r.result);
-      r.onerror = () => rej(r.error);
-    });
-    const tx = db.transaction(_IDB_STORE, 'readwrite');
-    const store = tx.objectStore(_IDB_STORE);
-    const id = label + '_' + Date.now();
-    store.put({ id, ts: Date.now(), label, data: JSON.stringify(data) });
-    // Keep max 25 backups for conflict recovery
-    const all = await new Promise(res => { const r = store.getAllKeys(); r.onsuccess = () => res(r.result); r.onerror = () => res([]); });
-    if (all.length > 25) {
-      const toDelete = all.sort().slice(0, all.length - 25);
-      for (const k of toDelete) store.delete(k);
-    }
-    db.close();
-  } catch(e) { console.warn('IDB backup failed:', e); }
+    await snapshotBackups.writeSnapshotBackup(data, label);
+    return true;
+  } catch(e) { console.warn('IDB backup failed:', e); return false; }
 }
 async function idbRestore(label) {
   try {
-    const db = await new Promise((res, rej) => {
-      const r = indexedDB.open(_IDB_NAME, 1);
-      r.onupgradeneeded = () => r.result.createObjectStore(_IDB_STORE, { keyPath: 'id' });
-      r.onsuccess = () => res(r.result);
-      r.onerror = () => rej(r.error);
-    });
-    const tx = db.transaction(_IDB_STORE, 'readonly');
-    const store = tx.objectStore(_IDB_STORE);
-    const all = await new Promise(res => { const r = store.getAll(); r.onsuccess = () => res(r.result); r.onerror = () => res([]); });
-    db.close();
-    const matches = all.filter(s => s.label === label).sort((a, b) => b.ts - a.ts);
-    if (matches.length > 0) return JSON.parse(matches[0].data);
-    return null;
-  } catch(e) { return null; }
+    return await snapshotBackups.readSnapshotBackup(label);
+  } catch(e) { console.warn('IDB restore failed:', e); return null; }
 }
 
 // ── Cross-tab & Cross-device Sync Helpers ──
@@ -13454,23 +13498,8 @@ async function idbListBackups() {
 // Restore a specific IDB backup
 async function idbRestoreByKey(key) {
   try {
-    const db = await new Promise((res, rej) => {
-      const r = indexedDB.open(_IDB_NAME, 1);
-      r.onupgradeneeded = () => r.result.createObjectStore(_IDB_STORE, { keyPath: 'id' });
-      r.onsuccess = () => res(r.result);
-      r.onerror = () => rej(r.error);
-    });
-    const tx = db.transaction(_IDB_STORE, 'readonly');
-    const store = tx.objectStore(_IDB_STORE);
-    const all = await new Promise(res => { const r = store.getAll(); r.onsuccess = () => res(r.result); r.onerror = () => res([]); });
-    db.close();
-    const match = all.find(s => s.id === key || s.label === key);
-    if (match) return JSON.parse(match.data);
-    // Try prefix match
-    const prefixMatch = all.filter(s => s.label === key).sort((a, b) => b.ts - a.ts)[0];
-    if (prefixMatch) return JSON.parse(prefixMatch.data);
-    return null;
-  } catch(e) { return null; }
+    return await snapshotBackups.readSnapshotBackup(key, { exactKey: true });
+  } catch(e) { console.warn('IDB restore by key failed:', e); return null; }
 }
 
 // ── Soft-delete tracking ──
