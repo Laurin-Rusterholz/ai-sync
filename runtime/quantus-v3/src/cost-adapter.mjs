@@ -45,6 +45,7 @@ import * as E1 from "../../../netlify/lib/quantus-v3-runtime-state.mjs";
 import { localDate as zurichLocalDate } from "../../../netlify/lib/quantus-v3-runtime-plan.mjs";
 import { HttpError, conflict } from "./errors.mjs";
 import { externalEffectsAllowed } from "./config.mjs";
+import {assertCommissioningOperation} from "./commissioning-ingress.mjs";
 import {validCommissioningCallBinding, sameCommissioningCallBinding} from "../../../netlify/lib/quantus-v4-commissioning-allocation-schema.mjs";
 import { reserveCostWithMonthlyCap } from "./monthly-cost-cap.mjs";
 
@@ -79,6 +80,8 @@ async function pruefeFrisch(ctx, schritt) {
   }
   const data = await leseKern(ctx);
   E1.readRuntime(data);   // wirft bei fehlendem oder kaputtem Nachweis
+  if (ctx.commissioningOperation) assertCommissioningOperation(ctx.commissioningOperation,
+    {data,now:clockOf(ctx).now(),core:ctx.ports.require("core")});
   return data;
 }
 
@@ -198,7 +201,8 @@ function retainedCommissioning(binding) {
   return structuredClone(binding);
 }
 
-export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseReserveMs = DISPATCH_LEASE_RESERVE_MS, monthlyCap = null } = {}) {
+export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseReserveMs = DISPATCH_LEASE_RESERVE_MS, monthlyCap = null, commissioningOperation = null } = {}) {
+  ctx = {...ctx, commissioningOperation};
   const fixture = __allowFixturePolicy === true;
 
   return {
@@ -209,6 +213,11 @@ export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseRese
      * Mutators laeuft wie `E1.reserveCost` selbst. */
     async reserve({ callId, runKey, provider, model, contentHash, inputTokens, outputTokens, modelPricing, commissioning }) {
       const binding = retainedCommissioning(commissioning);
+      if (commissioningOperation && (callId !== commissioningOperation.callId || runKey !== commissioningOperation.runKey
+        || provider !== commissioningOperation.provider || model !== commissioningOperation.model
+        || contentHash !== commissioningOperation.prepared.contentHash || inputTokens !== commissioningOperation.prepared.inputTokens
+        || outputTokens !== commissioningOperation.prepared.outputTokens
+        || !sameCommissioningCallBinding(binding, commissioningOperation.commissioning))) throw conflict("commissioning_operation_conflict");
       const clock = clockOf(ctx);
       await pruefeFrisch(ctx, "reserve");
       const policy = await ladePolicy(ctx, "reserve");
@@ -235,6 +244,8 @@ export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseRese
     /* Anspruch, Sendung, Ausgang — in dieser Reihenfolge und nur so. */
     async claimAndDispatch({ callId, claimId, send, modelPricing, commissioning }) {
       const binding = retainedCommissioning(commissioning);
+      if (commissioningOperation && (callId !== commissioningOperation.callId
+        || !sameCommissioningCallBinding(binding, commissioningOperation.commissioning))) throw conflict("commissioning_operation_conflict");
       if (typeof send !== "function") throw new HttpError(500, "dispatch_function_required");
       const clock = clockOf(ctx);
       await pruefeFrisch(ctx, "claim");
@@ -289,7 +300,8 @@ export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseRese
       // ── Letztes gewartetes I/O: der Bestand, wie er JETZT ist. ──────
       // Er ist zugleich die Nachpruefung gegen einen Port, der ueber
       // `replayed` oder `wrote` falsch berichtet.
-      const gate = gateAus(await leseKern(ctx), callId);
+      const finalData = await leseKern(ctx);
+      const gate = gateAus(finalData, callId);
       if (gate.callState !== "reserved" || gate.claimed !== true
         || gate.claimId !== claimId || gate.claimedAtMs !== now) {
         throw conflict("dispatch_not_allowed", {
@@ -302,6 +314,8 @@ export function createCostAdapter(ctx, { __allowFixturePolicy = false, leaseRese
       // Fence, Abrechnungstag und Preisstand koennen sich danach nicht
       // mehr unbemerkt geaendert haben.
       const sendeZeit = clock.now();
+      if (commissioningOperation) assertCommissioningOperation(commissioningOperation,
+        {data:finalData,now:sendeZeit,core:ctx.ports.require("core")});
       const endkontrolle = pruefeUnmittelbarVorSendung({
         gate, policy, verifiedScope: ctx.verifiedScope,
         sendeZeit, leaseReserveMs, allowFixture: fixture, commissioning: binding,

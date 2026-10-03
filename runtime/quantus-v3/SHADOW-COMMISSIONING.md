@@ -118,3 +118,36 @@ verify the exact source/isolation deployment binding, derive stable operation
 identities across child restore/retry, enforce approved model/request scope,
 and execute through the source cost adapter. This package does not configure
 that ingress, permit shadow external effects, or prove the full restore drill.
+
+## Authenticated admission before broker activation
+
+`createCommissioningIngress` builds a single POST route at
+`/v4/commissioning/respond` using the existing Google RS256 OIDC router. It is
+not mounted by the production entrypoint. Reviewed server authority fixes the
+exact audience, shadow service account, source/shadow projects and tenants,
+allocation and isolation binding, model, instruction/tool profile hashes,
+allowed run keys and bounded step range. Callers supply only a permitted run,
+section and step plus serialized model input. Input remains context data; it
+cannot select instructions, tools, provider credentials, cost policy or IDs.
+
+`bindCommissioningSourcePort` requires explicit matching source Firebase
+credentials/database configuration and forbids refresh-token fallback. Its
+branded port rejects a shadow marker on every read, receipt replay and CAS
+mutation. Admission requires that branded source port and the actual held
+allocation. Tokens are rechecked for expiry after the source read.
+
+Operation identity is a hash of the approved allocation/binding and canonical
+run/section/step tuple, independent of request UUID and input bytes. Changed
+bytes keep that identity and conflict with the source call already recorded.
+Admission produces an in-process capability; serializing or constructing an
+object cannot reproduce it. The cost adapter optionally consumes this
+capability, binds its exact prepared model request and checks it with fresh
+source data before reservation/claim and after the final awaited read before
+send. This adds no general permission to bypass existing effect gates.
+
+Missing execution returns an explicit 503. The actual broker coordinator,
+source lease acquisition/release, persisted response recovery, deployment/IAM
+and the narrowly scoped commissioning effect capability are still required.
+Admission tests use real signatures and existing reducers/adapter with
+synthetic credentials, prices and provider responses; they do not establish a
+running broker, successful production access or any day of the real trial.
