@@ -15633,7 +15633,7 @@ window.diagnoseSync = async function() {
   log('Teste Netlify GET …', null);
   try {
     const r = await netlifyBlobGet(s.blobKey, { force: true });
-    if (r.ok) log('GET: ✓ erfolgreich (' + JSON.stringify(r.data).length + ' Bytes empfangen)', true);
+    if (r.ok) { log('GET: ✓ erfolgreich (' + JSON.stringify(r.data).length + ' Bytes empfangen)', true); log('Netlify Statusnachweise: ' + ['tasks','chatgptLeads','chatgptTasks'].map(k => k + '=' + Object.values(r.data?.entities?.[k] || {}).filter(e => e.operationalStateSource).length).join(', ')); }
     else if (r.status === 401) log('GET: 401 — Auth-Token falsch oder fehlt', false);
     else if (r.status === 404) log('GET: 404 — noch keine Daten in Cloud (OK beim ersten Mal)', null);
     else if (r.status === 500) log('GET: 500 Server-Fehler — Netlify-Function-Logs prüfen', false);
@@ -15641,6 +15641,7 @@ window.diagnoseSync = async function() {
     else log('GET: Fehler — ' + (r.error?.message || 'unbekannt'), false);
   } catch(e) { log('GET Exception: ' + e.message, false); }
   
+  try { const r = await rtdbJsonGet(s.blobKey, {force:true}); log('RTDB Statusnachweise: ' + (r.ok ? ['tasks','chatgptLeads','chatgptTasks'].map(k => k + '=' + Object.values(r.data?.entities?.[k] || {}).filter(e => e.operationalStateSource).length).join(', ') : 'nicht lesbar')); } catch(e) { log('RTDB Diagnose fehlgeschlagen', false); }
   log('Teste Netlify PUT (mit Test-Daten) …', null);
   try {
     const testData = { test: true, ts: Date.now(), msg: 'diagnose' };
