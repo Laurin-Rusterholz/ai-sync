@@ -14104,6 +14104,7 @@ function mergeData(local, remote) {
           && (['doing', 'waiting_external', 'waiting_user', 'delegated', 'review', 'done', 'cancelled'].includes(state)
             || ((state === null || !Object.prototype.hasOwnProperty.call(remoteItem, 'operationalState')) && ['ambiguous', 'unknown'].includes(remoteItem.operationalStateUnmapped)));
         if (!validRemote) {
+          console.warn('[CanonicalStateGap]', JSON.stringify({collection:key, id, remoteExists:!!remoteItem, remoteCanonical:!!remoteCanonical, state, unmapped:remoteItem && remoteItem.operationalStateUnmapped, version:remoteItem && remoteItem.operationalStateVersion}));
           // Missing/damaged server state is never repaired from a local claim.
           // Existing write guards retain the entities snapshot and stop the write.
           markV3ProtectedGap(merged, 'entities');
@@ -14127,6 +14128,7 @@ function mergeData(local, remote) {
       const itemTs = entityTimestamp(winner);
       if (stateCollection && (localCanonical || remoteCanonical) && tombTs > 0 && itemTs > 0 && tombTs > itemTs) {
         // A stale whole-document client cannot delete a canonical entity.
+        console.warn('[CanonicalDeletionGap]', JSON.stringify({collection:key, id}));
         markV3ProtectedGap(merged, 'entities');
         merged.entities[key][id] = winner;
       } else if (tombTs > 0 && itemTs > 0 && tombTs > itemTs) {
