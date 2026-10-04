@@ -5,6 +5,16 @@ import { openCommandQueue, createCommandTransport, serializeCommand, COMMAND_VER
 import { prepareIdempotentCommand, applyIdempotentCommand } from "../netlify/lib/quantus-v3-idempotency.mjs";
 
 const ORIGIN = "https://quantus.example";
+test('workspace retention exceeds command limits without widening API commands', async () => {
+  const indexedDB = new IDBFactory();
+  const queue = await openCommandQueue({indexedDB, databaseName:'large-retention'});
+  const legacyOperation = {data: Array.from({length:25_000}, (_,id) => ({id, text:'x'.repeat(100)}))};
+  try {
+    await queue.retainLegacy({accountKey:'test', operationId:'snapshot', legacyOperation});
+    assert.deepEqual((await queue.list('test'))[0].legacyOperation, legacyOperation);
+    assert.throws(() => serializeCommand({schemaVersion:3, verb:'lead.comment', payload:legacyOperation}));
+  } finally { queue.close(); }
+});
 const accountKey = "firebase-user-1";
 const command = () => ({ schemaVersion: 3, verb: "lead.comment", jobId: "job_20260920_42", expectedEntityVersion: 17,
   payload: { leadId: "lead_123", text: "Ergebnis verknuepft.", evidenceRefs: ["artifact_456"] } });

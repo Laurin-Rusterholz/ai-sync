@@ -14102,7 +14102,7 @@ function mergeData(local, remote) {
         const validRemote = remoteCanonical && source && typeof source === 'object' && !Array.isArray(source)
           && Number.isInteger(remoteItem.operationalStateVersion) && remoteItem.operationalStateVersion > 0
           && (['doing', 'waiting_external', 'waiting_user', 'delegated', 'review', 'done', 'cancelled'].includes(state)
-            || (state === null && ['ambiguous', 'unknown'].includes(remoteItem.operationalStateUnmapped)));
+            || ((state === null || !Object.prototype.hasOwnProperty.call(remoteItem, 'operationalState')) && ['ambiguous', 'unknown'].includes(remoteItem.operationalStateUnmapped)));
         if (!validRemote) {
           // Missing/damaged server state is never repaired from a local claim.
           // Existing write guards retain the entities snapshot and stop the write.

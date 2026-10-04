@@ -16,11 +16,11 @@ const fail = (code) => { throw Object.assign(new Error(code), { code }); };
 
 // Stable serialization detects reused operation IDs and never silently drops a
 // field (undefined, accessors and non-JSON values would change the real request).
-function json(value, maxBytes = 65_536) {
+function json(value, maxBytes = 65_536, maxNodes = 20_000) {
   const ancestors = new Set();
   let nodes = 0;
   function visit(item, depth) {
-    if (++nodes > 20_000 || depth > 32) fail("operation_too_complex");
+    if (++nodes > maxNodes || depth > 32) fail("operation_too_complex");
     if (item === null || typeof item === "string" || typeof item === "boolean") return JSON.stringify(item);
     if (typeof item === "number" && Number.isFinite(item)) return JSON.stringify(item);
     if (typeof item !== "object" || ancestors.has(item) || (!Array.isArray(item) && !record(item))) fail("invalid_json");
@@ -166,7 +166,9 @@ export async function openCommandQueue({ indexedDB = globalThis.indexedDB, datab
 
   async function putIntent({ accountKey, operationId, command, legacyOperation }, legacy = false) {
     if (!validId(accountKey) || !validId(operationId)) fail("invalid_operation_identity");
-    const canonical = legacy ? json(legacyOperation, 2 * 1024 * 1024) : serializeCommand(command);
+    // A retained local snapshot can contain the whole workspace. Keep its
+    // bounded storage budget separate from the unchanged command/API limits.
+    const canonical = legacy ? json(legacyOperation, 32 * 1024 * 1024, 1_000_000) : serializeCommand(command);
     const createdAt = validClock(now);
     return transaction("readwrite", (store, done, abort) => {
       const request = store.get([accountKey, operationId]);

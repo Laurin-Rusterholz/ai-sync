@@ -56,6 +56,17 @@ test('missing or damaged server tuples block instead of accepting local authorit
     assert.deepEqual(result._v3ProtectedGap,['entities']);
   }
 });
+test('Firebase omission of a null unmapped state is valid, not a protected gap', () => {
+  const remote = {...canonical(), operationalStateUnmapped:'ambiguous'};
+  delete remote.operationalState;
+  const local = {...remote, operationalState:null};
+  const result = merge(data(local), data(remote));
+  assert.equal(result._v3ProtectedGap, undefined);
+  assert.equal(result.entities.chatgptLeads.lead.operationalStateUnmapped, 'ambiguous');
+  const damaged = {...remote};
+  delete damaged.operationalStateUnmapped;
+  assert.deepEqual(merge(data(local), data(damaged))._v3ProtectedGap, ['entities']);
+});
 test('a stale client deletion cannot remove canonical work', () => {
   const result=merge(data(null),data(canonical()),{lead:Date.parse('2026-10-05')});
   assert.deepEqual(result._v3ProtectedGap,['entities']);
