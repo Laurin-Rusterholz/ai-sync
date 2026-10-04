@@ -72,6 +72,13 @@ test('a stale client deletion cannot remove canonical work', () => {
   assert.deepEqual(result._v3ProtectedGap,['entities']);
   assert.equal(result.entities.chatgptLeads.lead.operationalState,'doing');
 });
+test('old transient gap does not survive a repaired authoritative server', () => {
+  const local = {...data(canonical()), _v3ProtectedGap:['entities'], _v3LocalDivergence:[{namespace:'old',snapshot:{}}]};
+  const repaired = merge(local, data(canonical()));
+  assert.equal(repaired._v3ProtectedGap, undefined);
+  assert.equal(repaired._v3LocalDivergence, undefined);
+  assert.deepEqual(merge(local, data(null))._v3ProtectedGap, ['entities']);
+});
 test('unmigrated legacy items and unrelated collections retain existing behavior', () => {
   const local={id:'lead',updatedAt:'2026-10-03',operationalState:'decision_required'};
   const remote={id:'lead',updatedAt:'2026-10-01'};
