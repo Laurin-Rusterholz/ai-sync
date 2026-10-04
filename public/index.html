@@ -14045,6 +14045,11 @@ function mergeData(local, remote) {
   if (!local || !local.entities) return normalizeData(remote);
   
   const merged = JSON.parse(JSON.stringify(local));
+  // Merge diagnostics describe this comparison only. Recompute them from the
+  // fresh server snapshot; a previous failed comparison must not poison all
+  // later writes after the server has been migrated or repaired.
+  delete merged._v3ProtectedGap;
+  delete merged._v3LocalDivergence;
   // Tombstones beider Seiten vereinen (Remote bringt payload._deleteLog mit) und
   // persistieren → echte Löschungen propagieren über alle Geräte (keine Geister-
   // Wiederauferstehung). Danach flache id→ts-Map (umgeht Singular/Plural-Buckets).
