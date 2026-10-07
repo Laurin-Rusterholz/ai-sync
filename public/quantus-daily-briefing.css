@@ -1,0 +1,54 @@
+/* Scoped Schiefer/Leinen dashboard, based on the supplied Tagesbriefing prototype. */
+.db-dashboard{--panel:#2b3134;--panel2:#333a3e;--border:#434b50;--text:#efeae1;--muted:#a8a69f;--accent:#2f8c80;--danger:#d96b5b;--warn:#c9a96e;--ok:#2f8c80;max-width:860px;padding:0 16px 100px;color:var(--text);font-size:14px;line-height:1.55}
+.theme-light .db-dashboard{--panel:#f7f4ee;--panel2:#ebe5db;--border:#d5cdc0;--text:#2b3134;--muted:#5d666a}
+.db-dashboard *{box-sizing:border-box}
+.db-dashboard .db-section{border-radius:14px;padding:18px 20px;margin-bottom:10px;box-shadow:0 1px 2px #0002,0 6px 20px #0001;min-width:0}
+.db-dashboard .db-section h3{font-size:14.5px;font-weight:650;letter-spacing:-.1px}
+.db-dashboard details.db-section>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px;min-height:26px}
+.db-dashboard details.db-section>summary::-webkit-details-marker{display:none}
+.db-dashboard details.db-section>summary::after{content:'›';margin-left:auto;color:var(--muted);font-size:20px;transition:transform .15s}
+.db-dashboard details.db-section[open]>summary::after{transform:rotate(90deg)}
+.db-dashboard details.db-section>summary h3{display:inline-flex;align-items:center;gap:8px;margin:0!important}
+.db-dashboard details.db-section[open]>summary{margin-bottom:12px}
+.db-dashboard .db-header{gap:12px;margin-bottom:18px;border-bottom:1px solid var(--border);padding:14px 0}
+.db-dashboard .db-header h2{font-size:18px!important;letter-spacing:-.3px}
+.db-dashboard .db-date-nav{flex-wrap:wrap;gap:6px}
+.db-dashboard .db-date-nav .current{font-size:13px;min-width:0}
+.db-dashboard .db-pdf-btn{padding:7px 12px;font-size:12px;border-radius:8px;background:var(--panel2);border:1px solid var(--border);color:var(--text)}
+.db-dashboard .db-mode-btn{padding:6px 10px;font-size:12px}
+.db-dashboard .db-item{border:0;border-bottom:1px solid var(--border);border-radius:0;padding:12px 0;margin:0;overflow-wrap:anywhere;min-width:0}
+.db-dashboard .db-item:last-child{border-bottom:0}
+.db-dashboard .db-item .title{min-width:0}
+.db-dashboard .db-item:hover{background:transparent}
+.db-dashboard .db-item[data-legacy-question-lead]{padding:14px 0;gap:10px!important}
+.db-dashboard .db-item[data-legacy-question-lead]>.title{font-size:15px;font-weight:650}
+.db-dashboard .db-link-row{gap:6px}
+.db-dashboard .db-link-row .btn{font-size:11.5px}
+.db-dashboard .btn{border-radius:8px;white-space:normal}
+.db-dashboard .btn.primary{background:var(--danger);border-color:var(--danger);color:white}
+.db-dashboard input,.db-dashboard textarea,.db-dashboard select{font:inherit;max-width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px}
+.db-dashboard :is(button,a,input,textarea,select,summary):focus-visible{outline:2px solid var(--warn);outline-offset:3px}
+.db-dashboard .db-project-grid{grid-template-columns:1fr;gap:0}
+.db-dashboard .db-project-card{border:0;border-bottom:1px solid var(--border);border-radius:0;padding:12px 0}
+.db-dashboard .db-project-card:last-child{border-bottom:0}
+.db-dashboard .db-ampel{border-left:4px solid var(--warn);padding:20px 22px}
+.db-dashboard .db-ampel.db-tone-red{border-left-color:var(--danger)}
+.db-dashboard .db-ampel h1{font-size:21px;letter-spacing:-.3px;margin:0 0 4px}
+.db-dashboard .db-lede{font-size:13px;color:var(--muted);margin:0 0 16px}
+.db-dashboard .db-counts{display:flex;flex-wrap:wrap;gap:8px}
+.db-dashboard .db-pill,.db-dashboard .db-badge{display:inline-flex;align-items:center;gap:7px;background:var(--panel2);border:1px solid var(--border);border-radius:99px;padding:4px 10px;font-size:12px;font-weight:600}
+.db-dashboard .db-dot{width:7px;height:7px;border-radius:50%;background:var(--muted)}
+.db-dashboard .db-dot.green{background:var(--ok)}.db-dashboard .db-dot.yellow{background:var(--warn)}.db-dashboard .db-dot.red{background:var(--danger)}
+.db-dashboard .db-runs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-top:1px solid var(--border);padding-top:14px;margin-top:18px;gap:12px}
+.db-dashboard .db-run{text-align:center;display:flex;flex-direction:column;font-size:12px}
+.db-dashboard .db-run strong{font-size:14px}.db-dashboard .db-run small{font-size:10px;color:var(--muted)}
+.db-dashboard .db-new-lead{position:fixed;right:24px;bottom:24px;z-index:60;background:var(--danger);color:#fff;border:0;border-radius:99px;padding:13px 20px;font:600 14px inherit;cursor:pointer;box-shadow:0 6px 24px #0004}
+.db-dashboard #dbQuickLead{padding:0;border:0;box-shadow:none;margin-bottom:0}
+.db-dashboard #dbQuickLead>h3{display:none}
+.db-dashboard #dbPersonalTasks .db-item{flex-wrap:wrap}
+.db-dashboard #dbPersonalTasks .db-item>.title{flex:1 1 180px}
+.db-dashboard #dbDocuments label{display:grid;gap:6px}
+.db-dashboard #dbDocuments select{width:100%}
+.db-dashboard #dbOperationalDetails>.db-section{box-shadow:none;margin-top:10px}
+@media(max-width:560px){.db-dashboard{padding:0 4px 100px}.db-dashboard .db-section{padding:15px}.db-dashboard .db-runs{grid-template-columns:repeat(2,1fr)}.db-dashboard .db-new-lead{right:16px;bottom:16px}.db-dashboard .db-facts{grid-template-columns:90px minmax(0,1fr)}.db-dashboard .db-cal-item{flex-wrap:wrap}.db-dashboard .db-header>div{max-width:100%}}
+@media(prefers-reduced-motion:reduce){.db-dashboard *{scroll-behavior:auto!important;transition:none!important}}

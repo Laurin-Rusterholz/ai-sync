@@ -950,15 +950,17 @@ test("Konzept v2 I: der App-Fortschritt ist wirklich im DailyBriefing eingeklapp
 });
 
 // ── Konzept v2 D: echter Dokumenten-Upload direkt im Briefing ─────────────
-test("renderV3ChatgptCockpit: 'Pendent bei ChatGPT' bindet die ECHTE Anhangs-Pipeline (renderFileAttachments) pro Lead ein, keine eigene Upload-Logik", () => {
-  let aufgerufenMit = null;
-  const win = { renderFileAttachments: (kind, id) => { aufgerufenMit = [kind, id]; return "<div>ECHTE-PIPELINE</div>"; } };
-  const mod = loadModule({ renderFileAttachments: win.renderFileAttachments })(appWith({ entities: {} }), {});
-  const leads = [{ id: "l1", title: "Anfrage", operationalState: "doing", nextAction: "x", files: [{ id: "f1" }, { id: "f2" }] }];
-  const html = mod.renderV3ChatgptCockpit(leads, { nowMs: Date.parse("2026-09-21T10:00:00.000Z") });
-  assert.deepEqual(aufgerufenMit, ["chatgptLead", "l1"], "muss dieselbe Funktion mit derselben Sammlung/ID wie das Lead-Detail aufrufen");
-  assert.match(html, /ECHTE-PIPELINE/, "das Ergebnis der echten Pipeline muss tatsaechlich eingebunden werden");
-  assert.match(html, /Dokumente \(2\)/, "die echte Dateianzahl muss angezeigt werden, keine erfundene Zahl");
+test("Dokumentbereich verwendet die echte Anhangs-Pipeline für den ausgewählten Lead", () => {
+  let args;
+  const render = new Function('window','esc','renderBriefingLinks','renderFileAttachments',
+    sliceFn('function renderBriefingDocuments(').text + ';return renderBriefingDocuments;')(
+      {_dbDocumentLead:'l1'}, s=>String(s), ()=>'', (kind,id)=>{args=[kind,id];return '<div>ECHTE-PIPELINE</div>';});
+  const leads=[{id:'l1',title:'Anfrage',files:[{id:'f1'},{id:'f2'}]}];
+  const html=render(leads);
+  assert.deepEqual(args,['chatgptLead','l1']);
+  assert.match(html,/ECHTE-PIPELINE/);
+  assert.match(html,/db-badge">2/);
+  assert.match(html,/id="dbDocuments" open/);
 });
 
 test("Konzept v2 D: kein neues/erfundenes 'processedAt'-Feld — nur die bestehenden echten Statusfelder (textExtractStatus/textExtracted) werden verwendet", () => {
