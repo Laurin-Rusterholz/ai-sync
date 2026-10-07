@@ -24,6 +24,8 @@ on:
       - "netlify/lib/quantus-v4-*.mjs"
       - "public/quantus-v3-*.mjs"
       - "public/quantus-v4-*.mjs"
+      - "public/quantus-briefing-device*"
+      - "scripts/sync-briefing-devices.mjs"
       - "prompts/quantus-v3/**"
       - "prompts/quantus-v4/**"
       - "tests/quantus-v4-*.test.mjs"
